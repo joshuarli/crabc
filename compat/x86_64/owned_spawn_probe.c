@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <pthread.h>
 #include <sched.h>
 
@@ -31,16 +32,27 @@ static int reap(pid_t pid, int expected) {
 struct filter_instruction { unsigned short code; unsigned char yes, no; unsigned value; };
 struct filter_program { unsigned short count; struct filter_instruction *instructions; };
 static long raw_prctl(long operation, long value, long pointer) {
+#if defined(__aarch64__)
+    register long x8 __asm__("x8")=SYS_prctl;
+    register long x0 __asm__("x0")=operation;
+    register long x1 __asm__("x1")=value;
+    register long x2 __asm__("x2")=pointer;
+    register long x3 __asm__("x3")=0;
+    register long x4 __asm__("x4")=0;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory");
+    return x0;
+#else
     register long fourth __asm__("r10")=0;
     register long fifth __asm__("r8")=0;
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(157L), "D"(operation),
         "S"(value), "d"(pointer), "r"(fourth), "r"(fifth) : "rcx", "r11", "memory");
     return result;
+#endif
 }
 static int denied_spawn(const char *mode) {
-    unsigned syscall_number=!strcmp(mode,"deny-clone") ? 56 : !strcmp(mode,"deny-exec") ? 59 : 293;
-    int expected=syscall_number==56 ? EAGAIN : syscall_number==59 ? EACCES : EMFILE;
+    unsigned syscall_number=!strcmp(mode,"deny-clone") ? SYS_clone : !strcmp(mode,"deny-exec") ? SYS_execve : SYS_pipe2;
+    int expected=syscall_number==SYS_clone ? EAGAIN : syscall_number==SYS_execve ? EACCES : EMFILE;
     struct filter_instruction instructions[]={
         {0x20,0,0,0}, {0x15,0,1,syscall_number},
         {0x06,0,0,0x50000|(unsigned)expected}, {0x06,0,0,0x7fff0000}
@@ -56,7 +68,7 @@ static int denied_spawn(const char *mode) {
     for (int attempt=0;attempt<3;attempt++) {
         pid_t pid=-123; errno=ENOSPC;
         CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,environment)==expected && pid==-123);
-        CHECK(errno==(syscall_number==56 ? ENOSPC : expected));
+        CHECK(errno==(syscall_number==SYS_clone ? ENOSPC : expected));
         CHECK(!sigprocmask(SIG_SETMASK,NULL,&after));
         for (int signal=1;signal<65;signal++)
             CHECK(sigismember(&before,signal)==sigismember(&after,signal));

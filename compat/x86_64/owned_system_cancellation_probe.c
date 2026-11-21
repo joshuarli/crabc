@@ -29,7 +29,13 @@ struct wait_state {
 static struct wait_state active;
 static pthread_t worker;
 static int worker_live, ack[2]={-1,-1}, release_child[2]={-1,-1};
+#if defined(__aarch64__)
+_Static_assert(ATOMIC_INT_LOCK_FREE==2, "signal witness requires lock-free atomics");
+static _Atomic int interrupt_seen;
+static void interrupt_handler(int signal) { (void)signal; atomic_store(&interrupt_seen,1); }
+#else
 static void interrupt_handler(int signal) { (void)signal; }
+#endif
 static void cleanup_worker(void *opaque) {
     struct wait_state *s=opaque;
     sigset_t mask; struct sigaction action;
@@ -81,6 +87,9 @@ static int cleanup_observed(void) {
     return 0;
 }
 static int prepare(enum operation operation, int state, int pending) {
+#if defined(__aarch64__)
+    atomic_store(&interrupt_seen,0);
+#endif
     memset(&active,0,sizeof active); active.operation=operation; active.cancel_state=state;
     active.pending=pending; active.state_after=-1;
     CHECK(!pipe(ack) && !pipe(release_child));
@@ -143,7 +152,14 @@ static int message_wait(enum operation operation, int state, int pending, int or
         int canceled_wait=operation==SYSTEM_WAIT && state!=PTHREAD_CANCEL_DISABLE && !ordinary_signal;
         if (!pending || operation==PCLOSE_WAIT || state==PTHREAD_CANCEL_DISABLE) CHECK(wait_in_kernel());
         if (!pending) {
-            if (ordinary_signal) CHECK(!syscall(SYS_tgkill,getpid(),atomic_load(&active.tid),SIGUSR1));
+            if (ordinary_signal) {
+                CHECK(!syscall(SYS_tgkill,getpid(),atomic_load(&active.tid),SIGUSR1));
+#if defined(__aarch64__)
+                const struct timespec delay={0,1000000};
+                for (int retry=0; retry<2000 && !atomic_load(&interrupt_seen); retry++) nanosleep(&delay,NULL);
+                CHECK(atomic_load(&interrupt_seen));
+#endif
+            }
             else CHECK(!pthread_cancel(worker));
         }
         if (canceled_wait) {
@@ -159,7 +175,15 @@ static int message_wait(enum operation operation, int state, int pending, int or
             CHECK(wait_in_kernel() && !atomic_load(&active.returned) && !check_child_live(pid));
             CHECK(!release_target() && cleanup_observed() && !join_worker(!ordinary_signal));
             CHECK(atomic_load(&active.returned) && atomic_load(&active.result)==(23<<8));
+#if defined(__aarch64__)
+            int expected_error=ordinary_signal && operation==SYSTEM_WAIT ? EINTR : 90;
+            if (atomic_load(&active.error)!=expected_error)
+                fprintf(stderr,"system-cancel: operation=%d state=%d pending=%d signal=%d error=%d expected=%d\n",
+                    operation,state,pending,ordinary_signal,atomic_load(&active.error),expected_error);
+            CHECK(atomic_load(&active.error)==expected_error);
+#else
             CHECK(atomic_load(&active.error)==(ordinary_signal && operation==SYSTEM_WAIT ? EINTR : 90));
+#endif
             CHECK(atomic_load(&active.state_after)==state);
             CHECK(!atomic_load(&active.child_masked) && !atomic_load(&active.interrupt_ignored));
             int status; CHECK(waitpid(pid,&status,WNOHANG)==-1 && errno==ECHILD);

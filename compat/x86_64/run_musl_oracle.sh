@@ -6,18 +6,20 @@ MUSL_VERSION="$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROO
 readonly MUSL_VERSION
 readonly MUSL_ROOT="/opt/musl-${MUSL_VERSION}"
 readonly MUSL_LIBC="${MUSL_ROOT}/lib/libc.so"
-readonly MUSL_LOADER="${MUSL_ROOT}/lib/ld-musl-x86_64.so.1"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly MUSL_LOADER="${MUSL_ROOT}/lib/ld-musl-${arch}.so.1"
+readonly ORACLE_CC="$oracle"
+readonly oracle_label="$([ "$arch" = x86_64 ] && printf x86 || printf %s "$arch")"
 
 fail() {
-    printf 'ERROR: pinned x86 musl oracle: %s\n' "$*" >&2
+    printf 'ERROR: pinned %s musl oracle: %s\n' "${oracle_label:-x86}" "$*" >&2
     exit 1
 }
 
-require_native_linux_x86_64() {
+require_native_linux() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
     case "$(uname -m)" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) fail "refuses emulation on $(uname -m)" ;;
     esac
 }
@@ -36,7 +38,7 @@ esac
     fail "oracle TMPDIR must be a physical checkout .work directory"
 }
 
-require_native_linux_x86_64
+require_native_linux
 require_tool readelf
 require_tool sha256sum
 require_tool realpath
@@ -46,7 +48,7 @@ require_tool realpath
 [ -d "${MUSL_ROOT}/include" ] || fail "missing pinned musl headers"
 
 if ! diff -u <(
-    python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" manifest
+    python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" --architecture "$arch" manifest
 ) "${MUSL_ROOT}/.crabc-oracle"; then
     fail "source-verification manifest does not match the pinned snapshot"
 fi
@@ -64,7 +66,7 @@ compiler_target="$(
         -u GCC_EXEC_PREFIX -u COMPILER_PATH "$ORACLE_CC" -dumpmachine
 )"
 case "$compiler_target" in
-    x86_64*-musl*) ;;
+    "${arch}"*-musl*) ;;
     *) fail "oracle compiler is not an x86_64 musl GCC: ${compiler_target}" ;;
 esac
 
@@ -78,7 +80,7 @@ program_headers="$work_dir/program-headers"
 dynamic_section="$work_dir/dynamic-section"
 
 "$MUSL_LIBC" >"$version_file" 2>&1 || true
-grep -Fxq 'musl libc (x86_64)' "$version_file" || {
+grep -Fxq "musl libc (${arch})" "$version_file" || {
     fail "pinned libc did not identify itself as musl x86_64"
 }
 grep -Fxq "Version ${MUSL_VERSION}" "$version_file" || {
@@ -88,12 +90,13 @@ grep -Fxq "Version ${MUSL_VERSION}" "$version_file" || {
 env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
     -u GCC_EXEC_PREFIX -u COMPILER_PATH \
     "$ORACLE_CC" \
-    "-DCRABC_MUSL_ORACLE_LIBC_PATH=\"${canonical_libc}\"" \
+    "-DCRABC_MUSL_ORACLE_LIBC_PATH=\"${canonical_libc}\"" "-DCRABC_MUSL_ORACLE_ARCH=\"${arch}\"" \
     "${ROOT_DIR}/compat/x86_64/musl_oracle_probe.c" \
     -o "$probe"
 
 readelf --file-header --wide "$probe" >"$file_header"
-grep -Fq 'Advanced Micro Devices X86-64' "$file_header" || {
+case "$arch" in x86_64) machine="Advanced Micro Devices X86-64" ;; aarch64) machine="AArch64" ;; esac
+grep -Fq "$machine" "$file_header" || {
     fail "oracle probe is not an x86-64 ELF executable"
 }
 readelf --program-headers --wide "$probe" >"$program_headers"
@@ -110,9 +113,9 @@ if grep -Eq 'libc\.so\.6|ld-linux|libgcc_s|\((RPATH|RUNPATH)\)' "$dynamic_sectio
 fi
 
 runtime_output="$(env -u LD_LIBRARY_PATH -u LD_PRELOAD "$probe")"
-[ "$runtime_output" = "pinned musl x86_64 runtime: ${canonical_libc}" ] || {
+[ "$runtime_output" = "pinned musl ${arch} runtime: ${canonical_libc}" ] || {
     fail "oracle probe did not map exactly the pinned musl libc"
 }
 
-printf 'x86 pinned musl %s oracle toolchain: PASS (%s)\n' \
-    "${MUSL_VERSION} snapshot" "$compiler_target"
+printf '%s pinned musl %s oracle toolchain: PASS (%s)\n' \
+    "$oracle_label" "${MUSL_VERSION} snapshot" "$compiler_target"

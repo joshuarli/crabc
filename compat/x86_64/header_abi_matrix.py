@@ -467,13 +467,14 @@ def oracle_exception_records(
     return records
 
 
-def physical_x86_work_directory(name: str) -> Path:
+def physical_x86_work_directory(name: str, *, architecture: str = "x86_64") -> Path:
     """Create one named physical x86 header-collector root below this checkout."""
     require(
         isinstance(name, str) and name and "/" not in name and "\\" not in name and name not in {".", ".."},
         "compiler collection work directory name is unsafe",
     )
-    work_directory = ROOT / ".work" / "x86_64" / name
+    require(architecture in {"x86_64", "aarch64"}, "compiler collection architecture is unsafe")
+    work_directory = ROOT / ".work" / architecture / name
     try:
         physical_checkout = ROOT.resolve(strict=True)
     except OSError as error:

@@ -354,10 +354,10 @@ mod pool_tests {
         unsafe fn probe(_: &RuntimeGuard) -> bool {
             let Some(block) = allocate_block::<true>(0, 32) else { return false; };
             let mut residency = 0u8;
-            let before = unsafe { syscall3(27, block as i64, PAGE as i64,
+            let before = unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, block as i64, PAGE as i64,
                 core::ptr::addr_of_mut!(residency) as i64) } == 0;
             unsafe { release(block, 0, 32); }
-            let after = unsafe { syscall3(27, block as i64, PAGE as i64,
+            let after = unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, block as i64, PAGE as i64,
                 core::ptr::addr_of_mut!(residency) as i64) } == -12;
             before && after
         }

@@ -18,7 +18,7 @@
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the x86 C legacy-memory leaf requires little-endian Linux/x86-64");
@@ -28,6 +28,9 @@ compile_error!("the x86 C legacy-memory leaf requires little-endian Linux/x86-64
 
 // Musl's `src/string/bcopy.c` object.
 static_archive_member! { bcopy_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("bcopy_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -49,6 +52,9 @@ bcopy:
 
 // Musl's `src/string/bzero.c` object.
 static_archive_member! { bzero_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("bzero_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text

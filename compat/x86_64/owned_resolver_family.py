@@ -23,6 +23,7 @@ import tomllib
 from typing import Any, Callable, Mapping
 
 import source_seal
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -750,13 +751,14 @@ def validate_assessment(root: Path, assessment_path: Path) -> dict[str, object]:
     request = _relative_file(root, request_record["path"], "resolver family assessment request", below_work=True)
     require(_identity(root, request) == request_record, "resolver family assessment request changed")
     reconstructed = collect(root, request.relative_to(root))
-    require(retained == reconstructed, "resolver family assessment does not reconstruct")
+    require(source_seal.same_evidence(retained, reconstructed), "resolver family assessment does not reconstruct")
     return reconstructed
 
 
 PLAN_SCHEMA = "crabc.x86_64-owned-resolver-family-plan/v1"
-EXECUTION_WORK = Path(".work/x86_64")
-NETWORK_REPORT_DIRECTORY = Path("compat/reports/resolver-network/x86_64")
+ARCH = native_arch()["arch"]
+EXECUTION_WORK = Path(".work") / ARCH
+NETWORK_REPORT_DIRECTORY = Path("compat/reports/resolver-network") / ARCH
 
 
 def execution_layout(output: Path) -> dict[str, str]:
@@ -866,7 +868,7 @@ def plan_execution(root: Path, static_preparation: Path, dynamic_qualification: 
             "resolver family output path is malformed")
     physical_output = root / output
     require(physical_output.is_relative_to(root / EXECUTION_WORK) and physical_output != root / EXECUTION_WORK,
-            "resolver family output must be below checkout .work/x86_64")
+            f"resolver family output must be below checkout {EXECUTION_WORK}")
     _physical(physical_output, "resolver family output", directory=True)
     require(not any(physical_output.iterdir()), "resolver family output must be fresh and empty")
     layout = execution_layout(output)
@@ -944,7 +946,7 @@ def _validate_admission_cohort(root: Path, request: Path, components: Mapping[st
         rebound = _resolver_family_cohort_reader(root, cohort_paths, replays)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         raise ResolverFamilyError(f"resolver family assessment cohort binding differs: {error}") from error
-    require(components["resolver-family-cohort"].get("result") == rebound,
+    require(source_seal.same_evidence(components["resolver-family-cohort"].get("result"), rebound),
             "resolver family assessment cohort binding differs")
     try:
         _validate_admission_sources(root, replays, rebound["source"])

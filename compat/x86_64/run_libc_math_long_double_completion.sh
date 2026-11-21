@@ -4,6 +4,9 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$(uname -m)" = aarch64 ]; then
+	exec bash "$ROOT_DIR/compat/x86_64/run_libc_math_long_double_completion_aarch64.sh" "$@"
+fi
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly EXPECTED_ADDITIONS=(exp10l fdiml pow10l)
 # The final executable has only this source-closed binary80 computation,
@@ -85,34 +88,6 @@ else
 	work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-math-long-double-completion.XXXXXX")"
 fi
 
-collect_global_surface() {
-	local archive_path="$1" output_path="$2" members_path="$3"
-	local -a members
-	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
-	[ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
-	mkdir "$members_path"
-	(
-		cd "$members_path"
-		ar x "$archive_path" "${members[@]}"
-		nm -g --defined-only --format=posix "${members[@]}"
-	) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
-		sort -u >"$output_path"
-}
-
-collect_global_bindings() {
-	local archive_path="$1" output_path="$2" members_path="$3"
-	local -a members
-	mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
-	[ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
-	mkdir "$members_path"
-	(
-		cd "$members_path"
-		ar x "$archive_path" "${members[@]}"
-		nm -g --defined-only --format=posix "${members[@]}"
-	) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1, $2 }' |
-		sort -u >"$output_path"
-}
-
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
 for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf realpath sort wc python3; do
@@ -166,26 +141,6 @@ base_archive_globals="$work_dir/base-archive-globals"
 base_archive_readelf="$work_dir/base-archive-readelf"
 feature_archive_readelf="$work_dir/feature-archive-readelf"
 
-record_argv() {
-	local path="$1"
-	shift
-	python3 -B - "$path" "$@" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]) + "\n", encoding="utf-8")
-PY
-}
-
-run_recorded() {
-	local stdout_path="$1" stderr_path="$2" status_path="$3" label="$4" status=0
-	shift 4
-	"$@" >"$stdout_path" 2>"$stderr_path" || status=$?
-	printf '%s\n' "$status" >"$status_path"
-	[ "$status" -eq 0 ] || fail "$label exited with ${status}"
-}
-
 cleanup_successful_default_work() {
 	if [ -z "$retained_output" ]; then
 		if ! rm -rf -- "$work_dir"; then
@@ -206,10 +161,10 @@ done
 reference_link=("$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin
 	-frounding-math -fno-stack-protector
 	compat/x86_64/libc_math_long_double_completion_probe.c -lm -o "$reference")
-record_argv "$work_dir/oracle-link.argv.json" "${reference_link[@]}"
+record_math_argv "$work_dir/oracle-link.argv.json" "${reference_link[@]}"
 "${reference_link[@]}"
-record_argv "$work_dir/oracle-run.argv.json" "$reference"
-run_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/reference.status" \
+record_math_argv "$work_dir/oracle-run.argv.json" "$reference"
+run_math_recorded "$reference_output" "$work_dir/reference.stderr" "$work_dir/reference.status" \
 	"pinned-musl binary80 fixture" "$reference"
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$reference_output" ||
 	fail "pinned-musl record contract failed"
@@ -219,8 +174,8 @@ python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "
 build_source_runtime_libc "$base_target/x86_64-unknown-linux-musl/debug/libc.a" \
 	--retain-work "$work_dir/source-runtime-baseline"
 [ -f "$base_archive" ] || fail "cargo did not emit the unfeatured x86 archive"
-collect_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
-collect_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
+collect_math_global_surface "$base_archive" "$base_surface" "$work_dir/base-members"
+collect_math_global_bindings "$base_archive" "$base_bindings" "$work_dir/base-binding-members"
 nm -A --defined-only "$base_archive" >"$base_archive_symbols"
 nm -A -g --defined-only "$base_archive" >"$base_archive_globals"
 readelf --symbols --wide "$base_archive" >"$base_archive_readelf"
@@ -233,8 +188,8 @@ fi
 build_source_runtime_libc "$feature_target/x86_64-unknown-linux-musl/debug/libc.a" \
 	--retain-work "$work_dir/source-runtime-feature"
 [ -f "$archive" ] || fail "cargo did not emit the default binary80 archive"
-collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
-collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
+collect_math_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
+collect_math_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
 readelf --symbols --wide "$archive" >"$feature_archive_readelf"
 comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
 if [ -s "$observed_additions" ]; then
@@ -268,7 +223,7 @@ candidate_link=("$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_MATH_LO
 	-Wl,--no-undefined -Wl,--gc-sections \
 	compat/x86_64/libc_math_long_double_completion_probe.c \
 	compat/x86_64/libc_math_long_double_completion_start.S "$archive" -o "$candidate")
-record_argv "$work_dir/consumer-link.argv.json" "${candidate_link[@]}"
+record_math_argv "$work_dir/consumer-link.argv.json" "${candidate_link[@]}"
 "${candidate_link[@]}"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' \
@@ -323,8 +278,8 @@ for instruction in fldt fstpt fsubp f2xm1 fscale; do
 		fail "candidate lacks required x87 binary80 ${instruction} path"
 done
 
-record_argv "$work_dir/consumer-run.argv.json" "$candidate"
-run_recorded "$candidate_output" "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
+record_math_argv "$work_dir/consumer-run.argv.json" "$candidate"
+run_math_recorded "$candidate_output" "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
 	"freestanding binary80 fixture" "$candidate"
 python3 "$ROOT_DIR/compat/x86_64/validate_libc_math_long_double_completion.py" "$candidate_output" ||
 	fail "candidate record contract failed"
@@ -343,7 +298,7 @@ fi
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S \
 	"$archive" -o "$aggregate_candidate")
-record_argv "$work_dir/aggregate-link.argv.json" "${aggregate_link[@]}"
+record_math_argv "$work_dir/aggregate-link.argv.json" "${aggregate_link[@]}"
 "${aggregate_link[@]}"
 readelf --symbols --wide "$aggregate_candidate" >"$aggregate_symbols"
 readelf --program-headers --wide "$aggregate_candidate" >"$aggregate_headers"
@@ -395,8 +350,8 @@ if grep -Eq 'crabc_core|mimalloc|float_parse|math_compat|libm\.so|libm-' \
 	"$aggregate_symbols" "$aggregate_disassembly"; then
 	fail "aggregate candidate selects an ambient math/runtime dependency"
 fi
-record_argv "$work_dir/aggregate-run.argv.json" "$aggregate_candidate"
-run_recorded "$work_dir/aggregate.stdout" "$work_dir/aggregate.stderr" "$work_dir/aggregate.status" \
+record_math_argv "$work_dir/aggregate-run.argv.json" "$aggregate_candidate"
+run_math_recorded "$work_dir/aggregate.stdout" "$work_dir/aggregate.stderr" "$work_dir/aggregate.status" \
 	"freestanding all-provider aggregate fixture" "$aggregate_candidate"
 
 printf 'x86 binary80 fdiml/exp10l/pow10l: PASS (%s records)\n' \

@@ -5,8 +5,8 @@
  * the adjacent CRT/libc/TLS lifecycle fixture retains its existing trace.
  */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
-#error "this fixture requires native Linux/x86-64 LP64"
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
+#error "this fixture requires native Linux x86-64 or aarch64 LP64"
 #endif
 
 typedef unsigned __int128 crabc_uint128;
@@ -19,10 +19,15 @@ static void reject(void) __attribute__((noreturn));
 
 static void reject(void)
 {
+#if defined(__aarch64__)
+    register unsigned long number __asm__("x8") = 94;
+    register unsigned long status __asm__("x0") = 97;
+    __asm__ volatile("svc 0" : : "r"(number), "r"(status) : "memory", "cc");
+#else
     register unsigned long number __asm__("rax") = 231;
     register unsigned long status __asm__("rdi") = 97;
-
     __asm__ volatile("syscall" : "+a"(number) : "D"(status) : "rcx", "r11", "memory");
+#endif
     __builtin_unreachable();
 }
 

@@ -28,7 +28,7 @@ import source_build_admission as ADMISSION  # noqa: E402
 
 
 ROOT = LUA.ROOT
-DEFAULT_WORK_ROOT = ROOT / ".work/x86_64/lua-dynamic-supplied"
+DEFAULT_WORK_ROOT = ROOT / ".work" / LUA.ARCHITECTURE["work_name"] / "lua-dynamic-supplied"
 SOURCE_INPUTS = (
     Path(__file__).resolve(),
     ROOT / "compat/lua/run.py",
@@ -50,12 +50,12 @@ def consumer_source_seal() -> dict[str, object]:
 
     try:
         status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            ["git", "-c", f"safe.directory={ROOT}", "status", "--porcelain", "--untracked-files=no"],
             cwd=ROOT, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True,
         )
         revision = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, stdin=subprocess.DEVNULL,
+            ["git", "-c", f"safe.directory={ROOT}", "rev-parse", "HEAD"], cwd=ROOT, check=True, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
     except (OSError, subprocess.CalledProcessError) as error:
@@ -383,7 +383,7 @@ def replay_report(path: Path, *, state_parent: Path = DEFAULT_WORK_ROOT,
     """Check retained inputs and raw results, then reproduce both consumer arms."""
 
     path = LUA.require_physical_regular_file(Path(os.path.abspath(path)), "supplied Lua report")
-    require(path.is_relative_to(ROOT / ".work/x86_64"), "supplied Lua report is outside private work")
+    require(path.is_relative_to(ROOT / ".work" / LUA.ARCHITECTURE["work_name"]), "supplied Lua report is outside private work")
     try:
         report = json.loads(path.read_text())
         require(report["runner"] == "crabc-lua-native-x86-dynamic-supplied-cohort"

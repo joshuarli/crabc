@@ -30,13 +30,15 @@ import crabc_cc_owned_dynamic as installed_driver
 import owned_dynamic_qualification as qualification
 import source_seal
 import dynamic_product_contract
+from native_arch import native_arch
 
 
+ARCH = native_arch()["arch"]
 SCHEMA = "crabc.x86_64-owned-loader-inventory/v1"
 PROVENANCE_SCHEMA = "crabc.x86_64-owned-loader-provenance/v1"
-TARGET = "x86_64-unknown-linux-musl"
-LOADER_PATH = "lib/ld-crabc-x86_64.so.1"
-LOADER_ALIAS_PATH = "lib/ld-musl-x86_64.so.1"
+TARGET = f"{ARCH}-unknown-linux-musl"
+LOADER_PATH = f"lib/ld-crabc-{ARCH}.so.1"
+LOADER_ALIAS_PATH = f"lib/ld-musl-{ARCH}.so.1"
 LIBC_PATH = "usr/lib/libc.so"
 LOADER_PROVENANCE_PATH = "share/crabc/loader.provenance.json"
 LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
@@ -60,7 +62,7 @@ RAW_STREAMS = (
     ("dynamic_symbols", ("--dyn-syms", "--wide")),
 )
 SUBJECTS = ("musl-loader", "candidate-loader", "candidate-libc")
-MUSL_LOADER_PATH = "lib/ld-musl-x86_64.so.1"
+MUSL_LOADER_PATH = f"lib/ld-musl-{ARCH}.so.1"
 
 _RELOC_SECTION = re.compile(
     r"^Relocation section '([^']+)'[^\n]*contains (\d+) entr(?:y|ies)"
@@ -212,7 +214,14 @@ def validate_loader_provenance(product: Path, record: object) -> None:
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
         "--", "--emit=obj",
     ]
-    require(cargo["argv"] == expected_argv and cargo["rustflags"] == dynamic_product_contract.LOADER_RUSTFLAGS,
+    if ARCH == "aarch64":
+        expected_argv = [
+            rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--release",
+            "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
+            "--config", f'target.{TARGET}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]',
+            "--", "--emit=obj",
+        ]
+    require(cargo["argv"] == expected_argv and cargo["rustflags"] == ("-Ztls-model=initial-exec -Ctarget-feature=-outline-atomics" if ARCH == "aarch64" else dynamic_product_contract.LOADER_RUSTFLAGS),
             "loader Cargo command or RUSTFLAGS differ")
     compiler_object = record["compiler_object"]
     require(isinstance(compiler_object, dict) and set(compiler_object) == {"path", "sha256", "size"}
@@ -254,20 +263,25 @@ def validate_loader_provenance(product: Path, record: object) -> None:
 def capture_bindings(product: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     product, product_relative = evidence_path(product, "supplied product")
     manifest, provenance = load_loader_provenance(product)
-    alias = product / LOADER_ALIAS_PATH
-    require(alias.is_symlink() and os.readlink(alias) == Path(LOADER_PATH).name,
-            "supplied product loader alias differs")
-    try:
-        require(alias.resolve(strict=True) == (product / LOADER_PATH).resolve(strict=True),
-                "supplied product loader alias does not resolve to its loader")
-    except OSError as error:
-        raise InventoryError("supplied product loader alias cannot be resolved") from error
+    alias = product / (LIBC_PATH if ARCH == "aarch64" else LOADER_ALIAS_PATH)
+    if ARCH == "aarch64":
+        require(os.path.samefile(alias, product / LOADER_PATH), "supplied merged loader and libc differ")
+        alias_record = {"path": LIBC_PATH, "target": LOADER_PATH}
+    else:
+        require(alias.is_symlink() and os.readlink(alias) == Path(LOADER_PATH).name,
+                "supplied product loader alias differs")
+        try:
+            require(alias.resolve(strict=True) == (product / LOADER_PATH).resolve(strict=True),
+                    "supplied product loader alias does not resolve to its loader")
+        except OSError as error:
+            raise InventoryError("supplied product loader alias cannot be resolved") from error
+        alias_record = {"path": LOADER_ALIAS_PATH, "target": os.readlink(alias)}
     product_snapshot = {
         "root": product_relative,
         "manifest_sha256": digest(product / "share/crabc/manifest.json", "product manifest"),
         "state": product_identity(product, "share/crabc/dynamic-product-state.json", "product state"),
         "loader": product_identity(product, LOADER_PATH, "installed loader"),
-        "loader_alias": {"path": LOADER_ALIAS_PATH, "target": os.readlink(alias)},
+        "loader_alias": alias_record,
         "libc": product_identity(product, LIBC_PATH, "installed libc"),
         "loader_provenance": product_identity(product, LOADER_PROVENANCE_PATH, "loader compiler provenance"),
     }
@@ -362,7 +376,7 @@ def field(output: str, label: str) -> str | None:
     return None
 
 
-def parse_header(output: str) -> dict[str, str | None]:
+def parse_header(output: str, architecture: str = "x86_64") -> dict[str, str | None]:
     values = {
         "class": field(output, "Class"), "data": field(output, "Data"), "version": field(output, "Version"),
         "os_abi": field(output, "OS/ABI"), "type": field(output, "Type"), "machine": field(output, "Machine"),
@@ -373,7 +387,10 @@ def parse_header(output: str) -> dict[str, str | None]:
     }
     require(values["class"] == "ELF64", "readelf header is not ELF64")
     require(values["data"] == "2's complement, little endian", "readelf header is not little-endian")
-    require(values["machine"] == "Advanced Micro Devices X86-64", "readelf header is not x86-64")
+    machines = {"x86_64": ("Advanced Micro Devices X86-64", "x86-64"), "aarch64": ("AArch64", "aarch64")}
+    require(architecture in machines, "unsupported readelf architecture")
+    machine, label = machines[architecture]
+    require(values["machine"] == machine, f"readelf header is not {label}")
     require(all(value is not None for value in values.values()), "readelf header is incomplete")
     return values
 
@@ -559,9 +576,9 @@ def parse_dynamic_symbols(output: str) -> dict[str, Any]:
     return {"tables": tables, "public_defined": public}
 
 
-def shape(streams: Mapping[str, str]) -> dict[str, Any]:
+def shape(streams: Mapping[str, str], architecture: str = "x86_64") -> dict[str, Any]:
     require(set(streams) == {name for name, _ in RAW_STREAMS}, "readelf stream roster differs")
-    header = parse_header(streams["header"])
+    header = parse_header(streams["header"], architecture)
     program_headers = parse_program_headers(streams["program_headers"])
     dynamic = parse_dynamic(streams["dynamic"])
     require(re.fullmatch(r"\d+", str(header["program_header_count"])) is not None
@@ -626,7 +643,7 @@ def capture_elf(
             streams[stream_name] = payload.decode("utf-8")
         except UnicodeDecodeError as error:
             raise InventoryError(f"readelf produced non-text output for {subject_name}/{stream_name}") from error
-    return shape(streams), records
+    return shape(streams, ARCH), records
 
 
 def subject_binding(identity: Mapping[str, Any], description: str) -> dict[str, str]:
@@ -892,11 +909,11 @@ def validate_receipt(path: Path, product: Path, oracle_capture_path: Path, reade
         "candidate-loader": subject_binding(product_snapshot["loader"], "candidate loader"),
         "candidate-libc": subject_binding(product_snapshot["libc"], "candidate libc"),
     })
-    require(receipt["oracle_shape"] == shape(streams["musl-loader"]), "pinned musl loader shape differs")
+    require(receipt["oracle_shape"] == shape(streams["musl-loader"], ARCH), "pinned musl loader shape differs")
     candidate = receipt["candidate_shapes"]
     require(isinstance(candidate, dict) and set(candidate) == {"loader", "libc"}, "candidate shape fields drifted")
-    require(candidate["loader"] == shape(streams["candidate-loader"]), "candidate loader shape differs")
-    require(candidate["libc"] == shape(streams["candidate-libc"]), "candidate libc shape differs")
+    require(candidate["loader"] == shape(streams["candidate-loader"], ARCH), "candidate loader shape differs")
+    require(candidate["libc"] == shape(streams["candidate-libc"], ARCH), "candidate libc shape differs")
     require(receipt["candidate_features"] == feature_rows(source), "candidate feature rows differ")
     return receipt
 

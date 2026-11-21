@@ -36,7 +36,7 @@
 //! bulk-memory surface only after its freestanding artifact fixture proves
 //! it. It is not a general C runtime.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");
 
 // Preserve musl's contracts, including `memcpy`'s non-overlap contract and a
@@ -52,6 +52,9 @@ compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");
 // Musl's `src/string/x86_64/memcpy.s` object: `memcpy` plus musl's exact
 // hidden forward copy `__memcpy_fwd`, which `memmove` reaches.
 static_archive_member! { memcpy_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("memcpy_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -143,6 +146,19 @@ __memcpy_fwd:
 // Musl's `src/string/memcmp.c` object: the same first-different-unsigned-byte
 // result, compared 16 bytes (SSE2) or 8 bytes at a time.
 static_archive_member! { memcmp_source {
+    /// # Safety
+    /// Both pointers must be readable for length bytes.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
+        for index in 0..length {
+            // SAFETY: the C memcmp contract gives readable ranges of length bytes.
+            let (a, b) = unsafe { (left.add(index).read_volatile(), right.add(index).read_volatile()) };
+            if a != b { return i32::from(a) - i32::from(b); }
+        }
+        0
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -255,6 +271,9 @@ memcmp:
 
 // Musl's `src/string/bcmp.c` object.
 static_archive_member! { bcmp_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("bcmp_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -270,6 +289,9 @@ bcmp:
 
 // Musl's `src/string/x86_64/memset.s` object.
 static_archive_member! { memset_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("memset_aarch64.S"));
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -356,6 +378,25 @@ memset:
 
 // Musl's `src/string/x86_64/memmove.s` object.
 static_archive_member! { memmove_source {
+    /// # Safety
+    /// The source and destination must be readable and writable for length bytes, respectively.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub unsafe extern "C" fn memmove(destination: *mut u8, source: *const u8, length: usize) -> *mut u8 {
+        if (destination as usize) <= (source as usize) {
+            for index in 0..length {
+                // SAFETY: memmove permits overlap and guarantees both ranges have length bytes.
+                unsafe { destination.add(index).write_volatile(source.add(index).read_volatile()); }
+            }
+        } else {
+            for index in (0..length).rev() {
+                // SAFETY: backward copying preserves overlapping source bytes and both ranges are valid.
+                unsafe { destination.add(index).write_volatile(source.add(index).read_volatile()); }
+            }
+        }
+        destination
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text

@@ -139,14 +139,9 @@ class ResolverRuntimeAliasTests(unittest.TestCase):
         fixture = PROBE.read_text(encoding="utf-8")
 
         self.assertIn("#define h_errno (*__h_errno_location())", netdb_header)
-        self.assertRegex(
-            netdb_header,
-            r"(?s)#if defined\(__x86_64__\).*?"
-            r"#define h_errno \(\*__h_errno_location\(\)\)",
-        )
-        x86_header, legacy_header = netdb_header.split("\n#else\n", 1)
-        self.assertNotIn("extern int h_errno;", x86_header)
-        self.assertIn("extern int h_errno;", legacy_header)
+        self.assertNotIn("__x86_64__", netdb_header)
+        self.assertNotIn("__aarch64__", netdb_header)
+        self.assertNotIn("extern int h_errno;", netdb_header)
         self.assertRegex(
             h_errno,
             r'(?s)pub extern "C" fn __h_errno_location\(\) -> \*mut c_int \{\s*'

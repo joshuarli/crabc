@@ -16,7 +16,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from loader_debug_abi_evidence import Elf, EvidenceError
+from loader_debug_abi_evidence import ARCH, Elf, EvidenceError
 import owned_dynamic_elf
 
 
@@ -62,7 +62,8 @@ def elf_bytes(data):
     require(data[:7] == b'\x7fELF\x02\x01\x01', 'expected ELF64 little endian')
     elf = Elf.__new__(Elf)
     elf.data = data
-    require(elf.unpack('<H', 18)[0] == 62, 'expected native x86-64 ELF')
+    require(elf.unpack('<H', 18)[0] == (62 if ARCH == 'x86_64' else 183),
+            'expected native x86-64 ELF' if ARCH == 'x86_64' else 'expected native aarch64 ELF')
     elf.elf_type = elf.unpack('<H', 16)[0]
     offset = elf.unpack('<Q', 40)[0]
     size, count = elf.unpack('<HH', 58)
@@ -192,14 +193,30 @@ def _static_undefined_bindings(executable):
                     for row in rows), 'static binding symbol section index is invalid')
         table_rows[index] = rows
         tables.append({'index': index, 'name': name, 'row_count': len(rows)})
+        # Mold's ARM static outputs can place all-zero local placeholders
+        # immediately after the complete section-symbol prefix.  They must be
+        # exactly the native candidate or musl reference roster; an arbitrary unnamed undefined row is not inert
+        # evidence merely because its values are zero.
+        empty_rows = [number for number, row in enumerate(rows[1:], 1)
+                      if row['section'] == 0 and not row['name']]
+        if empty_rows:
+            section_count = len(final.sections)
+            require(ARCH == 'aarch64' and name == '.symtab'
+                    and empty_rows in ([section_count, section_count + 1],
+                                       list(range(section_count, section_count + 5)))
+                    and all(rows[i]['type'] == '3' and rows[i]['binding'] == 'LOCAL'
+                            and rows[i]['section'] == i for i in range(1, section_count))
+                    and all(final.data[table[4] + i * 24:table[4] + (i + 1) * 24] == bytes(24)
+                            for i in empty_rows), 'static undefined symbol metadata differs')
         for number, row in enumerate(rows[1:], 1):
             if row['section'] == 0:
                 # LLD can localize an undefined hidden weak symbol after
                 # resolving its address to zero. Regular local metadata
                 # still requires the operand and dynamic-exposure checks;
                 # local binding alone does not establish an inert row.
-                require(row['name'] and (row['binding'] in ('GLOBAL', 'WEAK')
-                                        or name == '.symtab' and row['binding'] == 'LOCAL')
+                require((row['name'] or number in empty_rows)
+                        and (row['binding'] in ('GLOBAL', 'WEAK')
+                             or name == '.symtab' and row['binding'] == 'LOCAL')
                         and row['value'] == row['size'] == 0, 'static undefined symbol metadata differs')
                 undefined.append({'table_index': index, 'table': name, 'symbol_index': number, 'symbol': row})
     require(any(row['name'] == '.symtab' for row in tables), 'static binding regular symbol table is missing')
@@ -267,7 +284,7 @@ def _static_undefined_bindings(executable):
         require(names[index] == '.dynamic' and section[9] == 16 and section[5] % 16 == 0
                 and (section[4], section[3], section[5]) == (program[2], program[3], program[5]),
                 'static PIE dynamic section and segment differ')
-        facts = owned_dynamic_elf.inspect(executable)
+        facts = owned_dynamic_elf.inspect(executable, architecture=ARCH)
         require(facts['flags_1_pie'] and facts['interpreter'] is None and facts['needed'] == [],
                 'static PIE requires an external runtime')
         tags = []
@@ -326,6 +343,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
     wanted = set(contracts)
     mapped = {}
     contributions = {}
+    output_sections = {}
     map_symbols = {}
     owner = None
     contribution = None
@@ -355,6 +373,8 @@ def _require_static_functions(map_path, executable, admitted, functions):
             require(key not in contributions, 'duplicate static input section contribution')
             contributions[key] = contribution
         elif name.startswith('.'):
+            if ARCH == 'aarch64':
+                output_sections.setdefault(name, []).append((address, size))
             owner, contribution = None, None
         else:
             if owner in images and contribution is not None:
@@ -458,7 +478,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
                 'static input section placement size/alignment differs')
         return base
 
-    def target_address(owner, symbol):
+    def target_address(owner, symbol, addend=0, arm_context=None):
         # Defined local/hidden symbols resolve in their selected object. An
         # undefined or interposable C name must join the final symbol and its
         # traced map owner to a real selected definition. A per-module static
@@ -509,6 +529,76 @@ def _require_static_functions(map_path, executable, admitted, functions):
         source = images[owner]
         require(0 < symbol['section'] < len(source.sections), 'unresolved static relocation target')
         section = source.sections[symbol['section']]
+        if (ARCH == 'aarch64' and section[2] & 0x10 and symbol['type'] == '3'
+                and symbol['binding'] == 'LOCAL' and not symbol['name'] and symbol['value'] == symbol['size'] == 0):
+            require(section[1] == 1 and section[9] > 0 and not section[2] & 0x5
+                    and 0 <= addend < section[5], 'unclassified merged target')
+            start = section[4] + addend
+            if section[2] & 0x20:
+                require(section[9] == 1, 'merged string width differs')
+                end = source.data.find(b'\0', start, section[4] + section[5])
+                require(end >= start, 'merged string target is unterminated')
+                value = source.data[start:end + 1]
+            else:
+                require(addend % section[9] == 0 and addend + section[9] <= section[5],
+                        'merged constant target is not a complete entry')
+                value = source.data[start:start + section[9]]
+            outputs = [row for row in final.sections if section_name(final, row) == section_name(source, section)]
+            require(len(outputs) == 1 and outputs[0][1] == 1 and outputs[0][2] & 3 == 2,
+                    'merged string output differs')
+            output = outputs[0]
+            require(output_sections.get(section_name(source, section)) == [(output[3], output[5])],
+                    'merged target output is not bound to the link map')
+            owners = set()
+            for candidate, image in images.items():
+                for source_section in image.sections:
+                    if (source_section[1] == 1 and source_section[2] & 0x10
+                            and section_name(image, source_section) == section_name(source, section)
+                            and value in image.data[source_section[4]:source_section[4] + source_section[5]]):
+                        owners.add(candidate)
+            require(owners == {owner}, 'merged target lacks a unique traced input owner')
+            data = final.data[output[4]:output[4] + output[5]]
+            candidates = []
+            cursor = 0
+            while True:
+                found = data.find(value, cursor)
+                if found < 0:
+                    break
+                candidates.append(output[3] + found)
+                cursor = found + 1
+            require(arm_context is not None, 'merged string lacks relocation context')
+            rows, linked, function_address = arm_context
+            page_seen = low_seen = False
+            for position, kind, row_addend, row_symbol in rows:
+                if row_addend != addend or row_symbol != symbol or kind not in (275, 276, 277, 278, 284, 285, 286, 299):
+                    continue
+                word = int.from_bytes(linked[position:position + 4], 'little')
+                place = function_address + position
+                if kind in (275, 276) and word & 0x9f000000 == 0x90000000:
+                    imm = ((word >> 29) & 3) | (((word >> 5) & 0x7ffff) << 2)
+                    if imm & (1 << 20):
+                        imm -= 1 << 21
+                    page = (place & ~4095) + (imm << 12)
+                    candidates = [item for item in candidates if item & ~4095 == page]
+                    page_seen = True
+                elif kind == 277 and word & 0x7fc00000 == 0x11000000:
+                    low = (word >> 10) & 4095
+                    candidates = [item for item in candidates if item & 4095 == low]
+                    low_seen = True
+                elif kind in (278, 284, 285, 286, 299) and word & 0x3b000000 == 0x39000000:
+                    scale = {278: 0, 284: 1, 285: 2, 286: 3, 299: 4}[kind]
+                    low = ((word >> 10) & 4095) << scale
+                    candidates = [item for item in candidates if item & 4095 == low]
+                    low_seen = True
+                elif kind == 277 and word & 0x9f000000 == 0x10000000:
+                    imm = ((word >> 29) & 3) | (((word >> 5) & 0x7ffff) << 2)
+                    if imm & (1 << 20):
+                        imm -= 1 << 21
+                    candidates = [item for item in candidates if item == place + imm]
+                    page_seen = low_seen = True
+            require(page_seen and low_seen and len(candidates) == 1,
+                    'merged string target lacks a unique linked address')
+            return candidates[0] - addend, False
         if section[2] & 0x10:  # SHF_MERGE: constant pieces need not keep input order.
             # A selected Rust member can expose an anonymous constant as
             # GLOBAL HIDDEN. LLD localizes it after merging, so its final
@@ -625,7 +715,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
                 and max(s[3] + s[5] for s in tls_sections) == cursor, 'static TLS segment geometry differs')
         tls_size = (tls[6] + tls[7] - 1) // tls[7] * tls[7]
 
-    def got_addresses(target):
+    def got_addresses(target, *, required=True):
         sections = [section for section in final.sections if section_name(final, section) == '.got']
         require(len(sections) == 1, 'static output lacks a unique GOT')
         section = sections[0]
@@ -638,7 +728,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
             for offset in range(0, relocations[5], 24):
                 address, info, addend = final.unpack('<QQq', relocations[4] + offset)
                 if section[3] <= address < section[3] + section[5]:
-                    require(info == 8 and address not in relative and address % 8 == 0,
+                    require(info == (8 if ARCH == 'x86_64' else 1027) and address not in relative and address % 8 == 0,
                             'static GOT slot lacks a unique RELATIVE relocation')
                     relative[address] = addend
         matches = []
@@ -658,7 +748,7 @@ def _require_static_functions(map_path, executable, admitted, functions):
         # Distinct source symbol aliases can produce multiple GOT entries for
         # one resolved address. Each admitted slot must independently contain
         # that exact target (or its static-PIE RELATIVE addend).
-        require(matches, 'static target lacks a correctly initialized GOT slot')
+        require(matches or not required, 'static target lacks a correctly initialized GOT slot')
         return matches
 
     def tls_got_addresses(offset):
@@ -713,6 +803,105 @@ def _require_static_functions(map_path, executable, admitted, functions):
         linked = bytearray(final.data[output_offset:output_offset + size])
         require(len(original) == len(linked) == size, 'truncated mapped static function')
         for position, kind, addend, symbol in function_relocations[name]:
+            if ARCH == 'aarch64':
+                require(position % 4 == 0 and position + 4 <= size,
+                        'static relocation crosses a function boundary')
+                target, weak_undefined_zero_got = target_address(owner, symbol, addend, (function_relocations[name], linked, address))
+                require(not weak_undefined_zero_got, 'unclassified static weak undefined relocation')
+                instruction = int.from_bytes(original[position:position + 4], 'little')
+                actual = int.from_bytes(linked[position:position + 4], 'little')
+                place = address + position
+                if kind in (282, 283):
+                    require(instruction & 0xfc000000 == (0x14000000 if kind == 282 else 0x94000000),
+                            'static branch relocation opcode differs')
+                    value = target + addend - place
+                    require(value % 4 == 0 and -(1 << 27) <= value < (1 << 27),
+                            'static branch relocation overflows displacement')
+                    result = (instruction & 0xfc000000) | ((value >> 2) & 0x03ffffff)
+                elif kind in (275, 276, 311, 541):
+                    require(instruction & 0x9f000000 == 0x90000000, 'static ADRP opcode differs')
+                    if kind == 541:
+                        require(symbol['type'] == '6' and tls is not None, 'static TLS target lacks TLS geometry')
+                        offset = target - tls[3] + (16 + tls[7] - 1) // tls[7] * tls[7]
+                        candidates = tls_got_addresses(offset)
+                    elif kind == 311:
+                        candidates = got_addresses(target, required=False)
+                    else:
+                        candidates = [target + addend]
+                    def adrp(destination):
+                        delta = (destination & ~4095) - (place & ~4095)
+                        require(delta % 4096 == 0 and -(1 << 32) <= delta < (1 << 32),
+                                'static ADRP relocation overflows displacement')
+                        imm = (delta >> 12) & 0x1fffff
+                        return (instruction & 0x9f00001f) | ((imm & 3) << 29) | ((imm >> 2) << 5)
+                    matches = [adrp(value) for value in candidates if adrp(value) == actual]
+                    if kind == 311 and not matches and actual == adrp(target + addend):
+                        next_rows = [row for row in function_relocations[name]
+                                     if row[0] == position + 4 and row[1] == 312
+                                     and row[2] == addend and row[3] == symbol]
+                        require(len(next_rows) == 1, 'static relaxed GOT page lacks its paired load')
+                        following = int.from_bytes(linked[position + 4:position + 8], 'little')
+                        original_load = int.from_bytes(source.data[source_offset + position + 4:source_offset + position + 8], 'little')
+                        require(original_load & 0x3b000000 == 0x39000000
+                                and instruction & 31 == (original_load >> 5) & 31 == original_load & 31
+                                and following == 0x91000000 | (((target + addend) & 4095) << 10) | (original_load & 0x3ff),
+                                'static relaxed GOT load differs')
+                        matches = [actual]
+                    if not matches and kind in (275, 276, 311) and actual == 0xd503201f:
+                        next_rows = [row for row in function_relocations[name]
+                                     if row[0] == position + 4 and row[1] == (312 if kind == 311 else 277)
+                                     and row[2] == addend and row[3] == symbol]
+                        require(len(next_rows) == 1, 'static relaxed ADRP lacks its paired ADD')
+                        result = actual
+                    else:
+                        require(matches, 'static ADRP does not address its selected target')
+                        result = matches[0]
+                elif kind in (277, 278, 284, 285, 286, 299, 312, 542):
+                    if kind == 542:
+                        require(symbol['type'] == '6' and tls is not None, 'static TLS target lacks TLS geometry')
+                        offset = target - tls[3] + (16 + tls[7] - 1) // tls[7] * tls[7]
+                        candidates = tls_got_addresses(offset)
+                    elif kind == 312:
+                        candidates = got_addresses(target, required=False)
+                    else:
+                        candidates = [target + addend]
+                    if kind == 277:
+                        require(instruction & 0x7fc00000 == 0x11000000, 'static ADD relocation opcode differs')
+                        scale = 0
+                    else:
+                        require(instruction & 0x3b000000 == 0x39000000, 'static load/store relocation opcode differs')
+                        scale = {278: 0, 284: 1, 285: 2, 286: 3, 299: 4, 312: 3, 542: 3}[kind]
+                    values = [(instruction & ~(0xfff << 10)) | (((value & 4095) >> scale) << 10)
+                              for value in candidates if value % (1 << scale) == 0]
+                    if kind == 312 and actual not in values and position >= 4:
+                        previous = [row for row in function_relocations[name]
+                                    if row[0] == position - 4 and row[1] == 311
+                                    and row[2] == addend and row[3] == symbol]
+                        if len(previous) == 1:
+                            prior = int.from_bytes(source.data[source_offset + position - 4:source_offset + position], 'little')
+                            require(prior & 31 == (instruction >> 5) & 31 == instruction & 31,
+                                    'static relaxed GOT registers differ')
+                            values.append(0x91000000 | ((target + addend & 4095) << 10)
+                                          | (instruction & 0x3ff))
+                    if kind in (277, 312) and position >= 4 and linked[position - 4:position] == b'\x1f\x20\x03\xd5':
+                        values = []
+                        previous = [row for row in function_relocations[name]
+                                    if row[0] == position - 4 and row[1] in ((311,) if kind == 312 else (275, 276))
+                                    and row[2] == addend and row[3] == symbol]
+                        require(len(previous) == 1, 'static relaxed ADD lacks its paired ADRP')
+                        prior = int.from_bytes(source.data[source_offset + position - 4:source_offset + position], 'little')
+                        require(prior & 31 == (instruction >> 5) & 31 == instruction & 31,
+                                'static relaxed ADRP and ADD registers differ')
+                        delta = target + addend - place
+                        require(-(1 << 20) <= delta < (1 << 20), 'static ADR relaxation overflows displacement')
+                        imm = delta & 0x1fffff
+                        values.append(0x10000000 | ((imm & 3) << 29) | ((imm >> 2) << 5) | (instruction & 31))
+                    require(actual in values, 'static low relocation does not address its selected target')
+                    result = actual
+                else:
+                    raise StaticLinkAuthorityError(f'unclassified mapped static relocation {kind} in {name}')
+                original[position:position + 4] = result.to_bytes(4, 'little')
+                continue
             require(kind in (2, 4, 9, 22, 42), f'unclassified mapped static relocation {kind} in {name}')
             require(position + 4 <= size, 'static relocation crosses a function boundary')
             target, weak_undefined_zero_got = target_address(owner, symbol)

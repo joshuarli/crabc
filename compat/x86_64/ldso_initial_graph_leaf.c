@@ -86,6 +86,21 @@ int leaf_value(void) {
     return leaf_data + *leaf_private_pointer - 1 + relative_sum - LEAF_RELR_SLOT_COUNT;
 }
 
+#if defined(__aarch64__)
+static long syscall4(long number, long one, long two, long three, long four) {
+    register long x0 __asm__("x0") = one;
+    register long x1 __asm__("x1") = two;
+    register long x2 __asm__("x2") = three;
+    register long x3 __asm__("x3") = four;
+    register long x8 __asm__("x8") = number;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8) : "memory");
+    return x0;
+}
+static long syscall1(long number, long argument) { return syscall4(number, argument, 0, 0, 0); }
+#define FORK_NUMBER 220
+#define FORK_ARGUMENT 17
+#define WAIT_NUMBER 260
+#else
 static long syscall1(long number, long argument) {
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(argument) : "rcx", "r11", "memory");
@@ -99,8 +114,13 @@ static long syscall4(long number, long one, long two, long three, long four) {
     return result;
 }
 
+#define FORK_NUMBER 57
+#define FORK_ARGUMENT 0
+#define WAIT_NUMBER 61
+#endif
+
 int leaf_relro_write_signal(void) {
-    long child = syscall1(57, 0); /* fork */
+    long child = syscall1(FORK_NUMBER, FORK_ARGUMENT); /* fork */
     if (child == 0) {
         int *volatile *slot = (int *volatile *)(void *)&leaf_relro_pointer;
         *slot = &leaf_private;
@@ -108,6 +128,6 @@ int leaf_relro_write_signal(void) {
     }
     if (child < 0) return 0;
     int status = 0;
-    if (syscall4(61, child, (long)&status, 0, 0) != child) return 0; /* wait4 */
+    if (syscall4(WAIT_NUMBER, child, (long)&status, 0, 0) != child) return 0; /* wait4 */
     return status & 0x7f;
 }

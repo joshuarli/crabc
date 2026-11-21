@@ -1,4 +1,11 @@
-//! Thread-associated Linux kernel operations.
+//! Narrow Linux/x86-64 thread observations and scheduler operations.
+//!
+//! This target-specific slice preserves record-independent thread operations,
+//! borrowed-atomic futex wait/wake, direct bounded CPU-affinity observation
+//! and mutation, and the direct
+//! calling-thread credential boundary. The
+//! credential operations retain Linux's per-task scope rather than emulating
+//! musl's process-wide synchronized transition.
 
 use core::mem::MaybeUninit;
 use core::time::Duration;
@@ -8,6 +15,82 @@ use bitflags::bitflags;
 use crate::process::Pid;
 pub use crate::process::{Gid, Uid};
 use crate::{Errno, Result};
+
+/// A bounded Linux CPU-affinity mask.
+///
+/// The fixed 1024-bit capacity is the native x86-64 facade boundary. Local
+/// bit operations affect only this value. Applying a set to a task is the
+/// direct bounded per-task operation [`sched_setaffinity`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CpuSet([u64; 16]);
+
+impl CpuSet {
+    /// The largest CPU identifier representable by this fixed mask plus one.
+    pub const MAX_CPU: usize = 1024;
+
+    /// Creates an empty CPU set.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self([0; 16])
+    }
+
+    /// Returns whether `cpu` is present in this affinity mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `cpu` is outside [`Self::MAX_CPU`].
+    #[inline]
+    pub fn is_set(&self, cpu: usize) -> bool {
+        (self.0[cpu / 64] & (1u64 << (cpu % 64))) != 0
+    }
+
+    /// Adds `cpu` to this local affinity mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `cpu` is outside [`Self::MAX_CPU`].
+    #[inline]
+    pub fn set(&mut self, cpu: usize) {
+        self.0[cpu / 64] |= 1u64 << (cpu % 64);
+    }
+
+    /// Removes `cpu` from this local affinity mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `cpu` is outside [`Self::MAX_CPU`].
+    #[inline]
+    pub fn unset(&mut self, cpu: usize) {
+        self.0[cpu / 64] &= !(1u64 << (cpu % 64));
+    }
+
+    /// Counts the CPUs present in this affinity mask.
+    #[inline]
+    pub fn count(&self) -> u32 {
+        self.0.iter().map(|word| word.count_ones()).sum()
+    }
+
+    /// Returns whether the mask contains no CPUs.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|word| *word == 0)
+    }
+
+    /// Clears every CPU from this local affinity mask.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0 = [0; 16];
+    }
+}
+
+impl Default for CpuSet {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Returns the caller's Linux task ID.
 #[inline]
@@ -19,9 +102,9 @@ pub fn gettid() -> Pid {
 
 /// Returns the CPU on which the calling thread is currently running.
 ///
-/// This follows Rustix's infallible `thread::sched_getcpu` contract. The
-/// implementation uses Linux's direct `getcpu` syscall with private writable
-/// output storage; it does not call libc or inspect thread-local `errno`.
+/// This follows Rustix's infallible `thread::sched_getcpu` contract.  The
+/// core seam uses Linux's direct `getcpu` syscall with private writable output
+/// storage; it does not call libc or inspect thread-local `errno`.
 #[inline]
 #[must_use]
 pub fn sched_getcpu() -> usize {
@@ -102,152 +185,22 @@ fn checked_gid_word(gid: Option<Gid>) -> Result<u32> {
     }
 }
 
-/// A bounded Linux CPU-affinity mask.
-///
-/// The fixed 1024-bit capacity matches the pinned AArch64 Rustix shape. Its
-/// local bit operations change only this value; affinity mutation remains a
-/// separate process-scheduling operation.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct CpuSet([u64; 16]);
-
-impl CpuSet {
-    /// The largest CPU identifier representable by this fixed mask plus one.
-    pub const MAX_CPU: usize = 1024;
-
-    /// Creates an empty CPU set.
-    #[inline]
-    #[must_use]
-    pub fn new() -> Self {
-        Self([0; 16])
-    }
-
-    /// Returns whether `cpu` is present in this affinity mask.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `cpu` is outside [`Self::MAX_CPU`], matching Rustix's
-    /// fixed-mask boundary.
-    #[inline]
-    pub fn is_set(&self, cpu: usize) -> bool {
-        (self.0[cpu / 64] & (1u64 << (cpu % 64))) != 0
-    }
-
-    /// Adds `cpu` to this local affinity mask.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `cpu` is outside [`Self::MAX_CPU`], matching Rustix's
-    /// fixed-mask boundary.
-    #[inline]
-    pub fn set(&mut self, cpu: usize) {
-        self.0[cpu / 64] |= 1u64 << (cpu % 64);
-    }
-
-    /// Removes `cpu` from this local affinity mask.
-    ///
-    /// # Panics
-    ///
-    /// Panics when `cpu` is outside [`Self::MAX_CPU`], matching Rustix's
-    /// fixed-mask boundary.
-    #[inline]
-    pub fn unset(&mut self, cpu: usize) {
-        self.0[cpu / 64] &= !(1u64 << (cpu % 64));
-    }
-
-    /// Counts the CPUs present in this affinity mask.
-    #[inline]
-    pub fn count(&self) -> u32 {
-        self.0.iter().map(|word| word.count_ones()).sum()
-    }
-
-    /// Returns whether the mask contains no CPUs.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.iter().all(|word| *word == 0)
-    }
-
-    /// Clears every CPU from this local affinity mask.
-    #[inline]
-    pub fn clear(&mut self) {
-        self.0 = [0; 16];
-    }
-}
-
-impl Default for CpuSet {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Reads a Linux task's CPU-affinity mask.
-///
-/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
-/// The kernel mask is copied into a fixed 1024-bit native value. If the
-/// kernel requires a larger mask, Linux returns `EINVAL`, which is preserved
-/// rather than truncated or hidden behind allocation. Successful short writes
-/// have their unwritten suffix cleared before the value is exposed.
-#[inline]
-pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
-    let mut mask = CpuSet::new();
-    let size = core::mem::size_of_val(&mask.0);
-    // SAFETY: `mask` is initialized writable storage for exactly `size` bytes.
-    let written = unsafe {
-        crabc_core::thread::sched_getaffinity_raw(
-            Pid::as_raw(pid),
-            mask.0.as_mut_ptr().cast(),
-            size,
-        )?
-    };
-    if written > size {
-        return Err(Errno::RANGE);
-    }
-    if written < size {
-        // SAFETY: `written <= size` above, and the remainder lies within the
-        // initialized mask storage returned by the kernel.
-        unsafe {
-            core::ptr::write_bytes(
-                mask.0.as_mut_ptr().cast::<u8>().add(written),
-                0,
-                size - written,
-            );
-        }
-    }
-    Ok(mask)
-}
-
-/// Sets a Linux task's CPU-affinity mask.
-///
-/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
-/// Linux may intersect the requested mask with CPUs present in the system and
-/// CPUs permitted by the task's cpuset cgroup. An empty resulting mask is
-/// reported as [`crate::Errno::INVAL`]. This operation intentionally exposes
-/// that process-scheduling mutation explicitly; it does not call libc or
-/// inspect thread-local `errno`.
-#[inline]
-pub fn sched_setaffinity(pid: Option<Pid>, cpuset: &CpuSet) -> Result<()> {
-    let size = core::mem::size_of_val(&cpuset.0);
-    // SAFETY: `cpuset` owns readable storage for exactly `size` bytes.
-    unsafe {
-        crabc_core::thread::sched_setaffinity_raw(Pid::as_raw(pid), cpuset.0.as_ptr().cast(), size)
-    }
-}
-
 /// Reads a Linux task's round-robin scheduling interval.
 ///
-/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
-/// The direct syscall writes an AArch64 `timespec`, which this facade validates
-/// before converting to Rust's canonical [`Duration`]. This operation only
-/// observes scheduler state: it does not select a policy or mutate a task.
+/// `None` selects the calling task; `Some(pid)` forwards a live Linux task ID,
+/// including a distinct non-leader identifier.
+/// The direct syscall writes an x86-64 16-byte `timespec`, which this facade
+/// validates before converting to Rust's canonical [`Duration`]. This
+/// operation only observes one scheduler interval: it does not select or
+/// mutate a policy, or query other scheduler parameters.
 #[inline]
 pub fn sched_rr_get_interval(pid: Option<Pid>) -> Result<Duration> {
     let mut interval = MaybeUninit::<crate::time::Timespec>::uninit();
     // SAFETY: `interval` is private writable storage with the exact
-    // Linux/AArch64 timespec layout, and Linux initializes it on success.
+    // Linux/x86-64 timespec layout, and Linux initializes it on success.
     unsafe {
         crabc_core::thread::sched_rr_get_interval_raw(
-            Pid::as_raw(pid),
+            pid.map_or(0, Pid::as_raw_pid),
             interval.as_mut_ptr().cast(),
         )?;
     }
@@ -262,10 +215,70 @@ pub fn sched_rr_get_interval(pid: Option<Pid>) -> Result<Duration> {
     ))
 }
 
+/// Reads a transient Linux task CPU-affinity snapshot.
+///
+/// `None` selects the calling task; `Some(pid)` selects a Linux task ID,
+/// including a live non-leader thread ID returned by [`gettid`]. Linux may
+/// initialize fewer bytes than this fixed 128-byte (1024-bit) capacity. The
+/// raw syscall reports that initialized-prefix length, while this typed facade
+/// clears the unwritten suffix before exposure without allocation, retry, or
+/// truncation. A kernel mask larger than this boundary is reported as `EINVAL`.
+/// The scheduler may change affinity between calls, so separate snapshots have
+/// no equality or stability guarantee.
+#[inline]
+pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
+    let mut mask = CpuSet::new();
+    let size = core::mem::size_of_val(&mask.0);
+    // SAFETY: `mask` is initialized writable storage for exactly `size` bytes.
+    let written = unsafe {
+        crabc_core::thread::sched_getaffinity_raw(
+            pid.map_or(0, Pid::as_raw_pid),
+            mask.0.as_mut_ptr().cast(),
+            size,
+        )?
+    };
+    if written > size {
+        return Err(Errno::RANGE);
+    }
+    if written < size {
+        // SAFETY: `written <= size`, so the tail is within `mask`.
+        unsafe {
+            core::ptr::write_bytes(
+                mask.0.as_mut_ptr().cast::<u8>().add(written),
+                0,
+                size - written,
+            );
+        }
+    }
+    Ok(mask)
+}
+
+/// Sets a Linux task's CPU-affinity mask.
+///
+/// `None` selects the calling task; `Some(pid)` selects the Linux task ID,
+/// including a live non-leader thread ID returned by [`gettid`].
+/// Linux may intersect the requested mask with CPUs present in the system and
+/// CPUs permitted by the task's cpuset cgroup. An empty resulting mask is
+/// reported as [`crate::Errno::INVAL`]. This explicit bounded per-task
+/// scheduling mutation does not call libc or inspect thread-local `errno`.
+#[inline]
+pub fn sched_setaffinity(pid: Option<Pid>, cpuset: &CpuSet) -> Result<()> {
+    let size = core::mem::size_of_val(&cpuset.0);
+    // SAFETY: `cpuset` owns readable storage for exactly `size` bytes.
+    unsafe {
+        crabc_core::thread::sched_setaffinity_raw(
+            pid.map_or(0, Pid::as_raw_pid),
+            cpuset.0.as_ptr().cast(),
+            size,
+        )
+    }
+}
+
 /// Yields the processor to the Linux scheduler.
 ///
-/// Linux treats this operation as infallible. The direct core seam retains the
-/// error type so future kernel behavior does not need a public API break.
+/// Linux treats this operation as infallible.  The direct core seam retains
+/// its error type so future kernel behavior does not require a public API
+/// break.
 #[inline]
 pub fn sched_yield() {
     let _ = crabc_core::thread::sched_yield();
@@ -281,10 +294,14 @@ pub fn sched_yield() {
 pub mod futex {
     use super::*;
 
-    // Keep the timeout spelling at the same module boundary as Rustix.  The
-    // C-layout value remains defined once in `time`, rather than creating a
-    // second futex-specific timespec record.
-    pub use crate::time::{Nsecs, Secs, Timespec};
+    // Keep the timeout spelling at the same module boundary as Rustix. The
+    // x86-64 C-layout value remains defined once in `time`, rather than
+    // creating a second futex-specific timespec record.
+    pub use crate::time::Timespec;
+    /// Seconds in the x86-64 Linux futex timeout `timespec`.
+    pub type Secs = i64;
+    /// Nanoseconds in the x86-64 Linux futex timeout `timespec`.
+    pub type Nsecs = i64;
 
     bitflags! {
         #[repr(transparent)]
@@ -297,6 +314,10 @@ pub mod futex {
             /// `FUTEX_PRIVATE_FLAG`.
             const PRIVATE = 0x80;
             /// `FUTEX_CLOCK_REALTIME`.
+            ///
+            /// Linux rejects this option for the restricted `FUTEX_WAIT`
+            /// operation with `ENOSYS`. An absolute realtime deadline needs
+            /// `FUTEX_WAIT_BITSET`, which this bounded facade defers.
             const CLOCK_REALTIME = 0x100;
             /// Preserve future Linux-defined bits for kernel validation.
             const _ = !0;
@@ -308,12 +329,14 @@ pub mod futex {
 
     /// Waits while `uaddr` still contains `val`.
     ///
-    /// The timeout is a Linux/AArch64 `timespec` interpreted as a relative
+    /// The timeout is a Linux/x86-64 `timespec` interpreted as a relative
     /// duration by `FUTEX_WAIT`; `None` waits indefinitely. Linux can return
     /// [`crate::Errno::AGAIN`] when the value changed before the wait was
     /// queued and [`crate::Errno::INTR`] when a signal interrupts the wait.
     /// Both are ordinary futex wakeup races and are intentionally preserved
-    /// for the caller to handle.
+    /// for the caller to handle. [`Flags::CLOCK_REALTIME`] is not admitted
+    /// by this operation, so its kernel `ENOSYS` result is preserved rather
+    /// than emulating an absolute realtime wait.
     #[inline]
     pub fn wait(
         uaddr: &core::sync::atomic::AtomicU32,

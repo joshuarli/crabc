@@ -155,7 +155,7 @@ class DebugRouteTests(unittest.TestCase):
                            output={'path': str(output), 'sha256': GATE.hashlib.sha256(b'linked').hexdigest()})
             context = SimpleNamespace(toolchain={'native_compiler_tools': {}}, products={
                 'development': {'static': {'root': '/selected/static'}, 'dynamic': {'root': '/selected/dynamic'}}})
-            with mock.patch.object(GATE.product_evidence, 'validate_native_compiler_tool_records', return_value={'linker': linker}), \
+            with mock.patch.object(GATE, 'validate_compiler_tool_records', return_value={'linker': linker}), \
                  mock.patch.object(GATE.owned_rust_link, 'link_command', return_value=[]), \
                  mock.patch.object(GATE.owned_rust_link, '_product_inputs', return_value=[]), \
                  mock.patch.object(GATE.owned_rust_link, 'validate_trace'):
@@ -270,7 +270,7 @@ class LtoExecutionTests(unittest.TestCase):
                                    cargo_home=output / "cargo", consumer="primary",
                                    products={"primary": {"static": {"root": str(output / "static")},
                                                          "dynamic": {"root": str(output / "dynamic")}}})
-            for name in ("lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"):
+            for name in (f"lib/ld-crabc-{GATE.ARCH}.so.1", "usr/lib/libc.so"):
                 artifact = output / "dynamic" / name
                 artifact.parent.mkdir(parents=True, exist_ok=True)
                 artifact.write_bytes(b"dynamic runtime")
@@ -295,11 +295,16 @@ class LtoExecutionTests(unittest.TestCase):
             self.assertEqual(report["lanes"]["D"]["execution"]["runtime_files"], [])
             self.assertTrue(report["lanes"]["D"]["ir"]["installed_libc_selected"])
             static_root = output / "gates/lto/D/root-run"
-            self.assertFalse((static_root / "lib/ld-crabc-x86_64.so.1").exists())
+            self.assertFalse((static_root / f"lib/ld-crabc-{GATE.ARCH}.so.1").exists())
             self.assertFalse((static_root / "usr/lib/libc.so").exists())
 
 
 class NativeRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        patch = mock.patch.object(GATE, "ARCH", "x86_64")
+        patch.start()
+        self.addCleanup(patch.stop)
+
     DISASSEMBLY = """
 0000000000001000 <crabc_rs_native_facade_getpid_witness>:
     1000:\tmov    $0x27,%eax
@@ -332,6 +337,27 @@ class NativeRouteTests(unittest.TestCase):
 
     def test_absent_anchor_is_not_a_route(self) -> None:
         self.assertFalse(GATE.inspect_native_route("")["direct_route_proven"])
+
+    def test_arm64_witness_requires_direct_syscalls_and_no_public_branch(self) -> None:
+        text = """0000000000001000 <crabc_rs_native_facade_getpid_witness>:
+    1000: mov w8, #172
+    1004: svc #0
+0000000000001010 <other>:
+    1010: mov x8, #64
+    1014: svc #0
+"""
+        with mock.patch.object(GATE, "ARCH", "aarch64"):
+            self.assertTrue(GATE.inspect_native_route(text)["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route(text.replace("    1004: svc #0", "    1004: bl 2000 <getpid>\n    1008: svc #0"))["direct_route_proven"])
+            for callee in ("getpid@plt", "__errno_location"):
+                with self.subTest(callee=callee):
+                    branch = f"    1004: bl 2000 <{callee}>\n    1008: svc #0"
+                    self.assertFalse(GATE.inspect_native_route(text.replace("    1004: svc #0", branch))["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route("")["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route(text.replace("mov w8, #172", "mov w8, #171"))["direct_route_proven"])
+            self.assertFalse(GATE.inspect_native_route(text.replace("mov x8, #64", "mov x8, #63"))["direct_route_proven"])
+            llvm = text.replace("mov w8, #172", "movz w8, #0xac").replace("mov x8, #64", "movz x8, #0x40")
+            self.assertTrue(GATE.inspect_native_route(llvm)["direct_route_proven"])
 
 
 class FixtureVendorTests(unittest.TestCase):

@@ -33,15 +33,37 @@
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the x86 math/complex leaf requires little-endian Linux/x86-64");
+
+// musl 1.2.6 src/complex uses C complex pairs with the AArch64 homogeneous aggregate ABI.
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Complex32 { real: f32, imag: f32 }
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Complex64 { real: f64, imag: f64 }
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Complex128 { real: f128, imag: f128 }
 
 // Each musl object below has its own static archive member, as in musl's
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/__fpclassifyl.c` object.
 static_archive_member! { __fpclassifyl_source {
+    // musl 1.2.6 src/math/__fpclassifyl.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn __fpclassifyl(x: f128) -> i32 {
+        let bits = x.to_bits();
+        let e = (bits >> 112) & 0x7fff;
+        if e == 0 { return if (bits << 1) != 0 { 3 } else { 2 }; }
+        if e == 0x7fff { return if (bits << 16) != 0 { 0 } else { 1 }; }
+        4
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.__fpclassifyl,"ax",@progbits
@@ -96,6 +118,19 @@ __fpclassifyl:
 
 // Musl's `src/math/__fpclassifyf.c` object.
 static_archive_member! { __fpclassifyf_source {
+    // musl 1.2.6 src/math/__fpclassifyf.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn __fpclassifyf(x: f32) -> i32 {
+        let bits: u32;
+        // SAFETY: FMOV copies the argument bits without changing floating-point state.
+        unsafe { core::arch::asm!("fmov {bits:w}, {value:s}", bits = out(reg) bits, value = in(vreg) x, options(pure, nomem, nostack)); }
+        let e = (bits >> 23) & 0xff;
+        if e == 0 { return if (bits << 1) != 0 { 3 } else { 2 }; }
+        if e == 0xff { return if (bits << 9) != 0 { 0 } else { 1 }; }
+        4
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -137,6 +172,19 @@ __fpclassifyf:
 
 // Musl's `src/math/__fpclassify.c` object.
 static_archive_member! { __fpclassify_source {
+    // musl 1.2.6 src/math/__fpclassify.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn __fpclassify(x: f64) -> i32 {
+        let bits: u64;
+        // SAFETY: FMOV copies the argument bits without changing floating-point state.
+        unsafe { core::arch::asm!("fmov {bits}, {value:d}", bits = out(reg) bits, value = in(vreg) x, options(pure, nomem, nostack)); }
+        let e = (bits >> 52) & 0x7ff;
+        if e == 0 { return if (bits << 1) != 0 { 3 } else { 2 }; }
+        if e == 0x7ff { return if (bits << 12) != 0 { 0 } else { 1 }; }
+        4
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -179,6 +227,11 @@ __fpclassify:
 
 // Musl's `src/math/__signbitf.c` object.
 static_archive_member! { __signbitf_source {
+    // musl 1.2.6 src/math/__signbitf.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn __signbitf(x: f32) -> i32 { (x.to_bits() >> 31) as i32 }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -198,6 +251,11 @@ __signbitf:
 
 // Musl's `src/math/__signbit.c` object.
 static_archive_member! { __signbit_source {
+    // musl 1.2.6 src/math/__signbit.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn __signbit(x: f64) -> i32 { (x.to_bits() >> 63) as i32 }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -218,6 +276,11 @@ __signbit:
 
 // Musl's `src/math/__signbitl.c` object.
 static_archive_member! { __signbitl_source {
+    // musl 1.2.6 src/math/__signbitl.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn __signbitl(x: f128) -> i32 { (x.to_bits() >> 127) as i32 }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.__signbitl,"ax",@progbits
@@ -239,6 +302,11 @@ __signbitl:
 
 // Musl's `src/complex/crealf.c` object.
 static_archive_member! { crealf_source {
+    // musl 1.2.6 src/complex/crealf.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn crealf(z: Complex32) -> f32 { z.real }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -254,6 +322,11 @@ crealf:
 
 // Musl's `src/complex/cimagf.c` object.
 static_archive_member! { cimagf_source {
+    // musl 1.2.6 src/complex/cimagf.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn cimagf(z: Complex32) -> f32 { z.imag }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -271,6 +344,11 @@ cimagf:
 
 // Musl's `src/complex/creal.c` object.
 static_archive_member! { creal_source {
+    // musl 1.2.6 src/complex/creal.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn creal(z: Complex64) -> f64 { z.real }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -287,6 +365,11 @@ creal:
 
 // Musl's `src/complex/cimag.c` object.
 static_archive_member! { cimag_source {
+    // musl 1.2.6 src/complex/cimag.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn cimag(z: Complex64) -> f64 { z.imag }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -308,6 +391,11 @@ cimag:
 
 // Musl's `src/complex/creall.c` object.
 static_archive_member! { creall_source {
+    // musl 1.2.6 src/complex/creall.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn creall(z: Complex128) -> f128 { z.real }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -324,6 +412,11 @@ creall:
 
 // Musl's `src/complex/cimagl.c` object.
 static_archive_member! { cimagl_source {
+    // musl 1.2.6 src/complex/cimagl.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn cimagl(z: Complex128) -> f128 { z.imag }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -341,6 +434,13 @@ cimagl:
 
 // Musl's `src/complex/conjf.c` object.
 static_archive_member! { conjf_source {
+    // musl 1.2.6 src/complex/conjf.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn conjf(z: Complex32) -> Complex32 {
+        Complex32 { real: z.real, imag: -z.imag }
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -362,6 +462,13 @@ conjf:
 
 // Musl's `src/complex/conj.c` object.
 static_archive_member! { conj_source {
+    // musl 1.2.6 src/complex/conj.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn conj(z: Complex64) -> Complex64 {
+        Complex64 { real: z.real, imag: -z.imag }
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits
@@ -387,6 +494,13 @@ conj:
 
 // Musl's `src/complex/conjl.c` object.
 static_archive_member! { conjl_source {
+    // musl 1.2.6 src/complex/conjl.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn conjl(z: Complex128) -> Complex128 {
+        Complex128 { real: z.real, imag: -z.imag }
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.crabc_x86_math_complex_rest,"ax",@progbits

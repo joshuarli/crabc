@@ -34,11 +34,13 @@ from scripts import native_build_tools
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import core_image
+from native_arch import native_arch
 import owned_static_link_authority as static_authority
 
+ARCH = native_arch()["arch"]
 SOURCE_MOUNT = "/workspace"
-PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
-IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs.json"
+PINNED_IMAGE = "crabc-core-evidence@" + core_image.core_image_id(ARCH)
+IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs" + ("" if ARCH == "x86_64" else "_aarch64") + ".json"
 RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v4"
 SCOPE = ("libc.resolver",)
 EXECUTION_MODE = "two-arms-twelve-candidate-modes"
@@ -46,9 +48,9 @@ ROLE_ADDRESSES = {"valid": "127.0.0.1", "drop": "127.0.0.2", "fallback": "127.0.
 RUNNER = "crabc-resolver-network-native-x86"
 ARTIFACT_MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie")
 ARMS = ("installed", "extracted")
-DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+DYNAMIC_INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
 MUSL_ROOT = Path("/opt/musl-1.2.6")
-TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl"
+TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(ROOT)}-{ARCH}-unknown-linux-musl"
 RUSTC = TOOLCHAIN_ROOT / "bin/rustc"
 MOLD = native_build_tools.MOLD
 MUSL_INCLUDE = MUSL_ROOT / "include"
@@ -57,9 +59,9 @@ COMPILER_ORACLE_INPUTS = {
     "gcc": Path("/usr/bin/gcc"),
     "assembler": Path("/usr/bin/as"),
     "linker": Path("/usr/bin/ld"),
-    "cc1": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1"),
-    "collect2": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2"),
-    "lto_plugin": Path("/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so"),
+    "cc1": Path(f"/usr/libexec/gcc/{ARCH}-alpine-linux-musl/15.2.0/cc1"),
+    "collect2": Path(f"/usr/libexec/gcc/{ARCH}-alpine-linux-musl/15.2.0/collect2"),
+    "lto_plugin": Path(f"/usr/libexec/gcc/{ARCH}-alpine-linux-musl/15.2.0/liblto_plugin.so"),
     "rustc_wrapper": native_build_tools.KACHE,
     "cargo_linker": native_build_tools.CARGO_LINKER,
     "rustc": RUSTC,
@@ -382,11 +384,11 @@ def trusted_image_manifest(root: Path) -> Mapping[str, object]:
     manifest_path = physical_file(root / IMAGE_MANIFEST, "pinned core image manifest")
     value = read_json_bytes(manifest_path.read_bytes(), "pinned core image manifest")
     required = {
-        "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/bin/python3", "/usr/bin/readelf", "/usr/sbin/chroot",
+        f"/usr/local/bin/crabc-{ARCH}-musl-gcc", "/usr/bin/python3", "/usr/bin/readelf", "/usr/sbin/chroot",
         *(str(path) for path in COMPILER_ORACLE_INPUTS.values()), str(RUSTC),
     }
     require(isinstance(value, dict) and set(value) == {"schema", "path", "files"} and
-            value.get("schema") == "crabc.x86_64-owned-resolver-network-image-inputs/v1" and
+            value.get("schema") == f"crabc.{ARCH}-owned-resolver-network-image-inputs/v1" and
             value.get("path") == "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" and
             isinstance(value.get("files"), dict), "pinned resolver-network image manifest differs")
     files = value["files"]
@@ -642,7 +644,7 @@ def expected_translation_commands(root: Path, state: Path, tools: Mapping[str, o
 
 
 def pinned_musl_loader(root: Path) -> dict[str, object]:
-    loader = MUSL_ROOT / "lib/ld-musl-x86_64.so.1"
+    loader = MUSL_ROOT / f"lib/ld-musl-{ARCH}.so.1"
     libc = physical_file(MUSL_ROOT / "lib/libc.so", "pinned musl libc")
     require(loader.is_symlink() and os.readlink(loader) == str(MUSL_ROOT / "lib/libc.so") and
             loader.resolve(strict=True) == libc, "pinned musl loader alias differs")
@@ -697,7 +699,7 @@ def validate_translation(
     workload = assert_receipt_file_identity(root, receipt["workload"], "resolver workload object", expected=state / "workload.o")
     require(object_record["object"] == file_identity(root, workload), "resolver workload object report differs")
     data = workload.read_bytes()
-    require(len(data) >= 20 and data[:7] == b"\x7fELF\x02\x01\x01" and data[16:20] == b"\x01\x00>\x00",
+    require(len(data) >= 20 and data[:7] == b"\x7fELF\x02\x01\x01" and data[16:20] == (b"\x01\x00>\x00" if ARCH == "x86_64" else b"\x01\x00\xb7\x00"),
             "resolver workload is not an x86-64 ET_REL object")
     return workload
 
@@ -740,7 +742,7 @@ def replay_elf_audit(root: Path, path: Path, *, mode: str, dynamic: bool, reader
     dynamic_text = str(dynamic_record["stdout"]["text"])
     symbol_text = str(symbols["stdout"]["text"])
     expected_type = "DYN" if mode in {"static-pie", "dynamic-pie"} else "EXEC"
-    require("Advanced Micro Devices X86-64" in header_text and re.search(rf"Type:\s+{expected_type}\b", header_text),
+    require(("Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64") in header_text and re.search(rf"Type:\s+{expected_type}\b", header_text),
             f"{mode} ELF type or machine differs")
     text = "\n".join((header_text, program_text, dynamic_text, symbol_text))
     forbidden = ("ld-musl-", "libc.musl-", "/opt/musl-", "libc.so.6", "ld-linux", "libgcc", "compiler-rt")
@@ -929,7 +931,7 @@ def chroot_layout(root: Path, chroot: Path, *, dynamic: bool) -> dict[str, objec
         "binary": file_identity(root, chroot / "workload"),
     }
     if dynamic:
-        values["loader"] = file_identity(root, chroot / "lib/ld-crabc-x86_64.so.1")
+        values["loader"] = file_identity(root, chroot / f"lib/ld-crabc-{ARCH}.so.1")
     return values
 
 
@@ -1256,12 +1258,12 @@ def validate_report(root: Path, report_path: Path) -> Mapping[str, object]:
     root = physical_directory(root, "checkout root")
     require(str(root) == SOURCE_MOUNT, "resolver receipt reader requires the pinned /workspace mount")
     report_path = physical_file(report_path, "public resolver-network report")
-    public_parent = root / "compat/reports/resolver-network/x86_64"
+    public_parent = root / f"compat/reports/resolver-network/{ARCH}"
     require(report_path.is_relative_to(physical_directory(public_parent, "public resolver report directory")),
             "resolver report is not under the public resolver report directory")
     report = validate_report_document(read_json_bytes(report_path.read_bytes(), "public resolver-network report"))
     state = mounted_path(root, report["state_root"], "resolver execution root", directory=True)
-    require(state.is_relative_to(root / ".work/x86_64"), "resolver execution root escapes checkout work")
+    require(state.is_relative_to(root / f".work/{ARCH}"), "resolver execution root escapes checkout work")
     published = mounted_path(root, report["published_report"], "published resolver report")
     require(published == report_path, "resolver public report path differs from the retained publication target")
     state_report = physical_file(state / "report.json", "retained resolver producer report")

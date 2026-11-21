@@ -265,7 +265,6 @@ out:
     return found;
 }
 
-#if defined(__x86_64__)
 static int cname_chain_address(void)
 {
     struct addrinfo hints;
@@ -294,7 +293,6 @@ static int cname_chain_address(void)
     freeaddrinfo(results);
     return matched;
 }
-#endif
 
 static int query_aaaa(const char *name, const char *expected)
 {
@@ -405,22 +403,18 @@ static int resolver_cases(void)
         return fail("resolver-cname");
     puts("resolver.cname=target.example.test");
 
-#if defined(__x86_64__)
     if (!install_nameservers(0) || !cname_chain_address())
         return fail("resolver-cname-chain");
     puts("resolver.cname-chain=final.example.test");
-#endif
 
     if (!install_nameservers(0) ||
         !query_a("tc.example.test", "198.51.100.45"))
         return fail("resolver-tc-tcp");
     puts("resolver.tc-tcp=accepted-over-tcp");
 
-#if defined(__x86_64__)
     if (!install_nameservers(0) || !tc_failover_lifetime())
         return fail("resolver-tc-failover-lifetime");
     puts("resolver.tc-failover-lifetime=accepted-over-tcp");
-#endif
 
     if (!install_nameservers(1) ||
         !search_a("searchhost", "198.51.100.17"))

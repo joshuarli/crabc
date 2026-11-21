@@ -12,6 +12,7 @@ use core::mem::MaybeUninit;
 use crabc_rs::{event, mm, net, pipe, rand, time};
 
 #[cfg(not(feature = "std"))]
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -38,7 +39,7 @@ pub extern "C" fn crabc_rs_core_os_probe() -> i32 {
         Err(error) => return -error.raw(),
     };
     let mut fds = [event::PollFd::new(&counter, event::PollFlags::IN)];
-    if let Err(error) = event::poll(&mut fds, Some(&time::Timespec::default())) {
+    if let Err(error) = event::poll(&mut fds, Some(&time::Timespec { tv_sec: 0, tv_nsec: 0 })) {
         return -error.raw();
     }
     drop(counter);

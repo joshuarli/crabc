@@ -42,6 +42,7 @@ COMPAT_MODULE_DIR = ROOT / "compat/x86_64"
 if str(COMPAT_MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(COMPAT_MODULE_DIR))
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
 
 FIXTURES = ROOT / "crt" / "fixtures"
 MAIN_SOURCE = FIXTURES / "owned_dynamic_startup_main.c"
@@ -53,9 +54,10 @@ DEPENDENCY = "libowned-startup-dependency.so"
 PLUGIN = "libowned-startup-plugin.so"
 SCHEMA = "crabc.x86_64-owned-crt-dynamic-startup/v1"
 
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-ORACLE_INTERPRETER = Path("/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1")
+ARCH = native_arch()
+INTERPRETER = f"/lib/ld-crabc-{ARCH['arch']}.so.1"
+ORACLE_COMPILER = Path(ARCH["oracle"])
+ORACLE_INTERPRETER = Path(f"/opt/musl-1.2.6/lib/ld-musl-{ARCH['arch']}.so.1")
 CHROOT = "/usr/sbin/chroot"
 TIMEOUT = "/usr/bin/timeout"
 # Frame pointers make each callback's own frame alignment observable.
@@ -322,7 +324,8 @@ def parse_elf(path: Path) -> ElfImage:
 def require_hardened_dynamic_image(path: Path, image: ElfImage) -> None:
     """Every installed-driver output keeps RELRO, NOW, no TEXTREL and a NX stack."""
 
-    require(image.machine == 62, f"{path.name}: not EM_X86_64")
+    expected_machine = 62 if ARCH["arch"] == "x86_64" else 183
+    require(image.machine == expected_machine, f"{path.name}: ELF machine differs from native architecture")
     stacks = [flags for kind, flags, *_rest in image.segments if kind == PT_GNU_STACK]
     require(len(stacks) == 1 and stacks[0] & PF_X == 0, f"{path.name}: executable or missing GNU stack")
     require(any(kind == PT_GNU_RELRO for kind, *_rest in image.segments), f"{path.name}: missing GNU RELRO")
@@ -389,9 +392,10 @@ def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Pat
         ordered = [library / "crti.o", *objects, archive, *dsos, library / "libc.so", library / "crtn.o"]
     else:
         entry = MODES[mode][1]
-        runtime = [entry, "crabc-dynamic-attach.o", "crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a"]
-        ordered = [library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", *objects,
-                   archive, *dsos, library / "libc.so", library / "crtn.o"]
+        attachment = [] if ARCH["arch"] == "aarch64" and mode == "dynamic-pie" else ["crabc-dynamic-attach.o"]
+        runtime = [entry, *attachment, "crti.o", "libc.so", "crtn.o", "libcrabc-builtins.a"]
+        prefix = [library / entry, library / "crti.o", *(library / name for name in attachment)] if ARCH["arch"] == "aarch64" else [library / entry, *(library / name for name in attachment), library / "crti.o"]
+        ordered = [*prefix, *objects, archive, *dsos, library / "libc.so", library / "crtn.o"]
     require(receipt.get("output_sha256") == sha256(output), f"{output.name}: receipt does not bind the output")
     require(receipt.get("owned_runtime_inputs") == sorted(f"usr/lib/{name}" for name in runtime),
             f"{output.name}: owned runtime input roster differs")
@@ -408,8 +412,8 @@ def check_link_receipt(product: Path, output: Path, mode: str, objects: list[Pat
     expected_trace = [member if path == archive else str(path) for path in ordered]
     require(isinstance(trace, list) and all(type(path) is str for path in trace),
             f"{output.name}: link trace is malformed")
-    require(product_evidence.semantic_link_trace(trace) == expected_trace,
-            f"{output.name}: link trace differs: {trace}")
+    observed = product_evidence.semantic_link_trace(trace)
+    require(observed == expected_trace, f"{output.name}: link trace differs: {trace}")
     return {"runtime_inputs": receipt["owned_runtime_inputs"], "link_command": command, "link_trace": trace}
 
 

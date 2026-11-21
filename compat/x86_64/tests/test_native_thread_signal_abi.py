@@ -87,12 +87,11 @@ class NativeThreadSignalAbiTests(unittest.TestCase):
     def test_x86_header_and_direct_provider_preserve_the_frozen_c_shape(self) -> None:
         self.assertTrue(PROVIDER.is_file(), "native x86 tgkill provider is missing")
         header = HEADER.read_text(encoding="utf-8")
-        outer = "\n#else\n\n#ifdef __cplusplus\nextern \"C\" {\n"
-        self.assertEqual(header.count(outer), 1)
-        x86_branch, non_x86_branch = header.split(outer, 1)
-        self.assertIn("#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)", x86_branch)
-        self.assertIn("int tgkill(int, int, int);", x86_branch)
-        self.assertIn("int tgkill(int, int, int);", non_x86_branch)
+        self.assertIn("#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)", header)
+        self.assertIn("int tgkill(int, int, int);", header)
+        self.assertEqual(header.count("int tgkill(int, int, int);"), 1)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
         static_root = STATIC_ROOT.read_text(encoding="utf-8")
         provider = PROVIDER.read_text(encoding="utf-8")

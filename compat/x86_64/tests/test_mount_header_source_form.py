@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import stat
 import subprocess
 import unittest
@@ -18,50 +17,13 @@ C_PROBE = ROOT / "compat" / "x86_64" / "mount_header_source_form_probe.c"
 CXX_PROBE = ROOT / "compat" / "x86_64" / "mount_header_source_form_probe.cpp"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
-# Pinned musl 1.2.6 selects the first body. The second hash is the pre-slice
-# file, retained byte-for-byte to keep the frozen AArch64 public surface.
 X86_MUSL_SHA256 = "f217bc6987f9e420949c31ece18720d14e80b71c87be1dcfd7542d052c43d992"
-LEGACY_SHA256 = "b4b5e8c98a64fcfe6205f4c180f60d06a61b5497ca857255e57f688b0c1d75be"
-
-OPEN = re.compile(r"^\s*#\s*(?:if|ifdef|ifndef)\b")
-CLOSE = re.compile(r"^\s*#\s*endif\b")
-ELSE = re.compile(r"^\s*#\s*(?:else|elif)\b")
-
-
-def split_x86_branch(path: Path) -> tuple[bytes, bytes]:
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    if not lines or lines[0] != "#if defined(__x86_64__)\n":
-        raise AssertionError(f"{path} must begin with its x86 source-form branch")
-
-    depth = 1
-    x86: list[str] = []
-    legacy: list[str] = []
-    in_legacy = False
-    for line in lines[1:]:
-        if not in_legacy and ELSE.match(line) and depth == 1:
-            in_legacy = True
-            continue
-        if in_legacy and CLOSE.match(line) and depth == 1:
-            break
-        if in_legacy:
-            legacy.append(line)
-        else:
-            x86.append(line)
-        if OPEN.match(line):
-            depth += 1
-        elif CLOSE.match(line):
-            depth -= 1
-    else:
-        raise AssertionError(f"{path} is missing its closing x86 source-form branch")
-
-    return "".join(x86).encode(), "".join(legacy).encode()
-
-
 class MountHeaderSourceFormTests(unittest.TestCase):
-    def test_x86_form_matches_pinned_musl_and_aarch64_form_stays_frozen(self) -> None:
-        x86, legacy = split_x86_branch(HEADER)
-        self.assertEqual(hashlib.sha256(x86).hexdigest(), X86_MUSL_SHA256)
-        self.assertEqual(hashlib.sha256(legacy).hexdigest(), LEGACY_SHA256)
+    def test_both_architectures_use_pinned_musl_source(self) -> None:
+        source = HEADER.read_bytes()
+        self.assertEqual(hashlib.sha256(source).hexdigest(), X86_MUSL_SHA256)
+        self.assertNotIn(b"__x86_64__", source)
+        self.assertNotIn(b"__aarch64__", source)
 
     def test_direct_probes_cover_mount_macro_type_and_c_linkage(self) -> None:
         c_probe = C_PROBE.read_text(encoding="utf-8")

@@ -46,7 +46,7 @@ REQUIRED_HEADERS = (
 )
 ORACLE_TRANSCRIPT = b"owned-stdio-products-ok\n"
 COPIES_PATH = HERE / "owned_crypt_runtime_evidence.py"
-ORACLE_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+ORACLE_COMPILER = qualification.ARCH["oracle"]
 MUSL_INCLUDE = Path("/opt/musl-1.2.6/include")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -335,6 +335,18 @@ def validate_source_product_seals(
     except Exception as error:
         raise ReceiptError("dynamic product validation failed") from error
     state = strict_json(dynamic / "share/crabc/dynamic-product-state.json", "dynamic product materialization state")
+    validate_dynamic_state(dynamic, state)
+    if static:
+        static_product = directory(Path(product_paths["static"]), "static product")
+        _product_seal(before_value["static"], static_product, "static")
+        try:
+            products._validate_static_product(static_product)
+        except Exception as error:
+            raise ReceiptError("static product validation failed") from error
+    return probe, runner, fopen64_c, fopen64_cxx
+
+
+def validate_dynamic_state(dynamic: Path, state: Mapping[str, Any]) -> None:
     if state.get("build_profile") == "debug":
         try:
             products.validate_debug_product_source(dynamic, source_seal.product_source_digest(qualification.ROOT))
@@ -352,14 +364,6 @@ def validate_source_product_seals(
         except Exception as error:
             raise ReceiptError("current source digest cannot be read") from error
         require(recorded_source == current_source, "dynamic product source differs from current checkout")
-    if static:
-        static_product = directory(Path(product_paths["static"]), "static product")
-        _product_seal(before_value["static"], static_product, "static")
-        try:
-            products._validate_static_product(static_product)
-        except Exception as error:
-            raise ReceiptError("static product validation failed") from error
-    return probe, runner, fopen64_c, fopen64_cxx
 
 
 def _dynamic_helper_tools(dynamic: Path) -> dict[str, Path]:
@@ -478,8 +482,9 @@ def undefined_elf_symbols(path: Path) -> set[str]:
     data = regular(path, "installed-header ELF object").read_bytes()
     require(data[:7] == b"\x7fELF\x02\x01\x01", "installed-header object is not ELF64 little-endian")
     require(len(data) >= 64 and int.from_bytes(data[16:18], "little") == 1
-            and int.from_bytes(data[18:20], "little") == 62 and int.from_bytes(data[20:24], "little") == 1,
-            "installed-header object is not x86-64 ET_REL")
+            and int.from_bytes(data[18:20], "little") == (183 if qualification.ARCH["arch"] == "aarch64" else 62)
+            and int.from_bytes(data[20:24], "little") == 1,
+            "installed-header object is not native ET_REL")
     sections_at = int.from_bytes(data[40:48], "little")
     section_size = int.from_bytes(data[58:60], "little")
     section_count = int.from_bytes(data[60:62], "little")
@@ -683,7 +688,7 @@ def validate_commands(
             command = retained["dynamic-" + mode + "-" + entry]
             expected_argv = (["chroot", str(root), "/consumer", "/scratch/first", "/scratch/second", "/scratch/wide"]
                              if entry == "kernel" else
-                             ["chroot", str(root), "/lib/ld-crabc-x86_64.so.1", "/consumer", "/scratch/first", "/scratch/second", "/scratch/wide"])
+                             ["chroot", str(root), f"/lib/ld-crabc-{qualification.ARCH['arch']}.so.1", "/consumer", "/scratch/first", "/scratch/second", "/scratch/wide"])
             require_argv(command, expected_argv, "dynamic " + mode + " " + entry)
             streams = tuple(command[name].read_bytes() for name in ("stdout", "stderr", "status"))  # type: ignore[index]
             require(streams == oracle_streams, "dynamic " + mode + " " + entry + " stdout/stderr/status differs from pinned musl")

@@ -188,7 +188,7 @@
 //! than C's variadic `syscall(long, ...)`: a complete variadic wrapper needs a
 //! separately specified argument-count and cancellation contract.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the selected static C ABI requires little-endian Linux/x86-64");
 
 // Defined before every leaf module so the leaves can use it.
@@ -221,8 +221,10 @@ mod credentials;
 mod credential_observation;
 #[path = "personality.rs"]
 mod personality;
+#[cfg(target_arch = "x86_64")]
 #[path = "arch_prctl.rs"]
 mod arch_prctl;
+#[cfg(target_arch = "x86_64")]
 #[path = "io_permissions.rs"]
 mod io_permissions;
 #[path = "sched_rr_get_interval.rs"]
@@ -447,6 +449,9 @@ mod pthread_signal;
 #[cfg(crabc_x86_owned_runtime)]
 #[path = "pthread_scheduling.rs"]
 mod pthread_scheduling;
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_tls_layout.rs"]
+mod aarch64_tls_layout;
 #[path = "pthread_identity.rs"]
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
@@ -593,6 +598,8 @@ mod legacy_des_compat;
 mod legacy_misc;
 #[path = "secure_environment.rs"]
 mod secure_environment;
+#[path = "allocator_environment.rs"]
+mod allocator_environment;
 #[path = "child_reaping.rs"]
 mod child_reaping;
 #[path = "wait_extensions.rs"]
@@ -1089,9 +1096,21 @@ mod allocator {
             let address: usize;
             // SAFETY: a RIP-relative load of this image's GOT slot for
             // `$name`; the slot is immutable once relocation has completed.
+            #[cfg(target_arch = "x86_64")]
             unsafe {
                 core::arch::asm!(
                     concat!("mov {0}, qword ptr [rip + ", $name, "@GOTPCREL]"),
+                    out(reg) address,
+                    options(nomem, nostack, preserves_flags, pure),
+                )
+            };
+            // SAFETY: a PC-relative load of this image's GOT slot for
+            // `$name`; the slot is immutable once relocation has completed.
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                core::arch::asm!(
+                    concat!("adrp {0}, :got:", $name),
+                    concat!("ldr {0}, [{0}, :got_lo12:", $name, "]"),
                     out(reg) address,
                     options(nomem, nostack, preserves_flags, pure),
                 )
@@ -1105,9 +1124,20 @@ mod allocator {
     fn cabi_application_malloc_replaced() -> bool {
         let body: usize;
         // SAFETY: a RIP-relative address computation of the local alias.
+        #[cfg(target_arch = "x86_64")]
         unsafe {
             core::arch::asm!(
                 "lea {0}, [rip + __crabc_x86_c_allocator_malloc_body]",
+                out(reg) body,
+                options(nomem, nostack, preserves_flags, pure),
+            )
+        };
+        // SAFETY: a PC-relative address computation of the local alias.
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            core::arch::asm!(
+                "adrp {0}, __crabc_x86_c_allocator_malloc_body",
+                "add {0}, {0}, :lo12:__crabc_x86_c_allocator_malloc_body",
                 out(reg) body,
                 options(nomem, nostack, preserves_flags, pure),
             )

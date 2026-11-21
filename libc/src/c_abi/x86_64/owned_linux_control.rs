@@ -25,24 +25,6 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 use super::{c_result, c_ssize_status, c_status, raw_syscall, vector_io::IoVec};
 
-const SYS_PTRACE: i64 = 101;
-const SYS_SYSLOG: i64 = 103;
-const SYS_CAPGET: i64 = 125;
-const SYS_CAPSET: i64 = 126;
-const SYS_PIVOT_ROOT: i64 = 155;
-const SYS_ACCT: i64 = 163;
-const SYS_SWAPON: i64 = 167;
-const SYS_SWAPOFF: i64 = 168;
-const SYS_REBOOT: i64 = 169;
-const SYS_INIT_MODULE: i64 = 175;
-const SYS_DELETE_MODULE: i64 = 176;
-const SYS_QUOTACTL: i64 = 179;
-const SYS_UNSHARE: i64 = 272;
-const SYS_FANOTIFY_INIT: i64 = 300;
-const SYS_FANOTIFY_MARK: i64 = 301;
-const SYS_SETNS: i64 = 308;
-const SYS_PROCESS_VM_READV: i64 = 310;
-const SYS_PROCESS_VM_WRITEV: i64 = 311;
 
 /// Version and process ID in Linux's capability syscall ABI.
 #[repr(C)]
@@ -73,7 +55,7 @@ static_archive_member! { acct_source {
     /// must coordinate the requested system accounting change and file lifetime.
     #[no_mangle]
     pub unsafe extern "C" fn acct(path: *const c_char) -> c_int {
-        c_status(unsafe { raw_syscall::syscall1(SYS_ACCT, path as i64) })
+        c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_ACCT, path as i64) })
     }
 }}
 
@@ -87,7 +69,7 @@ static_archive_member! { cap_source {
     /// query behavior. The caller must synchronize access to both output buffers.
     #[no_mangle]
     pub unsafe extern "C" fn capget(header: *mut CapabilityHeader, data: *mut CapabilityData) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_CAPGET, header as i64, data as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_CAPGET, header as i64, data as i64) })
     }
 
     /// Apply the supplied capability sets through Linux's calling-task boundary.
@@ -100,7 +82,7 @@ static_archive_member! { cap_source {
     /// reads the caller-provided words.
     #[no_mangle]
     pub unsafe extern "C" fn capset(header: *mut CapabilityHeader, data: *mut CapabilityData) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_CAPSET, header as i64, data as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_CAPSET, header as i64, data as i64) })
     }
 }}
 
@@ -115,7 +97,7 @@ static_archive_member! { module_source {
     /// execution of the module's kernel code and its system-wide effects.
     #[no_mangle]
     pub unsafe extern "C" fn init_module(image: *mut c_void, length: c_ulong, arguments: *const c_char) -> c_int {
-        c_status(unsafe { raw_syscall::syscall3(SYS_INIT_MODULE, image as i64, length as i64, arguments as i64) })
+        c_status(unsafe { raw_syscall::syscall3(raw_syscall::SYS_INIT_MODULE, image as i64, length as i64, arguments as i64) })
     }
 
     /// Ask Linux to remove the named kernel module.
@@ -125,7 +107,7 @@ static_archive_member! { module_source {
     /// coordinate the requested removal and the lifetime of affected kernel users.
     #[no_mangle]
     pub unsafe extern "C" fn delete_module(name: *const c_char, flags: c_uint) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_DELETE_MODULE, name as i64, flags as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_DELETE_MODULE, name as i64, flags as i64) })
     }
 }}
 
@@ -139,7 +121,7 @@ static_archive_member! { fanotify_source {
     /// permission events so that monitored filesystem operations can progress.
     #[no_mangle]
     pub unsafe extern "C" fn fanotify_init(flags: c_uint, event_flags: c_uint) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_FANOTIFY_INIT, flags as i64, event_flags as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_FANOTIFY_INIT, flags as i64, event_flags as i64) })
     }
 
     /// Change the marks attached to a Linux fanotify group.
@@ -150,7 +132,7 @@ static_archive_member! { fanotify_source {
     /// and servicing of any resulting permission events.
     #[no_mangle]
     pub unsafe extern "C" fn fanotify_mark(descriptor: c_int, flags: c_uint, mask: u64, directory: c_int, path: *const c_char) -> c_int {
-        c_status(unsafe { raw_syscall::syscall5(SYS_FANOTIFY_MARK, descriptor as i64, flags as i64, mask as i64, directory as i64, path as i64) })
+        c_status(unsafe { raw_syscall::syscall5(raw_syscall::SYS_FANOTIFY_MARK, descriptor as i64, flags as i64, mask as i64, directory as i64, path as i64) })
     }
 }}
 
@@ -164,7 +146,7 @@ static_archive_member! { klogctl_source {
     /// must coordinate actions that consume log data or change kernel log policy.
     #[no_mangle]
     pub unsafe extern "C" fn klogctl(action: c_int, buffer: *mut c_char, length: c_int) -> c_int {
-        c_status(unsafe { raw_syscall::syscall3(SYS_SYSLOG, action as i64, buffer as i64, length as i64) })
+        c_status(unsafe { raw_syscall::syscall3(raw_syscall::SYS_SYSLOG, action as i64, buffer as i64, length as i64) })
     }
 }}
 
@@ -177,7 +159,7 @@ static_archive_member! { pivot_root_source {
     /// coordinate the namespace's root transition and all affected path users.
     #[no_mangle]
     pub unsafe extern "C" fn pivot_root(new_root: *const c_char, old_root: *const c_char) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_PIVOT_ROOT, new_root as i64, old_root as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_PIVOT_ROOT, new_root as i64, old_root as i64) })
     }
 }}
 
@@ -191,7 +173,7 @@ static_archive_member! { quotactl_source {
     /// record. The caller must synchronize quota changes and record access.
     #[no_mangle]
     pub unsafe extern "C" fn quotactl(command: c_int, special: *const c_char, id: c_int, address: *mut c_char) -> c_int {
-        c_status(unsafe { raw_syscall::syscall4(SYS_QUOTACTL, command as i64, special as i64, id as i64, address as i64) })
+        c_status(unsafe { raw_syscall::syscall4(raw_syscall::SYS_QUOTACTL, command as i64, special as i64, id as i64, address as i64) })
     }
 }}
 
@@ -204,7 +186,7 @@ static_archive_member! { reboot_source {
     /// or other command effect with every affected process and device.
     #[no_mangle]
     pub unsafe extern "C" fn reboot(command: c_int) -> c_int {
-        c_status(unsafe { raw_syscall::syscall3(SYS_REBOOT, 0xfee1dead, 672274793, command as i64) })
+        c_status(unsafe { raw_syscall::syscall3(raw_syscall::SYS_REBOOT, 0xfee1dead, 672274793, command as i64) })
     }
 }}
 
@@ -217,7 +199,7 @@ static_archive_member! { setns_source {
     /// calling-task namespace transition with code using affected ambient state.
     #[no_mangle]
     pub unsafe extern "C" fn setns(descriptor: c_int, kind: c_int) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_SETNS, descriptor as i64, kind as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_SETNS, descriptor as i64, kind as i64) })
     }
 }}
 
@@ -230,7 +212,7 @@ static_archive_member! { swap_source {
     /// the storage object's exclusive swap use and system memory effects.
     #[no_mangle]
     pub unsafe extern "C" fn swapon(path: *const c_char, flags: c_int) -> c_int {
-        c_status(unsafe { raw_syscall::syscall2(SYS_SWAPON, path as i64, flags as i64) })
+        c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_SWAPON, path as i64, flags as i64) })
     }
 
     /// Disable the named Linux swap object.
@@ -240,7 +222,7 @@ static_archive_member! { swap_source {
     /// storage lifetime and the resulting system memory transition.
     #[no_mangle]
     pub unsafe extern "C" fn swapoff(path: *const c_char) -> c_int {
-        c_status(unsafe { raw_syscall::syscall1(SYS_SWAPOFF, path as i64) })
+        c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_SWAPOFF, path as i64) })
     }
 }}
 
@@ -254,7 +236,7 @@ static_archive_member! { unshare_source {
     /// changes with all runtime and application users of that ambient state.
     #[no_mangle]
     pub unsafe extern "C" fn unshare(flags: c_int) -> c_int {
-        c_status(unsafe { raw_syscall::syscall1(SYS_UNSHARE, flags as i64) })
+        c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_UNSHARE, flags as i64) })
     }
 }}
 
@@ -268,7 +250,7 @@ static_archive_member! { process_vm_source {
     /// target identity, remote address lifetime, and partial-transfer handling.
     #[no_mangle]
     pub unsafe extern "C" fn process_vm_readv(pid: c_int, local: *const IoVec, local_count: c_ulong, remote: *const IoVec, remote_count: c_ulong, flags: c_ulong) -> isize {
-        c_ssize_status(unsafe { raw_syscall::syscall6(SYS_PROCESS_VM_READV, pid as i64, local as i64, local_count as i64, remote as i64, remote_count as i64, flags as i64) })
+        c_ssize_status(unsafe { raw_syscall::syscall6(raw_syscall::SYS_PROCESS_VM_READV, pid as i64, local as i64, local_count as i64, remote as i64, remote_count as i64, flags as i64) })
     }
 
     /// Write process memory through Linux's two vector lists.
@@ -279,7 +261,7 @@ static_archive_member! { process_vm_source {
     /// writes, remote address lifetime, and partial-transfer handling.
     #[no_mangle]
     pub unsafe extern "C" fn process_vm_writev(pid: c_int, local: *const IoVec, local_count: c_ulong, remote: *const IoVec, remote_count: c_ulong, flags: c_ulong) -> isize {
-        c_ssize_status(unsafe { raw_syscall::syscall6(SYS_PROCESS_VM_WRITEV, pid as i64, local as i64, local_count as i64, remote as i64, remote_count as i64, flags as i64) })
+        c_ssize_status(unsafe { raw_syscall::syscall6(raw_syscall::SYS_PROCESS_VM_WRITEV, pid as i64, local as i64, local_count as i64, remote as i64, remote_count as i64, flags as i64) })
     }
 }}
 
@@ -303,7 +285,7 @@ static_archive_member! { ptrace_source {
         if peek {
             data = core::ptr::addr_of_mut!(word).cast();
         }
-        let result = c_result(unsafe { raw_syscall::syscall5(SYS_PTRACE, request as i64, pid as i64, address as i64, data as i64, 0) });
+        let result = c_result(unsafe { raw_syscall::syscall5(raw_syscall::SYS_PTRACE, request as i64, pid as i64, address as i64, data as i64, 0) });
         if result < 0 || !peek { result as c_long } else { word as c_long }
     }
 }}

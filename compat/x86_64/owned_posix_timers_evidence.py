@@ -27,6 +27,7 @@ import owned_dynamic_receipt as receipt_contract
 import installed_compiler_translation as translation_contract
 from owned_dynamic_fork_evidence import RetainedRuntimeInputs, recorded
 import owned_posix_product_evidence as product_evidence
+from native_arch import native_arch
 from owned_posix_product_evidence import (
     DYNAMIC_PRODUCT_FORMAT,
     ProductEvidenceError,
@@ -313,7 +314,15 @@ def _validate_compile_audit(
     if record["command"] != _compile_command(role, driver, source, output, replay=replay):
         _fail(f"{role} compile command differs from the sealed timer invocation")
     helper = _physical(root / "share/crabc/crabc_cc_static.py", "installed compiler helper")
-    if replay is None:
+    if replay is None and native_arch()["arch"] == "aarch64":
+        try:
+            expected_compiler = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        except product_evidence.ProductEvidenceError as error:
+            raise TimerEvidenceError("timer source image compiler pin is invalid") from error
+        if record["compiler"] != expected_compiler:
+            _fail(f"{role} compiler differs from source image manifest")
+        compiler_command = expected_compiler["path"]
+    elif replay is None:
         policy = _installed_compiler(root)
         compiler_command = policy.compiler()
         compiler = _physical(Path(compiler_command).resolve(strict=True), "installed compiler")
@@ -368,11 +377,11 @@ def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Pa
     ]
 
 
-def _validate_shared_metadata(record: dict[str, Any]) -> None:
+def _validate_shared_metadata(record: dict[str, Any], *, product_format: str = DYNAMIC_PRODUCT_FORMAT) -> None:
     """Require one exact receipt version for the callback-loaded DSO."""
 
     search = receipt_contract.validate(
-        record, format=DYNAMIC_PRODUCT_FORMAT, label="timer TLS DSO receipt", fail=_fail
+        record, format=product_format, label="timer TLS DSO receipt", fail=_fail
     )
     if type(record["campaign_complete"]) is not bool:
         _fail("timer TLS DSO receipt campaign state must be a boolean")
@@ -385,12 +394,13 @@ def _validate_shared_metadata(record: dict[str, Any]) -> None:
 
 
 def _validate_shared_receipt(
-    root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path, *, replay: RetainedRuntimeInputs | None = None
+    root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path, *, replay: RetainedRuntimeInputs | None = None,
+    product_format: str = DYNAMIC_PRODUCT_FORMAT,
 ) -> str:
     receipt = _physical(receipt, "timer TLS DSO receipt")
     output = _physical(output, "timer TLS DSO")
     record = _json(receipt, "timer TLS DSO receipt")
-    _validate_shared_metadata(record)
+    _validate_shared_metadata(record, product_format=product_format)
     if record["output_path"] != recorded(output, replay):
         _fail("timer TLS DSO receipt output path differs from this evidence invocation")
     if record["output_sha256"] != _sha256(output):
@@ -411,7 +421,12 @@ def _validate_shared_receipt(
     linker_record = _exact_object(record["resolved_linker"], {"path", "sha256"}, "timer TLS DSO linker")
     if not isinstance(linker_record["path"], str):
         _fail("timer TLS DSO linker path is malformed")
-    if replay is None:
+    if replay is None and native_arch()["arch"] == "aarch64":
+        try:
+            linker = Path(product_evidence._check_linker(linker_record, receipt))
+        except product_evidence.ProductEvidenceError as error:
+            raise TimerEvidenceError("timer linker differs from source image manifest") from error
+    elif replay is None:
         linker = _physical(Path(linker_record["path"]), "timer TLS DSO linker")
         if linker != product_evidence.native_build_tools.MOLD or not linker.lstat().st_mode & 0o111:
             _fail("timer TLS DSO linker is not the sealed mold executable")
@@ -437,10 +452,11 @@ def _validate_shared_receipt(
     return _sha256(receipt)
 
 
-def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = None) -> tuple[str, list[str]]:
+def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = None,
+                      machine: str = "Advanced Micro Devices X86-64") -> tuple[str, list[str]]:
     if replay is not None:
         facts = product_evidence.retained_elf_facts(output)
-        if facts["machine"] != 62 or facts["type"] != 3:
+        if facts["machine"] != {"x86_64": 62, "aarch64": 183}[native_arch()["arch"]] or facts["type"] != 3:
             _fail("retained timer TLS DSO is not an x86-64 ET_DYN ELF")
         if not facts["dynamic"]:
             _fail("retained timer TLS DSO has no PT_DYNAMIC segment")
@@ -452,8 +468,8 @@ def _validate_tls_elf(output: Path, *, replay: RetainedRuntimeInputs | None = No
             _fail("retained timer TLS DSO SONAME, NEEDED, or RUNPATH differs from the callback contract")
         return facts["sonames"][0], facts["needed"]
     header, program, dynamic = (_readelf(output, option) for option in ("-hW", "-lW", "-dW"))
-    if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
-        _fail("timer TLS DSO is not an x86-64 ELF")
+    if re.search(rf"^\s*Machine:\s+{re.escape(machine)}\s*$", header, re.MULTILINE) is None:
+        _fail(f"timer TLS DSO is not a {machine} ELF")
     if re.search(r"^\s*Type:\s+DYN(?:\s|\()", header, re.MULTILINE) is None:
         _fail("timer TLS DSO is not ET_DYN")
     if re.search(r"^\s*INTERP\b", program, re.MULTILINE) is not None:
@@ -504,7 +520,8 @@ def validate_timer_tls_dso(
     object_path = _physical(object_path, "timer TLS object")
     output = _physical(output, "timer TLS DSO")
     receipt_hash = _validate_shared_receipt(root, manifest, object_path, output, receipt, replay=replay)
-    soname, needed = _validate_tls_elf(output, replay=replay)
+    machine = "Advanced Micro Devices X86-64" if native_arch()["arch"] == "x86_64" else "AArch64"
+    soname, needed = _validate_tls_elf(output, replay=replay, machine=machine)
     return {
         "schema": TIMER_TLS_AUDIT_SCHEMA,
         "product": recorded(root, replay),

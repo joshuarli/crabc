@@ -96,7 +96,11 @@ static void deny_fork(void) {
     struct program { unsigned short count; struct instruction *instructions; };
     struct instruction instructions[] = {
         {0x20, 0, 0, 0},
+#ifdef SYS_fork
         {0x15, 0, 1, SYS_fork},
+#else
+        {0x15, 0, 1, SYS_clone},
+#endif
         {0x06, 0, 0, 0x00050000 | EAGAIN},
         {0x06, 0, 0, 0x7fff0000},
     };

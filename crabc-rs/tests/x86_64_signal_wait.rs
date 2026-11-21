@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, offset_of, size_of};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -158,7 +157,7 @@ fn wait_until_blocked(tid: i32) {
     let path = format!("/proc/self/task/{tid}/syscall");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
-        if std::fs::read_to_string(&path).unwrap().starts_with("128 ") {
+        if std::fs::read_to_string(&path).unwrap().starts_with(if cfg!(target_arch = "aarch64") { "137 " } else { "128 " }) {
             return;
         }
         assert!(std::time::Instant::now() < deadline, "waiter never entered rt_sigtimedwait");
@@ -181,7 +180,7 @@ fn x86_64_signal_wait_preserves_kernel_eintr_and_errno() {
     let mut interrupt = signal::SignalSet::EMPTY;
     interrupt.insert(signal::Signal::USR2);
     let action = signal::SigAction::new(
-        signal::SigHandler::Simple(wait_interrupt), signal::SigActionFlags::empty(),
+        signal::SigHandler::Simple(wait_interrupt), #[cfg(target_arch = "aarch64")] signal::SignalSet::EMPTY, signal::SigActionFlags::empty(),
     );
     // SAFETY: The static handler only stores a lock-free atomic flag and stays
     // executable until the original disposition is reinstated after delivery.

@@ -10,7 +10,7 @@
 //! Callers must use process-clone flags only; in particular `CLONE_THREAD`,
 //! `CLONE_VM`, and `CLONE_SETTLS` are outside this leaf.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 raw clone leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_void;
@@ -30,6 +30,7 @@ extern "C" {
     ) -> i64;
 }
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -86,3 +87,6 @@ pub(crate) unsafe fn clone_raw(
 ) -> i64 {
     unsafe { __crabc_x86_clone_raw(func, stack, flags, arg, core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut()) }
 }
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("clone_aarch64.S"));

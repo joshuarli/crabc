@@ -169,6 +169,37 @@ def validate(records: list[Record]) -> None:
                 )
 
 
+AARCH64_RECORD = struct.Struct("<HHIIIQQ16s")
+AARCH64_MODES = (0, 0x800000, 0x400000, 0xc00000)
+
+
+def read_aarch64(path: Path):
+    data = Path(path).read_bytes()
+    if len(data) != AARCH64_RECORD.size * 244:
+        raise ValueError(f"{path}: expected 244 complete records")
+    return list(AARCH64_RECORD.iter_unpack(data))
+
+
+def compare_aarch64(reference, candidate):
+    if len(reference) != 244 or len(candidate) != 244:
+        raise ValueError("expected 244 complete binary128 records")
+    cursor = 0
+    for mode in AARCH64_MODES:
+        for function, count in ((1, 13), (2, 24), (3, 24)):
+            for index in range(count):
+                oracle, actual = reference[cursor], candidate[cursor]
+                cursor += 1
+                for record in (oracle, actual):
+                    if (record[:3] != (function, index, mode) or record[5] != record[6]
+                            or record[5] & 0xc00000 != mode):
+                        raise ValueError(f"invalid identity or FPCR: {function}/{index}/{mode}")
+                    if record[3] & 0x1f != record[4]:
+                        raise ValueError(f"FPSR and fenv disagree: {function}/{index}/{mode}")
+                if oracle != actual:
+                    raise ValueError(f"binary128 result or flags differ: {function}/{index}/{mode}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("records", type=Path)

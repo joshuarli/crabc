@@ -227,6 +227,30 @@ class FamilyExecutionTests(unittest.TestCase):
         (fixture / 'z-directory').chmod(0o755)
         self.assertNotEqual(execution.snapshot(fixture)['z-directory'], observed['z-directory'])
 
+    def test_digest_reuses_unchanged_files_and_rehashes_rewritten_ones(self):
+        path = self.work / 'payload'
+        path.write_bytes(b'payload')
+        with patch.object(execution, 'RACY_WINDOW_NS', -1), patch.dict(execution._DIGESTS, clear=True):
+            first = execution.digest(path)
+            self.assertEqual(first, hashlib.sha256(b'payload').hexdigest())
+            with patch.object(Path, 'open', side_effect=AssertionError('unchanged file reread')):
+                self.assertEqual(execution.digest(path), first)
+            recorded = path.stat()
+            path.write_bytes(b'changed')
+            os.utime(path, ns=(recorded.st_atime_ns, recorded.st_mtime_ns))
+            self.assertEqual(execution.digest(path), hashlib.sha256(b'changed').hexdigest())
+            replacement = self.work / 'replacement'
+            replacement.write_bytes(b'payload')
+            os.replace(replacement, path)
+            self.assertEqual(execution.digest(path), first)
+
+    def test_digest_does_not_reuse_files_changed_within_the_racy_window(self):
+        path = self.work / 'payload'
+        path.write_bytes(b'payload')
+        with patch.dict(execution._DIGESTS, clear=True):
+            execution.digest(path)
+            self.assertEqual(execution._DIGESTS, {})
+
     def test_declared_leaf_must_be_unique_and_inside_exact_step_scratch(self):
         step = self.work / 'leaf'
         (step / 'tmp/retained').mkdir(parents=True)
@@ -377,6 +401,22 @@ class FamilyMatrixTests(unittest.TestCase):
         shutil.rmtree(self.run / 'runs/reproduction')
         with self.assertRaisesRegex(execution.ExecutionError, 'product roster'):
             execution.collect(self.root, self.run)
+
+    def test_a_receipt_revalidates_at_another_revision_of_the_same_product_source(self):
+        path = self.execute()
+        moved = {**self.source, 'revision': '3' * 40}
+        self.inputs['source'] = moved
+        execution.source_seal.seal.return_value = moved
+        record = execution.revalidate_receipt(self.root, path)
+        self.assertEqual(record['inputs']['source'], moved)
+
+    def test_a_receipt_rejects_another_product_source(self):
+        path = self.execute()
+        changed = {'revision': '3' * 40, 'content_sha256': '4' * 64}
+        self.inputs['source'] = changed
+        execution.source_seal.seal.return_value = changed
+        with self.assertRaisesRegex(execution.ExecutionError, 'execution source changed'):
+            execution.revalidate_receipt(self.root, path)
 
     def test_one_product_recompiles_a_different_object_and_cannot_seal(self):
         runner = self.root / 'runner.sh'

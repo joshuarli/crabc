@@ -19,9 +19,10 @@
 //! x86 FS+40 guard and its worker copies; static startup retains the inert weak
 //! `__init_ssp` compatibility spelling without reseeding a running thread.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 stack-check failure requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     ".text",
     ".global __stack_chk_fail",
@@ -34,4 +35,23 @@ core::arch::global_asm!(
     ".type __stack_chk_fail_local,@function",
     ".set __stack_chk_fail_local, __stack_chk_fail",
     ".section .note.GNU-stack,\"\",@progbits",
+);
+// musl 1.2.6 src/env/__stack_chk_fail.c calls the generic a_crash()
+// (src/internal/atomic.h: a volatile store to address 0); the pinned GCC
+// oracle emits this store followed by brk #0x3e8.
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".text",
+    ".global __stack_chk_fail",
+    ".type __stack_chk_fail,%function",
+    "__stack_chk_fail:",
+    "mov x0, #0",
+    "strb wzr, [x0]",
+    "brk #0x3e8",
+    ".size __stack_chk_fail, .-__stack_chk_fail",
+    ".weak __stack_chk_fail_local",
+    ".hidden __stack_chk_fail_local",
+    ".type __stack_chk_fail_local,%function",
+    ".set __stack_chk_fail_local, __stack_chk_fail",
+    ".section .note.GNU-stack,\"\",%progbits",
 );

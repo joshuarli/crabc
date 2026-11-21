@@ -536,7 +536,7 @@ def _require_pthread(root: Path, receipt: Path, matrix_identity: dict[str, objec
             and result.get("family") == "libc.pthread-tls", "pthread family receipt contract differs")
     inputs = result.get("inputs")
     require(isinstance(inputs, dict) and same(inputs.get("family_execution"), matrix_identity)
-            and same(inputs.get("source"), source), "pthread family source or POSIX matrix differs")
+            and source_seal.same_evidence(inputs.get("source"), source), "pthread family source or POSIX matrix differs")
     require(result.get("family_completion") is False and result.get("promotion_ready") is False
             and result.get("public_support") is False, "pthread family receipt is promoting")
     return result
@@ -1372,7 +1372,7 @@ def validate_receipt(root: Path, receipt: Path) -> dict[str, Any]:
             require(same(final_matrix, initial_matrix), "POSIX family execution evidence changed during collection")
 
         observed = collect(root, request.relative_to(root), end_validation=end_validation)
-        require(same(retained, observed), "family receipt differs from reconstructed evidence")
+        require(source_seal.same_evidence(retained, observed), "family receipt differs from reconstructed evidence")
         return observed
 
 
@@ -1419,7 +1419,7 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
     require(request["schema"] == SCHEMA and set(requests) == set(COMPONENTS),
             "family admission request differs")
     matrix = _require_matrix(_strict_json(matrix_path, "family admission POSIX matrix"))
-    require(same(matrix["inputs"].get("source"), source), "family admission POSIX source differs")
+    require(source_seal.same_evidence(matrix["inputs"].get("source"), source), "family admission POSIX source differs")
     _matrix_inputs, products = _product_pairs(root, matrix)
     static_preparation = _input_receipt(root, matrix["inputs"], "static_preparation")
     dynamic_qualification = _input_receipt(root, matrix["inputs"], "dynamic_qualification")

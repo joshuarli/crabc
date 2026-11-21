@@ -9,11 +9,14 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
+build_arch=()
+[ "$arch" = x86_64 ] || build_arch=(--architecture "$arch")
 readonly probe="$ROOT/compat/x86_64/owned_utmpx_probe.c"
 readonly header_c="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.c"
 readonly header_cxx="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.cpp"
-readonly interpreter=/lib/ld-crabc-x86_64.so.1
+readonly interpreter="/lib/ld-crabc-$arch.so.1"
 declare -a link_identity_records=()
 
 # Receipt collection opts in to command retention. Ordinary focused runs keep
@@ -544,7 +547,7 @@ PY
 # consumed unchanged by pinned musl, static/static-PIE, and dynamic PIE/non-PIE
 # links. Supplied products replace only their own product creation.
 if [ "$dynamic_was_supplied" -eq 0 ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${build_arch[@]}" \
         --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
@@ -628,7 +631,7 @@ static_product=''
 if [ "$static_was_supplied" -eq 1 ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${build_arch[@]}" \
         --output "$work/static-sysroot" >"$work/static-build.json"
     static_product="$work/static-sysroot"
 fi

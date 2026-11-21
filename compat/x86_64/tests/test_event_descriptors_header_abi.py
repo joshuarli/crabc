@@ -42,19 +42,17 @@ class EventDescriptorsHeaderAbiTests(unittest.TestCase):
         ):
             self.assertIn(phrase, eventfd)
         for phrase in (
-            "struct inotify_event { int wd; uint32_t mask, cookie, len; char name[]; };",
-            "#define IN_ALL_EVENTS 0x00000fff",
-            "#define IN_ONESHOT 0x80000000",
             "int inotify_init(void);",
             "int inotify_init1(int);",
             "int inotify_add_watch(int, const char *, uint32_t);",
             "int inotify_rm_watch(int, int);",
         ):
             self.assertIn(phrase, inotify)
-        self.assertIn(
-            "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\n#define AT_EMPTY_PATH 0x1000\n#endif",
-            fcntl,
-        )
+        self.assertRegex(inotify, r"struct inotify_event\s*\{\s*int wd;\s*uint32_t mask, cookie, len;\s*char name\[\];\s*\};")
+        self.assertRegex(inotify, r"#define\s+IN_ALL_EVENTS\s+0x00000fff\b")
+        self.assertRegex(inotify, r"#define\s+IN_ONESHOT\s+0x80000000\b")
+        extended = fcntl.split("#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\n", 1)[1].split("\n#endif", 1)[0]
+        self.assertIn("#define AT_EMPTY_PATH 0x1000", extended)
 
     def test_probes_and_runner_close_direct_and_immediate_profile_boundaries(self) -> None:
         for probe in (C_PROBE.read_text(encoding="utf-8"), CXX_PROBE.read_text(encoding="utf-8")):

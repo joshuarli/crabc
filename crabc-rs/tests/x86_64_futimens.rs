@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::cell::Cell;
 use core::mem::{align_of, size_of};
@@ -29,8 +28,8 @@ impl AsFd for TrackingFd<'_> {
 }
 
 fn assert_times(stat: fs::Stat, access: (i64, i64), modification: (i64, i64)) {
-    assert_eq!((stat.st_atime, stat.st_atime_nsec), access);
-    assert_eq!((stat.st_mtime, stat.st_mtime_nsec), modification);
+    assert_eq!((stat.st_atime, i64::try_from(stat.st_atime_nsec).unwrap()), access);
+    assert_eq!((stat.st_mtime, i64::try_from(stat.st_mtime_nsec).unwrap()), modification);
 }
 
 fn assert_current_timestamp(
@@ -59,8 +58,8 @@ fn assert_current_timestamp(
 }
 
 fn assert_current_times(stat: fs::Stat, before: time::Timespec, after: time::Timespec) {
-    assert_current_timestamp((stat.st_atime, stat.st_atime_nsec), before, after);
-    assert_current_timestamp((stat.st_mtime, stat.st_mtime_nsec), before, after);
+    assert_current_timestamp((stat.st_atime, i64::try_from(stat.st_atime_nsec).unwrap()), before, after);
+    assert_current_timestamp((stat.st_mtime, i64::try_from(stat.st_mtime_nsec).unwrap()), before, after);
 }
 
 #[test]
@@ -86,7 +85,7 @@ fn x86_64_futimens_uses_the_kernel_timespec_layout_and_sentinels() {
     fs::futimens(&file, &explicit).expect("set explicit descriptor timestamps");
 
     let before = fs::fstat(&file).expect("observe explicit descriptor timestamps");
-    assert_eq!((before.st_atime, before.st_atime_nsec), (41, 123_456_789));
+    assert_eq!((before.st_atime, i64::try_from(before.st_atime_nsec).unwrap()), (41, 123_456_789));
     assert_eq!((before.st_mtime, before.st_mtime_nsec), (42, 987_654_321));
 
     let sentinels = Timestamps {
@@ -105,12 +104,12 @@ fn x86_64_futimens_uses_the_kernel_timespec_layout_and_sentinels() {
 
     let after = fs::fstat(&file).expect("observe descriptor timestamp sentinels");
     assert_eq!(
-        (after.st_atime, after.st_atime_nsec),
-        (before.st_atime, before.st_atime_nsec),
+        (after.st_atime, i64::try_from(after.st_atime_nsec).unwrap()),
+        (before.st_atime, i64::try_from(before.st_atime_nsec).unwrap()),
         "UTIME_OMIT must preserve the selected timestamp",
     );
     assert_current_timestamp(
-        (after.st_mtime, after.st_mtime_nsec),
+        (after.st_mtime, i64::try_from(after.st_mtime_nsec).unwrap()),
         current_before,
         current_after,
     );

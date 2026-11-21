@@ -3,6 +3,9 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+build_arch=()
+[ "$arch" = x86_64 ] || build_arch=(--architecture "$arch")
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 provided_dynamic="${1:-}"
 if [ -n "$provided_dynamic" ]; then provided_dynamic="$(realpath -e "$provided_dynamic")"; fi
@@ -21,7 +24,7 @@ readonly work="$(mktemp -d "$TMPDIR/owned-passwd.XXXXXX")"
 chmod a+rx "$work"
 printf 'passwd evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_passwd_probe.c"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 readonly cases=(lookup ranges enumeration stream output missing directory not-directory read-error open-error local-only threads database-contract fork cancellation allocation)
 mkdir -p "$work/execution-root/etc"
 # Preserve the complete installed provider roster and musl's weak cursor alias.
@@ -50,7 +53,7 @@ assert end[1:3] == start[1:3] and end[6] == start[6], (start, end)
 PYTHON
 }
 if [ -z "$provided_dynamic" ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" >"$work/static-build.json"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${build_arch[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     "$work/static-sysroot/bin/crabc-cc" -static-pie -std=c11 -fno-builtin -c "$probe" -o "$work/workload.o"
 else
     "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c "$probe" -o "$work/workload.o"
@@ -72,7 +75,7 @@ if [ -z "$provided_dynamic" ]; then
             cmp "$work/oracle-$scenario.stderr" "$work/$mode-$scenario.stderr"
         done
     done
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${build_arch[@]}" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
 assert_passwd_symbols "$provided_dynamic/usr/lib/libc.so" --dyn-syms "$work/dynamic-provider-symbols.txt"
@@ -83,7 +86,7 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             command=("/consumer-$mode")
-            if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode"); fi
+            if [ "$entry" = direct ]; then command=("/lib/ld-crabc-$arch.so.1" "/consumer-$mode"); fi
             timeout 30 chroot "$work/execution-root" "${command[@]}" "$scenario" owned >"$work/$mode-$entry-$scenario.stdout" 2>"$work/$mode-$entry-$scenario.stderr"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$entry-$scenario.stdout"
             cmp "$work/oracle-$scenario.stderr" "$work/$mode-$entry-$scenario.stderr"

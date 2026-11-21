@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import tarfile
 import tempfile
@@ -20,8 +21,13 @@ import owned_static_sysroot_package as shared_package
 EXECUTABLE_PAYLOADS = frozenset({
     "bin/crabc-cc-dynamic",
     "lib/ld-crabc-x86_64.so.1",
+    "lib/ld-crabc-aarch64.so.1",
+    "lib/ld-crabc-aarch64-hardened.so.1",
     "usr/lib/libc.so",
 })
+
+
+ALIASES = driver.shared.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture(qualification.ARCH["arch"])
 
 
 def package(root: Path, output: Path) -> None:
@@ -73,7 +79,7 @@ def require_canonical_ustar(archive: tarfile.TarFile, members: list[tarfile.TarI
         if member.offset != offset or member.offset_data != offset + tarfile.BLOCKSIZE:
             raise driver.shared.DriverError("package archive format differs")
         try:
-            header = canonical_member_info(member.name, member.size, driver.ALIASES).tobuf(
+            header = canonical_member_info(member.name, member.size, ALIASES).tobuf(
                 format=tarfile.USTAR_FORMAT
             )
         except (ValueError, OverflowError, tarfile.TarError) as error:
@@ -122,7 +128,7 @@ def extract(package_path: Path, output: Path) -> None:
             if path.is_absolute() or ".." in path.parts or path.as_posix() != entry.name or not entry.name:
                 raise driver.shared.DriverError("unsafe package member path")
             if not (entry.isfile() or entry.issym()): raise driver.shared.DriverError("nonregular package member")
-            if entry.issym() and driver.ALIASES.get(entry.name) != entry.linkname:
+            if entry.issym() and ALIASES.get(entry.name) != entry.linkname:
                 raise driver.shared.DriverError("unapproved package symlink")
             expected_mode = (0o777 if entry.issym() else
                              0o755 if entry.name in EXECUTABLE_PAYLOADS else 0o644)
@@ -136,21 +142,24 @@ def extract(package_path: Path, output: Path) -> None:
             manifest = json.loads(archive.extractfile(manifest_member).read())
         except (ValueError, UnicodeDecodeError) as error:
             raise driver.shared.DriverError("invalid package manifest JSON") from error
-        if not isinstance(manifest, dict) or manifest.get("format") != driver.FORMAT or manifest.get("symlinks") != driver.ALIASES:
+        arm = qualification.ARCH["arch"] == "aarch64"
+        expected_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else driver.FORMAT
+        if not isinstance(manifest, dict) or manifest.get("format") != expected_format or manifest.get("symlinks") != ALIASES:
             raise driver.shared.DriverError("wrong package contract")
         files = manifest.get("files", {})
-        if manifest.get("target") != driver.shared.TARGET or not isinstance(files, dict) or not driver.REQUIRED <= files.keys():
+        required = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/libcrabc-builtins.a", "bin/crabc-cc-dynamic"} if arm else driver.REQUIRED
+        if manifest.get("target") != qualification.ARCH["target_triple"] or not isinstance(files, dict) or not required <= files.keys():
             raise driver.shared.DriverError("incomplete package contract")
-        if set(names) != {*files, "share/crabc/manifest.json", *driver.ALIASES}:
+        if set(names) != {*files, "share/crabc/manifest.json", *ALIASES}:
             raise driver.shared.DriverError("package manifest roster mismatch")
         if names != sorted(names):
             raise driver.shared.DriverError("package member order differs")
         require_canonical_ustar(archive, members)
         payloads = {}
         for entry in members:
-            if entry.name in driver.ALIASES and not entry.issym():
+            if entry.name in ALIASES and not entry.issym():
                 raise driver.shared.DriverError("canonical compatibility alias is not a symlink")
-            if entry.name not in driver.ALIASES and not entry.isfile():
+            if entry.name not in ALIASES and not entry.isfile():
                 raise driver.shared.DriverError("regular payload replaced by symlink")
             if entry.isfile():
                 payload = archive.extractfile(entry).read()
@@ -163,6 +172,14 @@ def extract(package_path: Path, output: Path) -> None:
     with tempfile.TemporaryDirectory(prefix=".dynamic-extraction.", dir=output.parent) as temporary:
         staged = Path(temporary) / "installed"
         materialize_payload(staged, payloads)
+        if arm:
+            loader = "lib/ld-crabc-aarch64-hardened.so.1" if manifest.get("hardening_profile") == "hardened" else "lib/ld-crabc-aarch64.so.1"
+            source = staged / "usr/lib/libc.so"
+            target = staged / loader
+            if loader not in payloads or source.read_bytes() != target.read_bytes():
+                raise driver.shared.DriverError("packaged loader differs from libc")
+            target.unlink()
+            os.link(source, target)
         driver.validate(staged)
         qualification.product_identity(staged)
         shared_package.publish_noreplace(staged, output, "dynamic extraction output")
@@ -175,7 +192,7 @@ def materialize_payload(output: Path, payloads: dict[str, tuple[bytes, int]]) ->
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
         path.chmod(mode & 0o755)
-    for relative, target in driver.ALIASES.items():
+    for relative, target in ALIASES.items():
         (output / relative).symlink_to(target)
 
 

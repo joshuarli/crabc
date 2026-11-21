@@ -18,42 +18,12 @@ CXX_PROBE = ROOT / "compat" / "x86_64" / "sysmacros_header_source_form_probe.cpp
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
 MUSL_X86_SHA256 = "5fda7d3b3af6553c9499ffb428c42e5d0da1e4e8627bd3c2211f4aaa7525a37e"
-LEGACY_AARCH64_SHA256 = "b9ba9f11ba75e7557c3809a5539ba0633477a3d64f7ce6a21f62d16439a07519"
-
-
-def split_x86_branch(path: Path) -> tuple[bytes, bytes]:
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    if not lines or lines[0] != "#if defined(__x86_64__)\n":
-        raise AssertionError(f"{path} must begin with its x86 source-form branch")
-
-    depth = 1
-    x86: list[str] = []
-    legacy: list[str] = []
-    in_legacy = False
-    for line in lines[1:]:
-        if not in_legacy and line.startswith("#else") and depth == 1:
-            in_legacy = True
-            continue
-        if in_legacy and line.startswith("#endif") and depth == 1:
-            break
-        if in_legacy:
-            legacy.append(line)
-        else:
-            x86.append(line)
-        if line.startswith(("#if", "#ifdef", "#ifndef")):
-            depth += 1
-        elif line.startswith("#endif"):
-            depth -= 1
-    else:
-        raise AssertionError(f"{path} is missing its closing x86 source-form branch")
-    return "".join(x86).encode(), "".join(legacy).encode()
-
-
 class SysmacrosHeaderSourceFormTests(unittest.TestCase):
-    def test_x86_body_matches_pinned_musl_and_non_x86_body_stays_frozen(self) -> None:
-        x86, legacy = split_x86_branch(HEADER)
-        self.assertEqual(hashlib.sha256(x86).hexdigest(), MUSL_X86_SHA256)
-        self.assertEqual(hashlib.sha256(legacy).hexdigest(), LEGACY_AARCH64_SHA256)
+    def test_both_architectures_use_pinned_musl_source(self) -> None:
+        source = HEADER.read_bytes()
+        self.assertEqual(hashlib.sha256(source).hexdigest(), MUSL_X86_SHA256)
+        self.assertNotIn(b"__x86_64__", source)
+        self.assertNotIn(b"__aarch64__", source)
 
     def test_direct_c_and_cpp_probes_cover_the_device_macro_round_trip(self) -> None:
         for probe_path in (C_PROBE, CXX_PROBE):

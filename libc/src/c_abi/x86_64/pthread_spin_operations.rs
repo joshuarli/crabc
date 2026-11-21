@@ -22,7 +22,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 pthread spin operations require little-endian Linux/x86-64");
 
 use core::ffi::c_int;
@@ -38,6 +38,7 @@ const _: () = {
 };
 
 /// Hint to an x86 processor that the current loop is a spin-wait.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn spin_pause() {
     // SAFETY: `pause` has no memory operands and is valid on the selected
@@ -46,6 +47,14 @@ fn spin_pause() {
     unsafe {
         core::arch::asm!("pause", options(nostack, preserves_flags));
     }
+}
+
+/// musl 1.2.6 aarch64 has no `a_spin`; src/internal/atomic.h falls back to
+/// `a_barrier`, which arch/aarch64/atomic_arch.h defines as `dmb ish`.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn spin_pause() {
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 // Musl's `src/thread/pthread_spin_lock.c` object.

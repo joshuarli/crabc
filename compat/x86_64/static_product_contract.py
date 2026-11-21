@@ -44,12 +44,15 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from compat.x86_64 import source_seal
+from compat.x86_64.native_arch import native_arch
 
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "static-product.toml"
 CONTRACT_SCHEMA = "crabc.x86_64-owned-static-product/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-owned-static-qualification/v1"
-PUBLICATION = ROOT / ".work" / "x86_64" / "owned-static-qualification.json"
-REPORT_ROOT = ROOT / ".work" / "x86_64" / "reports" / "owned-static-product"
+ARCH = native_arch()
+WORK_PARENT = ROOT / ".work" / ARCH["work_name"]
+PUBLICATION = WORK_PARENT / "owned-static-qualification.json"
+REPORT_ROOT = WORK_PARENT / "reports" / "owned-static-product"
 OWNER_FAMILY = "sysroot.static-tls"
 PRODUCTS = ("primary", "extracted")
 MODE_PATHS = ("static-et-exec", "static-pie")
@@ -301,6 +304,63 @@ def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, An
             and set(rows) == expected, f"{product} installed tree digest rows differ from the manifest")
 
 
+def validate_static_product_scope(manifest: Mapping[str, Any]) -> None:
+    scope = manifest.get("scope", "")
+    require(isinstance(scope, str) and all(phrase in scope for phrase in (
+        "private-static-pthread-tls-consumer-slice", "not-family-completion", "not-public-support")),
+        "static product scope differs")
+    omitted = manifest.get("not_selected")
+    require(isinstance(omitted, list) and all(item in omitted for item in (
+        "shared libc", "dynamic loader or PT_INTERP", "complete compiler-helper closure",
+        "sysroot.static-tls family completion", "sysroot.owned-artifact family completion",
+        "x86-64 promotion or public support")) and "distribution archive or extracted smoke" not in omitted,
+        "static product non-selection differs")
+    driver = manifest.get("sealed_static_driver")
+    require(isinstance(driver, dict) and driver.get("path") == "bin/crabc-cc"
+            and driver.get("status") == "planned-owned-static-product-seed-not-family-completion-not-public-support"
+            and driver.get("modes") == [
+                {"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
+                {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}],
+            "static product sealed driver differs")
+    unproven = driver.get("not_proven_by_this_seed")
+    require(isinstance(unproven, list) and "declared static-product coverage suite" in unproven
+            and "two-clean-build and extracted-install product reproducibility" not in unproven,
+            "static product coverage claims differ")
+
+
+def validate_native_static_product(root: Path) -> None:
+    import owned_posix_product_evidence as evidence
+
+    root = evidence_directory(root)
+    manifest = read_json(root / "share/crabc/manifest.json")
+    if manifest.get("format") != "crabc-aarch64-owned-sysroot-v1":
+        path, _ = evidence._validate_static_product_uncached(root)
+        static = read_json(path)
+        validate_static_product_scope(static)
+        require(static.get("source_sha256") == source_seal.product_source_digest(ROOT),
+                "static product source differs")
+        return
+    from scripts import build_x86_64_owned_combined_sysroot as combined
+    import crabc_cc_static
+
+    record = combined.validate(root)
+    component = record["products"]["static"]
+    static = read_json(root / component["manifest"])
+    validate_static_product_scope(static)
+    require(static.get("source_sha256") == source_seal.product_source_digest(ROOT), "static product source differs")
+    placement = component["placements"].get("share/crabc/crt.provenance.json")
+    require(isinstance(placement, str), "static CRT provenance is missing")
+    profile = crabc_cc_static.NativeRuntimeProfile(record["hardening_profile"])
+    crabc_cc_static.validate_crt_provenance(root, placement, profile)
+    evidence._physical_executable(root / "bin/crabc-cc", "static product driver")
+    evidence._physical_directory(root / "usr/include", "static product headers")
+    evidence._validate_link_input_modes(root, evidence.STATIC_LINK_INPUT_MODES, "static link input")
+    for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o"):
+        header = (root / "usr/lib" / name).read_bytes()[:20]
+        require(len(header) == 20 and header[:7] == b"\x7fELF\x02\x01\x01"
+                and header[16:20] == b"\x01\x00\xb7\x00", f"arm64 static ELF differs: {name}")
+
+
 def evidence_directory(path: Path) -> Path:
     path = path.absolute()
     require(path.resolve() == path and path.is_relative_to(ROOT / ".work"),
@@ -340,7 +400,7 @@ def collect(work_dir: Path, started_source: str) -> Path:
         files[name] = copy_file(source_path, report / name)
 
     for product, tree in (("primary", "primary"), ("reproduction", "reproduction"),
-                          ("extracted", "extracted-tree/crabc-x86_64-owned-static-sysroot")):
+                          ("extracted", f"extracted-tree/crabc-{ARCH['arch']}-owned-static-sysroot")):
         retain(work_dir / tree / INSTALLED_MANIFEST, f"products/{product}/manifest.json")
     require_product_source({product: read_json(report / "products" / product / "manifest.json")
                             for product in ("primary", "reproduction", "extracted")}, source)
@@ -416,8 +476,9 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     require(re.fullmatch(r"[0-9a-f]{64}", candidate) is not None and candidate == observed["candidate"],
             f"{label} candidate digest differs from the observed executable")
     link = read_json(base / "link.receipt.json")
-    require(link.get("format") == "crabc-x86-64-sealed-static-driver-v1"
-            and link.get("target") == "x86_64-unknown-linux-musl", f"{label} link receipt format drifted")
+    expected_format = "crabc-aarch64-sealed-static-driver-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-sealed-static-driver-v1"
+    require(link.get("format") == expected_format
+            and link.get("target") == ARCH["target_triple"], f"{label} link receipt format drifted")
     require(link.get("output") == {"path": "candidate", "sha256": candidate}, f"{label} link output drifted")
     require(link.get("map", {}).get("sha256") == observed["link.receipt.map"]
             and link.get("trace", {}).get("sha256") == digest(base / "link.receipt.trace"),
@@ -445,7 +506,7 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     # root inside the runner's private work tree; application objects must
     # come from this case's own consumer directory.
     trace = [line.removeprefix("trace: ") for line in (base / "link.receipt.trace").read_text(encoding="utf-8").splitlines() if line]
-    tree = r"primary" if product == "primary" else r"extracted-tree/crabc-x86_64-owned-static-sysroot"
+    tree = r"primary" if product == "primary" else f"extracted-tree/crabc-{ARCH['arch']}-owned-static-sysroot"
     work = r"/[^()]*/crabc-x86-64-owned-static-sysroot\.[A-Za-z0-9]+"
     runtime = re.compile(work + "/" + tree + r"/usr/lib/(" + re.escape(entry)
                          + r"|crti\.o|crtn\.o|(libc\.a|libcrabc-builtins\.a)\(([^()/]+)\))")
@@ -457,11 +518,13 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
             continue
         match = runtime.fullmatch(line)
         require(match is not None, f"{label} link trace names an undeclared input: {line}")
-        saw_builtins_member |= match.group(2) == "libcrabc-builtins.a" and match.group(3) == "crabc-builtins.o"
+        saw_builtins_member |= (match.group(2) == "libcrabc-builtins.a" and
+                                match.group(3) == "crabc-builtins.o")
     require(saw_builtins_member, f"{label} did not extract the owned compiler-helper member")
 
     header = (base / "file-header").read_text(encoding="utf-8")
-    require(re.search(r"Machine:\s+Advanced Micro Devices X86-64", header) is not None, f"{label} is not EM_X86_64")
+    machine = "AArch64" if ARCH["arch"] == "aarch64" else "Advanced Micro Devices X86-64"
+    require(re.search(r"Machine:\s+" + machine, header) is not None, f"{label} ELF machine differs")
     require(re.search(r"Type:\s+" + ("DYN" if pie else "EXEC") + r"\b", header) is not None,
             f"{label} ELF type is not {elf_type}")
     rows = [line.split() for line in (base / "program-headers").read_text(encoding="utf-8").splitlines()]
@@ -476,8 +539,9 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
     dynamic = (base / "dynamic").read_text(encoding="utf-8")
     validate_static_dynamic_tags(dynamic, rows, pie, label)
     relocations = (base / "relocations").read_text(encoding="utf-8")
-    kinds = set(re.findall(r"\bR_X86_64_[A-Z0-9_]+", relocations))
-    require(kinds <= ({"R_X86_64_RELATIVE"} if pie else set()),
+    kinds = set(re.findall(r"\bR_(?:X86_64|AARCH64)_[A-Z0-9_]+", relocations))
+    relative = "R_AARCH64_RELATIVE" if ARCH["arch"] == "aarch64" else "R_X86_64_RELATIVE"
+    require(kinds <= ({relative} if pie else set()),
             f"{label} retains non-relative dynamic relocations: {sorted(kinds)}")
 
 
@@ -494,7 +558,7 @@ def validate_archive_replay(report: Path, archives: Mapping[str, str], manifest:
     require(archives["primary.tar.xz"] == archives["reproduction.tar.xz"],
             "independent static packages differ")
 
-    scratch = evidence_directory(ROOT / ".work/x86_64/tmp")
+    scratch = evidence_directory(WORK_PARENT / "tmp")
     scratch.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix=".verify-static-product.", dir=scratch) as temporary:
@@ -541,7 +605,8 @@ def validate_receipt(path: Path) -> dict[str, Any]:
     require_product_source(manifests, receipt["source_sha256"])
     require(manifests["primary"] == manifests["reproduction"] == manifests["extracted"],
             "installed manifests differ across clean builds and extraction")
-    require(manifests["primary"].get("format") == "crabc-x86-64-owned-static-sysroot-v1",
+    expected_format = "crabc-aarch64-owned-static-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-static-sysroot-v1"
+    require(manifests["primary"].get("format") == expected_format,
             "installed manifest format drifted")
     for product in ("primary", "reproduction"):
         validate_tree_manifest(report, product, manifests[product])

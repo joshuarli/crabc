@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, size_of, MaybeUninit};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -13,8 +12,14 @@ unsafe extern "C" fn epoll_mask_signal_handler(_: signal::Signal) {
 
 #[test]
 fn x86_64_epoll_event_uses_the_packed_kernel_layout_and_exact_tokens() {
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(size_of::<event::epoll::Event>(), 12);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(size_of::<event::epoll::Event>(), 16);
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(align_of::<event::epoll::Event>(), 1);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(align_of::<event::epoll::Event>(), 8);
     assert_eq!(
         event::epoll::CreateFlags::CLOEXEC.bits(),
         0x0008_0000
@@ -192,6 +197,8 @@ fn x86_64_epoll_masked_wait_temporarily_installs_and_restores_the_signal_mask() 
         unsafe { signal::sigaction(selected_signal, None) }.expect("query SIGUSR1 action");
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(epoll_mask_signal_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The handler is a static function with the x86-64 restorer owned

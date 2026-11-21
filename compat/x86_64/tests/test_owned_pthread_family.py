@@ -34,7 +34,7 @@ class PthreadFamilyContractTests(unittest.TestCase):
         self.receipt = self.root / ".work/posix/execution.json"
         self.receipt.write_text("{}\n", encoding="utf-8")
 
-    @unittest.skipUnless(Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+    @unittest.skipUnless(Path(family.ORACLE_COMPILER).is_file(),
                          "requires the pinned native oracle inputs")
     def test_worker_selector_reaches_only_the_named_caller_compile(self) -> None:
         static, dynamic = self.root / '.work/static', self.root / '.work/dynamic'
@@ -372,7 +372,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         }
         tool_identity = lambda path, digest: {"path": path, "sha256": digest, "size": 1}
         tools = {
-            "oracle": tool_identity("/usr/local/bin/crabc-x86_64-musl-gcc", "a" * 64),
+            "oracle": tool_identity(family.ORACLE_COMPILER, "a" * 64),
             "static_driver": {
                 "path": "/workspace/.work/products/primary-static/bin/crabc-cc",
                 "sha256": family.family.digest(driver), "size": driver.stat().st_size,
@@ -424,7 +424,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
 
         with patch.object(product_evidence, "retained_elf_facts", return_value={
                 "type": 3, "dynamic": True,
-                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "interpreters": [family.ORACLE_INTERPRETER],
                 "needed": ["libc.so"],
         }), patch.object(product_evidence, "validate_retained_link", side_effect=retained_link) as validate:
             record = family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
@@ -443,7 +443,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
 
         with patch.object(product_evidence, "retained_elf_facts", return_value={
                 "type": 3, "dynamic": True,
-                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "interpreters": [family.ORACLE_INTERPRETER],
                 "needed": ["libc.so"],
         }), patch.object(product_evidence, "validate_retained_link", side_effect=retained_link):
             original = family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
@@ -471,7 +471,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             path.write_text(json.dumps(receipt), encoding="utf-8")
         with patch.object(product_evidence, "retained_elf_facts", return_value={
                 "type": 3, "dynamic": True,
-                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "interpreters": [family.ORACLE_INTERPRETER],
                 "needed": ["libc.so"],
         }), patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
             with self.assertRaisesRegex(family.PthreadFamilyError, "pinned target linker"):
@@ -495,7 +495,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         receipt.write_text(json.dumps(value), encoding="utf-8")
         with patch.object(product_evidence, "retained_elf_facts", return_value={
                 "type": 3, "dynamic": True,
-                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "interpreters": [family.ORACLE_INTERPRETER],
                 "needed": ["libc.so"],
         }), patch.object(product_evidence, "validate_retained_link"):
             with self.assertRaisesRegex(family.PthreadFamilyError, "link mode differs"):
@@ -507,7 +507,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         output.write_bytes(b"foreign execution output\n")
         with patch.object(product_evidence, "retained_elf_facts", return_value={
                 "type": 3, "dynamic": True,
-                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "interpreters": [family.ORACLE_INTERPRETER],
                 "needed": ["libc.so"],
         }), patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
             with self.assertRaisesRegex(family.PthreadFamilyError, "output differs from pinned musl"):
@@ -595,7 +595,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             "files": {"source_manifest": "c" * 64},
         }
         report = {
-            "compiler": {"path": "/usr/local/bin/crabc-x86_64-musl-gcc", "sha256": "a" * 64, "size": 1},
+            "compiler": {"path": family.ORACLE_COMPILER, "sha256": "a" * 64, "size": 1},
             "runtime": {"path": "/opt/musl-1.2.6/lib/libc.so", "sha256": "b" * 64, "size": 2},
             "pin": {"path": "/opt/musl-1.2.6/.crabc-oracle", "sha256": "c" * 64, "size": 3},
         }
@@ -615,7 +615,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             value = family.family.file_identity(self.root, path)
             return {"path": "/workspace/" + value["path"], "sha256": value["sha256"], "size": value["size"]}
         tools = {
-            "oracle": {"path": "/usr/local/bin/crabc-x86_64-musl-gcc", "sha256": "a" * 64, "size": 1},
+            "oracle": {"path": family.ORACLE_COMPILER, "sha256": "a" * 64, "size": 1},
             "static_driver": identity(static / "bin/crabc-cc"),
             "dynamic_driver": identity(dynamic / "bin/crabc-cc-dynamic"),
             "compiler": {"path": "/opt/native-tools/gcc", "sha256": "b" * 64, "size": 2},
@@ -940,6 +940,30 @@ class PthreadPhaseInputTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             family.collect(self.root, self.work)
             self.assertEqual(len(calls), 3)
+
+    def _receipt_at_revision(self, source: dict[str, str]) -> dict[str, object]:
+        calls: list[Path] = []
+        with self._phase_patches(self._matrix_roster(), calls, forbid_input_products=True):
+            receipt = self.work / "receipt.json"
+            receipt.write_text(json.dumps(family.collect(self.root, self.work)), encoding="utf-8")
+
+        def recollected_matrix(_root: Path, path: Path) -> dict[str, object]:
+            matrix = family.family.read(path)
+            matrix["inputs"]["source"] = source
+            return matrix
+
+        with self._phase_patches(self._matrix_roster(), calls, forbid_input_products=True,
+                                 source_identity=lambda _root: source), \
+                patch.object(family.family, "validate_receipt", side_effect=recollected_matrix):
+            return family.validate_receipt(self.root, receipt)
+
+    def test_a_receipt_revalidates_at_another_revision_of_the_same_product_source(self) -> None:
+        record = self._receipt_at_revision({**self.source, "revision": "3" * 40})
+        self.assertEqual(record["inputs"]["source"], self.source)
+
+    def test_a_receipt_rejects_another_product_source(self) -> None:
+        with self.assertRaisesRegex(family.PthreadFamilyError, "POSIX matrix receipt changed"):
+            self._receipt_at_revision({"revision": "3" * 40, "content_sha256": "4" * 64})
 
     def test_collect_rejects_a_retained_product_mutation_at_the_phase_end(self) -> None:
         calls: list[Path] = []

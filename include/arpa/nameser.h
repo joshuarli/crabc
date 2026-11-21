@@ -116,7 +116,6 @@ typedef enum __ns_rcode {
     ns_r_badtime = 18
 } ns_rcode;
 
-#if defined(__x86_64__)
 typedef enum __ns_update_operation {
     ns_uop_delete = 0,
     ns_uop_add = 1,
@@ -145,33 +144,25 @@ typedef struct ns_tcp_tsig_state ns_tcp_tsig_state;
 #define NS_TSIG_ERROR_NO_TSIG -10
 #define NS_TSIG_ERROR_NO_SPACE -11
 #define NS_TSIG_ERROR_FORMERR -12
-#endif
 
 typedef enum __ns_type {
     ns_t_invalid = 0,
     ns_t_a = 1,
     ns_t_ns = 2,
-#if defined(__x86_64__)
     ns_t_md = 3,
     ns_t_mf = 4,
-#endif
     ns_t_cname = 5,
     ns_t_soa = 6,
-#if defined(__x86_64__)
     ns_t_mb = 7,
     ns_t_mg = 8,
     ns_t_mr = 9,
     ns_t_null = 10,
     ns_t_wks = 11,
-#endif
     ns_t_ptr = 12,
-#if defined(__x86_64__)
     ns_t_hinfo = 13,
     ns_t_minfo = 14,
-#endif
     ns_t_mx = 15,
     ns_t_txt = 16,
-#if defined(__x86_64__)
     ns_t_rp = 17,
     ns_t_afsdb = 18,
     ns_t_x25 = 19,
@@ -183,16 +174,12 @@ typedef enum __ns_type {
     ns_t_key = 25,
     ns_t_px = 26,
     ns_t_gpos = 27,
-#endif
     ns_t_aaaa = 28,
-#if defined(__x86_64__)
     ns_t_loc = 29,
     ns_t_nxt = 30,
     ns_t_eid = 31,
     ns_t_nimloc = 32,
-#endif
     ns_t_srv = 33,
-#if defined(__x86_64__)
     ns_t_atma = 34,
     ns_t_naptr = 35,
     ns_t_kx = 36,
@@ -200,9 +187,7 @@ typedef enum __ns_type {
     ns_t_a6 = 38,
     ns_t_dname = 39,
     ns_t_sink = 40,
-#endif
     ns_t_opt = 41,
-#if defined(__x86_64__)
     ns_t_apl = 42,
     ns_t_ds = 43,
     ns_t_sshfp = 44,
@@ -235,7 +220,6 @@ typedef enum __ns_type {
     ns_t_eui48 = 108,
     ns_t_eui64 = 109,
     ns_t_tkey = 249,
-#endif
     ns_t_tsig = 250,
     ns_t_ixfr = 251,
     ns_t_axfr = 252,
@@ -243,13 +227,11 @@ typedef enum __ns_type {
     ns_t_maila = 254,
     ns_t_any = 255,
     ns_t_zxfr = 256,
-#if defined(__x86_64__)
     ns_t_uri = 256,
     ns_t_caa = 257,
     ns_t_avc = 258,
     ns_t_ta = 32768,
     ns_t_dlv = 32769,
-#endif
     ns_t_max = 65536
 } ns_type;
 
@@ -264,9 +246,7 @@ typedef enum __ns_type {
 typedef enum __ns_class {
     ns_c_invalid = 0,
     ns_c_in = 1,
-#if defined(__x86_64__)
     ns_c_2 = 2,
-#endif
     ns_c_chaos = 3,
     ns_c_hs = 4,
     ns_c_none = 254,
@@ -274,7 +254,6 @@ typedef enum __ns_class {
     ns_c_max = 65536
 } ns_class;
 
-#if defined(__x86_64__)
 typedef enum __ns_key_types {
     ns_kt_rsa = 1,
     ns_kt_dh  = 2,
@@ -348,29 +327,17 @@ typedef enum __ns_cert_types {
 #define NS_SIG_FOOT 16
 #define NS_SIG_SIGNER 18
 #define NS_NXT_MAX 127
-#endif
 
-#if defined(__x86_64__)
 #define NS_GET16(s, cp) (void)((s) = ns_get16(((cp)+=2)-2))
 #define NS_GET32(l, cp) (void)((l) = ns_get32(((cp)+=4)-4))
 #define NS_PUT16(s, cp) ns_put16((s), ((cp)+=2)-2)
 #define NS_PUT32(l, cp) ns_put32((l), ((cp)+=4)-4)
-#else
-#define NS_GET16(s, cp) (void)((s) = ns_get16(((cp) += 2) - 2))
-#define NS_GET32(l, cp) (void)((l) = ns_get32(((cp) += 4) - 4))
-#define NS_PUT16(s, cp) ns_put16((s), ((cp) += 2) - 2)
-#define NS_PUT32(l, cp) ns_put32((l), ((cp) += 4) - 4)
-#endif
 
 unsigned ns_get16(const unsigned char *);
 unsigned long ns_get32(const unsigned char *);
 void ns_put16(unsigned, unsigned char *);
 void ns_put32(unsigned long, unsigned char *);
 
-#if !defined(__x86_64__)
-int dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int);
-int dn_skipname(const unsigned char *, const unsigned char *);
-#endif
 int ns_initparse(const unsigned char *, int, ns_msg *);
 int ns_parserr(ns_msg *, ns_sect, int, ns_rr *);
 int ns_skiprr(const unsigned char *, const unsigned char *, ns_sect, int);
@@ -396,13 +363,8 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 #define S_PREREQ ns_s_pr
 #define S_UPDATE ns_s_ud
 #define S_ADDT ns_s_ar
-#if defined(__x86_64__)
 #define DELETE ns_uop_delete
 #define ADD ns_uop_add
-#else
-#define DELETE 0
-#define ADD 1
-#endif
 #define QUERY ns_o_query
 #define IQUERY ns_o_iquery
 #define STATUS ns_o_status
@@ -422,27 +384,20 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 
 #define T_A ns_t_a
 #define T_NS ns_t_ns
-#if defined(__x86_64__)
 #define T_MD ns_t_md
 #define T_MF ns_t_mf
-#endif
 #define T_CNAME ns_t_cname
 #define T_SOA ns_t_soa
-#if defined(__x86_64__)
 #define T_MB ns_t_mb
 #define T_MG ns_t_mg
 #define T_MR ns_t_mr
 #define T_NULL ns_t_null
 #define T_WKS ns_t_wks
-#endif
 #define T_PTR ns_t_ptr
-#if defined(__x86_64__)
 #define T_HINFO ns_t_hinfo
 #define T_MINFO ns_t_minfo
-#endif
 #define T_MX ns_t_mx
 #define T_TXT ns_t_txt
-#if defined(__x86_64__)
 #define T_RP ns_t_rp
 #define T_AFSDB ns_t_afsdb
 #define T_X25 ns_t_x25
@@ -454,16 +409,12 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 #define T_KEY ns_t_key
 #define T_PX ns_t_px
 #define T_GPOS ns_t_gpos
-#endif
 #define T_AAAA ns_t_aaaa
-#if defined(__x86_64__)
 #define T_LOC ns_t_loc
 #define T_NXT ns_t_nxt
 #define T_EID ns_t_eid
 #define T_NIMLOC ns_t_nimloc
-#endif
 #define T_SRV ns_t_srv
-#if defined(__x86_64__)
 #define T_ATMA ns_t_atma
 #define T_NAPTR ns_t_naptr
 #define T_A6 ns_t_a6
@@ -499,12 +450,7 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 #define T_EUI48 ns_t_eui48
 #define T_EUI64 ns_t_eui64
 #define T_TKEY ns_t_tkey
-#endif
-#if !defined(__x86_64__)
-#define T_OPT ns_t_opt
-#endif
 #define T_ANY ns_t_any
-#if defined(__x86_64__)
 #define T_TSIG ns_t_tsig
 #define T_IXFR ns_t_ixfr
 #define T_AXFR ns_t_axfr
@@ -515,7 +461,6 @@ int ns_name_uncompress(const unsigned char *, const unsigned char *, const unsig
 #define T_AVC ns_t_avc
 #define T_TA ns_t_ta
 #define T_DLV ns_t_dlv
-#endif
 #define C_IN ns_c_in
 #define C_CHAOS ns_c_chaos
 #define C_HS ns_c_hs

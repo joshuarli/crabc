@@ -34,6 +34,7 @@ const FIOCLEX: c_int = 0x5451;
 // initialize rdx, so only the two named no-argument request words may tail
 // branch to the helper that installs a known zero.  All other requests retain
 // the incoming third SysV word for the musl-shaped three-word path.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -55,6 +56,10 @@ ioctl:
     no_argument = sym ioctl_no_argument,
     word = sym ioctl_word,
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("ioctl_aarch64.S"),
+    no_argument = sym ioctl_no_argument, word = sym ioctl_word);
 
 /// Forward one admitted no-vararg Linux request with an explicit zero word.
 ///

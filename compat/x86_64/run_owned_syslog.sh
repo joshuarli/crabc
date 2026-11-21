@@ -7,9 +7,7 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_syslog_probe.c"
-readonly interpreter=/lib/ld-crabc-x86_64.so.1
 readonly evidence_helper="$ROOT/compat/x86_64/owned_syslog_evidence.py"
 
 usage() {
@@ -44,7 +42,10 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
-[ "$(uname -sm)" = 'Linux x86_64' ]
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
+readonly interpreter="/lib/ld-crabc-$arch.so.1"
+[ "$(uname -s)" = Linux ]
 
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(realpath "$provided_static")"
@@ -134,14 +135,14 @@ audit_consumer() {
         readelf -sW "$provider" >"$candidate.provider-symbols"
     fi
     python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" \
-        "$candidate.provider-symbols" "$provider" <<'PY'
+        "$candidate.provider-symbols" "$provider" "$arch" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 
-source_root, family, mode, candidate_text, receipt_text, provider_symbols_text, provider_text = sys.argv[1:]
+source_root, family, mode, candidate_text, receipt_text, provider_symbols_text, provider_text, arch = sys.argv[1:]
 if family == 'dynamic':
     sys.path.insert(0, str(Path(source_root) / 'compat/x86_64'))
     import owned_dynamic_receipt as receipt_contract
@@ -154,8 +155,8 @@ def require(value, message):
         raise SystemExit('owned syslog artifact: ' + message)
 
 expected_format = (
-    'crabc-x86-64-owned-dynamic-sysroot-v1'
-    if family == 'dynamic' else 'crabc-x86-64-sealed-static-driver-v1'
+    ('crabc-aarch64-owned-dynamic-sysroot-v1' if arch == 'aarch64' else 'crabc-x86-64-owned-dynamic-sysroot-v1')
+    if family == 'dynamic' else ('crabc-aarch64-sealed-static-driver-v1' if arch == 'aarch64' else 'crabc-x86-64-sealed-static-driver-v1')
 )
 if family == 'dynamic':
     require(isinstance(receipt, dict), 'dynamic receipt is not an object')
@@ -173,14 +174,14 @@ output_hash = receipt.get('output_sha256') if family == 'dynamic' else receipt.g
 require(output_hash == hashlib.sha256(candidate.read_bytes()).hexdigest(),
         'output receipt hash')
 header = Path(str(candidate) + '.header').read_text()
-require('Advanced Micro Devices X86-64' in header, 'machine')
+require(('AArch64' if arch == 'aarch64' else 'Advanced Micro Devices X86-64') in header, 'machine')
 expected_type = 'DYN' if mode in ('pie', 'static-pie') else 'EXEC'
 require(re.search(r'Type:\s+' + expected_type + r'\s', header), 'ELF mode')
 segments = Path(str(candidate) + '.segments').read_text()
 dynamic = Path(str(candidate) + '.dynamic').read_text()
 interpreters = re.findall(r'Requesting program interpreter: ([^\]]+)\]', segments)
 needed = re.findall(r'\(NEEDED\).*\[([^\]]+)\]', dynamic)
-require(interpreters == (['/lib/ld-crabc-x86_64.so.1'] if family == 'dynamic' else []),
+require(interpreters == ([f'/lib/ld-crabc-{arch}.so.1'] if family == 'dynamic' else []),
         'interpreter boundary')
 require(needed == (['libc.so'] if family == 'dynamic' else []),
         'owned runtime dependencies')
@@ -320,7 +321,8 @@ if [ "$source_sha256_before_compile" != "$(sha256sum "$probe" | awk '{ print $1 
 fi
 sha256sum "$work/workload.o" >"$work/workload.sha256"
 readelf -rW "$work/workload.o" >"$work/workload.relocations"
-if grep -Eq 'R_X86_64_(32|32S)' "$work/workload.relocations"; then
+if { [ "$arch" = x86_64 ] && grep -Eq 'R_X86_64_(32|32S)' "$work/workload.relocations"; } || \
+   { [ "$arch" = aarch64 ] && grep -Eq 'R_AARCH64_ABS(16|32)' "$work/workload.relocations"; }; then
     printf 'owned syslog: installed PIE workload object has an absolute 32-bit relocation\n' >&2
     exit 1
 fi

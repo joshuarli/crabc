@@ -1,3 +1,4 @@
+// musl 1.2.6 src/unistd/access.c and link.c supply the *at forms.
 //! Owned named POSIX semaphores and shared-memory objects.
 //!
 //! Pinned musl 1.2.6, commit 9fa28ece75d8a2191de7c5bb53bed224c5947417,
@@ -28,9 +29,9 @@ const SEM_BYTES: usize = 32;
 const NAME_MAX: usize = 255;
 const O_CREAT: c_int = 0x40;
 const O_EXCL: c_int = 0x80;
-const O_LARGEFILE: c_int = 0x8000;
-const OBJECT_FLAGS: c_int = 2 | 0x20000 | 0x80000 | 0x800; // RDWR/NOFOLLOW/CLOEXEC/NONBLOCK
-const SHM_FLAGS: c_int = 0x20000 | 0x80000 | 0x800;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
+const OBJECT_FLAGS: c_int = 2 | super::raw_syscall::O_NOFOLLOW as c_int | 0x80000 | 0x800;
+const SHM_FLAGS: c_int = super::raw_syscall::O_NOFOLLOW as c_int | 0x80000 | 0x800;
 const AT_FDCWD: i64 = -100;
 static SEM_OPEN_LOCK: AtomicI32 = AtomicI32::new(0);
 
@@ -238,7 +239,10 @@ fn temporary_name(nanoseconds: i64) -> [u8; 64] {
 /// source errno behavior, including stale success errno and unlink failures.
 unsafe fn acquire_mapping(path: &[u8], flags: c_int, creation: Option<Creation>) -> Option<(*mut c_void, u64)> {
     if flags == O_CREAT | O_EXCL && c_status(unsafe {
-        raw_syscall::syscall2(raw_syscall::SYS_ACCESS, path.as_ptr() as i64, 0)
+        #[cfg(target_arch = "x86_64")]
+        { raw_syscall::syscall2(raw_syscall::SYS_ACCESS, path.as_ptr() as i64, 0) }
+        #[cfg(target_arch = "aarch64")]
+        { raw_syscall::syscall3(raw_syscall::SYS_FACCESSAT, AT_FDCWD, path.as_ptr() as i64, 0) }
     }) == 0 {
         unsafe { fail(EEXIST) }; return None;
     }
@@ -278,8 +282,12 @@ unsafe fn acquire_mapping(path: &[u8], flags: c_int, creation: Option<Creation>)
         let mapping = if inode.is_some() { unsafe { map_semaphore(fd) } } else { RESERVED };
         unsafe { close_file(fd) };
         if mapping == RESERVED { unsafe { unlink_file(temporary.as_ptr()); } return None; }
-        let linked = c_status(unsafe { raw_syscall::syscall2(raw_syscall::SYS_LINK,
-            temporary.as_ptr() as i64, path.as_ptr() as i64) });
+        let linked = c_status(unsafe { {
+            #[cfg(target_arch = "x86_64")]
+            { raw_syscall::syscall2(raw_syscall::SYS_LINK, temporary.as_ptr() as i64, path.as_ptr() as i64) }
+            #[cfg(target_arch = "aarch64")]
+            { raw_syscall::syscall5(raw_syscall::SYS_LINKAT, AT_FDCWD, temporary.as_ptr() as i64, AT_FDCWD, path.as_ptr() as i64, 0) }
+        } });
         let error = if linked == 0 { 0 } else { unsafe { errno::get_errno() } };
         unsafe { unlink_file(temporary.as_ptr()); }
         if error == 0 { return Some((mapping, inode.unwrap())); }
@@ -326,8 +334,23 @@ unsafe fn open_named_semaphore(name: *const c_char, flags: c_int, creation: Opti
 
 // Musl's `src/thread/sem_open.c` object.
 static_archive_member! { sem_open_source {
+    /// # Safety
+    /// The name must be a readable C string and O_CREAT requires a mode and initial value.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut arguments: ...) -> *mut c_void {
+        if flags & 0x40 == 0 {
+            // SAFETY: the caller supplies the name required by sem_open.
+            return unsafe { open_existing(name, flags) };
+        }
+        // SAFETY: O_CREAT requires a mode and initial semaphore value.
+        let (mode, value) = unsafe { (arguments.next_arg::<c_uint>(), arguments.next_arg::<c_uint>()) };
+        // SAFETY: the caller supplies both creation arguments.
+        unsafe { open_create(name, flags, mode, value) }
+    }
     // The two-or-four-argument sem_open entry; musl's sem_open.c also defines
     // sem_close.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.sem_open,"ax",@progbits

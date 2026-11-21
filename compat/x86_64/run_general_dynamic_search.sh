@@ -2,6 +2,7 @@
 # Installed search decisions, with the same graph in a separate pinned-musl root.
 set -euo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1"
 readonly mode="${CRABC_GENERAL_DYNAMIC_ENTRY_MODE:---dynamic-pie}"
@@ -63,26 +64,26 @@ for arm in candidate oracle; do
         "${cc[@]}" --dynamic-shared-object -DSEARCH_PRELOAD -DSEARCH_UNUSED_PRELOAD "$source" -o "$build/libunused_preload.so"
         "${cc[@]}" --dynamic-shared-object -DSEARCH_UNRESOLVED_PRELOAD --binding lazy --runtime-import unresolved_preload_import "$source" -o "$build/libunresolved_preload.so"
     else
-        cc=(/usr/local/bin/crabc-x86_64-musl-gcc)
+        cc=("$oracle")
         mkdir -p "$root/opt/musl-1.2.6/lib" "$root/usr/lib"
         cp /opt/musl-1.2.6/lib/libc.so "$root/usr/lib/libc.so"
-        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
+        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-${arch}.so.1"
         "${cc[@]}" -fPIC -shared -Wl,-soname,libsearch_leaf.so -DSEARCH_LEAF=7 "$source" -o "$build/libsearch_leaf.so"
         "${cc[@]}" -fPIC -shared -DSEARCH_LEAF=8 "$source" -o "$build/environment.so"
         "${cc[@]}" -fPIC -shared -DSEARCH_MIDDLE "$source" -L"$build" -lsearch_leaf -Wl,-rpath,/missing -Wl,-soname,libsearch_mid.so -o "$build/libsearch_mid.so"
         "${cc[@]}" -fPIC -shared -DSEARCH_MIDDLE "$source" -L"$build" -lsearch_leaf '-Wl,-rpath,${ORIGIN}/sub' -o "$build/liborigin.so"
         "${cc[@]}" -fPIC -shared -DSEARCH_CALLER "$source" -Wl,-rpath,/caller -o "$build/libcaller.so"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 "$source" -Wl,-rpath,/search:/usr/lib -o "$build/consumer"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_INITIAL "$source" -L"$build" -lsearch_mid -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/initial"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 "$source" -Wl,-rpath,/search:/usr/lib -o "$build/consumer"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_INITIAL "$source" -L"$build" -lsearch_mid -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/initial"
         "${cc[@]}" -fPIC -shared -DSEARCH_MIDDLE "$source" -L"$build" -lsearch_leaf -Wl,-rpath,/environment -Wl,-soname,libbreadth.so -o "$build/libbreadth.so"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_INITIAL "$source" -L"$build" -lbreadth -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/breadth"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 "$source" '-Wl,-rpath,$ORIGIN/search:/usr/lib' -o "$build/main-origin"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_SECURE "$source" '-Wl,-rpath,$ORIGIN/search:/usr/lib' -o "$build/secure-origin"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_SECURE "$source" -Wl,-rpath,/search:/usr/lib -o "$build/secure-runtime"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_SECURE -DSEARCH_INITIAL "$source" -L"$build" -lsearch_mid -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/secure-initial"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 "$source" -Wl,-rpath,/usr/lib -o "$build/system-consumer"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_PATH_CACHE "$source" -Wl,-rpath,/usr/lib -o "$build/cache-consumer"
-        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -DSEARCH_INITIAL "$source" -L"$build" -lsearch_mid -lsearch_leaf -Wl,-rpath,/usr/lib -o "$build/system-initial"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_INITIAL "$source" -L"$build" -lbreadth -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/breadth"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 "$source" '-Wl,-rpath,$ORIGIN/search:/usr/lib' -o "$build/main-origin"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_SECURE "$source" '-Wl,-rpath,$ORIGIN/search:/usr/lib' -o "$build/secure-origin"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_SECURE "$source" -Wl,-rpath,/search:/usr/lib -o "$build/secure-runtime"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_SECURE -DSEARCH_INITIAL "$source" -L"$build" -lsearch_mid -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/secure-initial"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 "$source" -Wl,-rpath,/usr/lib -o "$build/system-consumer"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_PATH_CACHE "$source" -Wl,-rpath,/usr/lib -o "$build/cache-consumer"
+        "${cc[@]}" -fPIE "$oracle_mode" -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -DSEARCH_INITIAL "$source" -L"$build" -lsearch_mid -lsearch_leaf -Wl,-rpath,/usr/lib -o "$build/system-initial"
         "${cc[@]}" -fPIC -shared -DSEARCH_PRELOAD "$source" -o "$build/libpreload.so"
         "${cc[@]}" -fPIC -shared -DSEARCH_PRELOAD -DSEARCH_UNUSED_PRELOAD "$source" -o "$build/libunused_preload.so"
         "${cc[@]}" -fPIC -shared -DSEARCH_UNRESOLVED_PRELOAD "$source" -o "$build/libunresolved_preload.so"
@@ -201,31 +202,31 @@ PYTHON
                 rm "$root/lib/libsearch_leaf.so"
                 command=(/system-consumer /plugins/libsearch_mid.so 8);;
             system-file)
-                printf ':\n/missing:/system\n' >"$root/etc/ld-musl-x86_64.path"
+                printf ':\n/missing:/system\n' >"$root/etc/ld-musl-${arch}.path"
                 command[0]=/system-consumer;;
             system-empty)
-                : >"$root/etc/ld-musl-x86_64.path"
+                : >"$root/etc/ld-musl-${arch}.path"
                 command=(/system-consumer /plugins/libsearch_mid.so 0);;
             system-error)
-                rm "$root/etc/ld-musl-x86_64.path"
-                ln -s ld-musl-x86_64.path "$root/etc/ld-musl-x86_64.path"
+                rm "$root/etc/ld-musl-${arch}.path"
+                ln -s ld-musl-${arch}.path "$root/etc/ld-musl-${arch}.path"
                 command=(/system-consumer /plugins/libsearch_mid.so 0);;
             system-read-error)
-                rm "$root/etc/ld-musl-x86_64.path"
-                mkdir "$root/etc/ld-musl-x86_64.path"
+                rm "$root/etc/ld-musl-${arch}.path"
+                mkdir "$root/etc/ld-musl-${arch}.path"
                 command=(/system-consumer /plugins/libsearch_mid.so 0);;
             system-cache)
-                rmdir "$root/etc/ld-musl-x86_64.path"
-                printf '/system\n' >"$root/etc/ld-musl-x86_64.path"
+                rmdir "$root/etc/ld-musl-${arch}.path"
+                printf '/system\n' >"$root/etc/ld-musl-${arch}.path"
                 command[0]=/cache-consumer;;
             system-initial)
-                printf '/system\n' >"$root/etc/ld-musl-x86_64.path"
+                printf '/system\n' >"$root/etc/ld-musl-${arch}.path"
                 command=(/system-initial unused 7);;
             system-secure)
                 # Secure main ORIGIN suppresses its entire RUNPATH, including
                 # /usr/lib. The explicit system file must also name libc's
                 # installed directory rather than accidentally rely on defaults.
-                printf '/system:/usr/lib\n' >"$root/etc/ld-musl-x86_64.path"
+                printf '/system:/usr/lib\n' >"$root/etc/ld-musl-${arch}.path"
                 credentials=(--userspec=65534:65534)
                 command=(/secure-origin /plugins/libsearch_mid.so 7);;
             delimiters) environment=(LD_LIBRARY_PATH=$':\n/missing::/environment\n'); command[2]=8;;

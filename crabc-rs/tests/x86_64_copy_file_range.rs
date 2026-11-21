@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::cell::Cell;
 use std::os::fd::{AsRawFd, IntoRawFd};

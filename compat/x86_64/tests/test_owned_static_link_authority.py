@@ -25,7 +25,7 @@ from unittest import mock
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from loader_debug_abi_evidence import Elf
+from loader_debug_abi_evidence import ARCH, Elf
 from owned_syscall_alias_authority import archive_members, require_static_function_map
 from owned_syscall_alias_contract_reader import ALIASES
 from owned_static_link_authority import (
@@ -70,11 +70,18 @@ class MoldStaticFunctionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=parent) as temporary:
             root = Path(temporary)
             source, obj, executable, link_map = (root / name for name in ('tls.s', 'tls.o', 'tls', 'tls.map'))
-            source.write_text('.section .tdata,"awT",@progbits\n.globl fixture_tls\n.type fixture_tls,@tls_object\n'
+            arm = ('.section .tdata,"awT",%progbits\n.globl fixture_tls\n.type fixture_tls,%tls_object\n'
+                   'fixture_tls: .quad 1\n.size fixture_tls,8\n.text\n.globl selected\n'
+                   '.type selected,%function\nselected: adrp x0,:gottprel:fixture_tls\n'
+                   'ldr x0,[x0,:gottprel_lo12:fixture_tls]\nret\n'
+                   '.size selected,.-selected\n.globl _start\n.type _start,%function\n_start: ret\n'
+                   '.size _start,.-_start\n')
+            x86 = ('.section .tdata,"awT",@progbits\n.globl fixture_tls\n.type fixture_tls,@tls_object\n'
                               'fixture_tls: .quad 1\n.size fixture_tls,8\n.text\n.globl selected\n'
                               '.type selected,@function\nselected: mov fixture_tls@gottpoff(%rip),%rax\nret\n'
                               '.size selected,.-selected\n.globl _start\n.type _start,@function\n_start: ret\n'
                               '.size _start,.-_start\n')
+            source.write_text(arm if ARCH == 'aarch64' else x86)
             subprocess.run([compiler, '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
             subprocess.run([linker, '-static', '--no-relax', '-e', '_start', '-Map=' + str(link_map), str(obj), '-o', str(executable)],
                            check=True, capture_output=True)
@@ -626,3 +633,96 @@ class OwnedStaticLinkAuthorityMergedConstantTests(unittest.TestCase):
             binary.write_bytes(changed)
             with self.assertRaisesRegex(ValueError, "merged static target lacks its unique selected constant"):
                 self.prove(binary=binary)
+
+@unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+class NativeAnonymousSymbolTests(unittest.TestCase):
+    def test_unnamed_local_undefined_rows_remain_bounded(self):
+        from loader_debug_abi_evidence import ARCH
+        scratch = SOURCE_DIR.parents[1] / f'.work/{ARCH}/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            source, binary = root / 'main.c', root / 'main'
+            source.write_text('int main(void) { return 0; }\n')
+            subprocess.run(['/usr/bin/gcc', '-specs=/opt/musl-1.2.6/lib/musl-gcc.specs',
+                            '-static', '-no-pie', str(source), '-o', str(binary)], check=True, capture_output=True)
+            image = Elf(binary)
+            table = next(row for row in image.sections if row[1] == 2)
+            self.assertGreater(table[7], 1)
+            offset = table[4] + 24
+            data = bytearray(image.data)
+            data[offset:offset + 24] = bytes(24)
+            binary.write_bytes(data)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'static undefined symbol metadata differs'):
+                static_undefined_bindings(binary)
+
+@unittest.skipUnless(Path('/opt/musl-1.2.6/.crabc-oracle').is_file(), 'requires the pinned native image')
+class NativeArmAddressAuthorityTests(unittest.TestCase):
+    def test_selected_address_and_tls_relocations_are_byte_bound(self):
+        from loader_debug_abi_evidence import ARCH
+        if ARCH != 'aarch64':
+            self.skipTest('requires native AArch64 relocation instructions')
+        scratch = SOURCE_DIR.parents[1] / '.work/aarch64/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            source, obj, binary, link_map = (root / name for name in ('probe.s', 'probe.o', 'probe', 'probe.map'))
+            source.write_text('''
+.section .rodata.str1.8,"aMS",%progbits,1
+.p2align 3
+.Lstr: .asciz "selected-string"
+.section .rodata.cst16,"aM",%progbits,16
+.p2align 4
+.Lconstant: .quad 0x12345678,0x87654321
+.section .tdata,"awT",%progbits
+.p2align 3
+.globl selected_tls
+.type selected_tls,%tls_object
+selected_tls: .quad 23
+.size selected_tls,.-selected_tls
+.data
+.globl selected_data
+.type selected_data,%object
+selected_data: .quad 42
+.size selected_data,.-selected_data
+.text
+.globl _start
+.type _start,%function
+_start:
+adrp x0,.Lstr
+add x0,x0,:lo12:.Lstr
+adrp x1,.Lconstant
+ldr q1,[x1,:lo12:.Lconstant]
+adrp x2,:gottprel:selected_tls
+ldr x2,[x2,:gottprel_lo12:selected_tls]
+adrp x3,:got:selected_data
+ldr x3,[x3,:got_lo12:selected_data]
+ret
+.size _start,.-_start
+''')
+            subprocess.run(['/usr/bin/cc', '-c', str(source), '-o', str(obj)], check=True, capture_output=True)
+            subprocess.run(['/usr/bin/mold', '-static', '--no-dynamic-linker', '-e', '_start',
+                            '-Map=' + str(link_map), str(obj), '-o', str(binary)], check=True, capture_output=True)
+            contract = StaticFunctionContract('_start', str(obj), 'GLOBAL', 'DEFAULT', 'LOCAL', 'DEFAULT')
+            require_static_functions(link_map, binary, {str(obj): obj}, [contract])
+            other_source, other_obj = root / 'other.s', root / 'other.o'
+            other_source.write_text('.section .rodata.str1.8,"aMS",%progbits,1\n'
+                                    '.asciz "selected-string"\n')
+            subprocess.run(['/usr/bin/cc', '-c', str(other_source), '-o', str(other_obj)],
+                           check=True, capture_output=True)
+            ambiguous, ambiguous_map = root / 'ambiguous', root / 'ambiguous.map'
+            subprocess.run(['/usr/bin/mold', '-static', '--no-dynamic-linker', '-e', '_start',
+                            '-Map=' + str(ambiguous_map), str(obj), str(other_obj), '-o', str(ambiguous)],
+                           check=True, capture_output=True)
+            with self.assertRaisesRegex(StaticLinkAuthorityError, 'unique traced input owner'):
+                require_static_functions(ambiguous_map, ambiguous,
+                                         {str(obj): obj, str(other_obj): other_obj}, [contract])
+            image = Elf(binary)
+            symbol = image.symbol('_start', dynamic=False)
+            section = image.sections[symbol['section']]
+            offset = section[4] + symbol['value'] - section[3]
+            changed = bytearray(binary.read_bytes())
+            changed[offset + 4] ^= 4
+            binary.write_bytes(changed)
+            with self.assertRaises(StaticLinkAuthorityError):
+                require_static_functions(link_map, binary, {str(obj): obj}, [contract])

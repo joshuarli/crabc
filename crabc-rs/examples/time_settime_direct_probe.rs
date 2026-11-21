@@ -5,6 +5,7 @@
 use crabc_rs::time::{self, ClockId, Timespec};
 use crabc_rs::Errno;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

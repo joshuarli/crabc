@@ -30,6 +30,7 @@ class NativeAbiInventoryDispatcherTests(unittest.TestCase):
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", scripts / "dev-x86_64.sh")
         (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
+        shutil.copy2(ROOT / "compat/x86_64/native_arch.py", self.checkout / "compat/x86_64/native_arch.py")
         self.inputs = self.checkout / ".work/retained-products"
         self.inputs.mkdir(parents=True)
         self.static_product = self.inputs / "static"

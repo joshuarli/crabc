@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use crabc_rs::time::{self, CalendarTime, UnixTime, NANOS_PER_SECOND};
 

@@ -1,3 +1,4 @@
+#if defined(__x86_64__)
 /* Linux/x86-64 ptrace extensions from musl 1.2.6
  * `arch/x86_64/bits/ptrace.h`.  Other active crabc targets intentionally
  * receive no x86-only commands from this internal header. */
@@ -15,4 +16,8 @@
 #define PT_SYSEMU PTRACE_SYSEMU
 #define PT_SYSEMU_SINGLESTEP PTRACE_SYSEMU_SINGLESTEP
 #define PT_STEPBLOCK PTRACE_SINGLEBLOCK
+#endif
+#elif defined(__aarch64__)
+/* musl 1.2.6 generic/bits/ptrace.h, MIT licensed. */
+
 #endif

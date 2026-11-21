@@ -29,6 +29,47 @@ SPEC.loader.exec_module(package)
 
 
 class OwnedStaticSysrootPackageTests(unittest.TestCase):
+    def test_static_scope_rejects_promoted_or_incomplete_claims(self):
+        manifest = {
+            "scope": "private-static-pthread-tls-consumer-slice-not-family-completion-not-public-support",
+            "not_selected": ["shared libc", "dynamic loader or PT_INTERP", "complete compiler-helper closure",
+                             "sysroot.static-tls family completion", "sysroot.owned-artifact family completion",
+                             "x86-64 promotion or public support"],
+            "sealed_static_driver": {
+                "path": "bin/crabc-cc",
+                "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
+                "modes": [{"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
+                          {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"}],
+                "not_proven_by_this_seed": ["declared static-product coverage suite"],
+            },
+        }
+        static_product_contract.validate_static_product_scope(manifest)
+        for key in ("scope", "not_selected", "sealed_static_driver"):
+            changed = copy.deepcopy(manifest)
+            del changed[key]
+            with self.subTest(key=key), self.assertRaises(static_product_contract.StaticProductError):
+                static_product_contract.validate_static_product_scope(changed)
+
+    def test_arm_manifest_binds_native_target_and_payload_hashes(self):
+        arm = {"arch": "aarch64", "target_triple": "aarch64-unknown-linux-musl"}
+        required = package.REQUIRED_INSTALLED_PATHS
+        files = {path: "b" * 64 for path in required}
+        manifest = {"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
+                    "target": arm["target_triple"], "source_sha256": "a" * 64,
+                    "build_profile": "release",
+                    "package": {"format": "crabc-aarch64-owned-static-sysroot-package/v1",
+                                "archive_root": "crabc-aarch64-owned-static-sysroot"},
+                    "installed": {"headers": "usr/include", "crt_objects": list(package.REQUIRED_CRT_OBJECTS),
+                                  "static_libc": "usr/lib/libc.a", "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
+                                  "sealed_static_driver": "bin/crabc-cc", "files": files},
+                    "sealed_static_driver": {"format": "crabc-aarch64-sealed-static-driver-v1", "path": "bin/crabc-cc"}}
+        with mock.patch.object(package, "ARCH", arm), \
+                mock.patch.object(package.source_seal, "product_source_digest", return_value="a" * 64):
+            self.assertEqual(package.manifest_payload_hashes(manifest), files)
+            manifest["target"] = "x86_64-unknown-linux-musl"
+            with self.assertRaises(package.PackageError):
+                package.manifest_payload_hashes(manifest)
+
     def populate_tree(self, root: Path) -> None:
         (root / "bin").mkdir(parents=True)
         (root / "usr" / "include").mkdir(parents=True)
@@ -75,6 +116,12 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                 "archive_root": package.ARCHIVE_ROOT,
             },
         }
+        if package.ARCH["arch"] == "aarch64":
+            manifest.update({"schema": 1, "format": "crabc-aarch64-owned-static-sysroot-v1",
+                             "target": package.ARCH["target_triple"], "build_profile": "release"})
+            manifest["package"] = {"format": "crabc-aarch64-owned-static-sysroot-package/v1",
+                                   "archive_root": "crabc-aarch64-owned-static-sysroot"}
+            manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
         manifest_path = root / "share" / "crabc" / "manifest.json"
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(
@@ -82,7 +129,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
         )
 
     def test_rehashed_foreign_or_missing_source_seal_cannot_be_packaged_or_extracted(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -144,7 +191,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             self.assertFalse(any(path.is_symlink() for path in extracted.rglob("*")))
 
     def test_extraction_rejects_forged_member_modes(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -176,7 +223,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                 package.create_archive(source, workspace / "nonexecutable-driver.tar.xz")
 
     def test_extraction_rejects_noncanonical_tar_encoding(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -216,7 +263,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                     self.assertFalse(destination.exists())
 
     def test_extraction_rejects_noncanonical_xz_wrapper(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -239,7 +286,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
                     self.assertFalse(destination.exists())
 
     def test_writer_pax_long_path_remains_extractable(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / package.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             workspace = Path(temporary)
@@ -250,7 +297,8 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             (source / relative).write_bytes(payload)
             manifest_path = source / package.MANIFEST_RELATIVE_PATH
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["installed"]["files"][relative.as_posix()] = hashlib.sha256(payload).hexdigest()
+            manifest_files = manifest["installed"]["files"]
+            manifest_files[relative.as_posix()] = hashlib.sha256(payload).hexdigest()
             manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
             archive = workspace / "long-path.tar.xz"
             package.create_archive(source, archive)

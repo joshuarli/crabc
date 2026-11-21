@@ -3,10 +3,11 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_atfork_registry_probe.c"
 readonly private_probe="$ROOT/compat/x86_64/owned_process_private_symbols_probe.c"
-[ "$(uname -sm)" = 'Linux x86_64' ] || { printf 'atfork registry requires native Linux/x86-64\n' >&2; exit 1; }
+[ "$(uname -s)" = Linux ] || { printf 'atfork registry requires native Linux\n' >&2; exit 1; }
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command also builds and checks both static entries.
 [ "$#" -eq 0 ] || [ "$#" -eq 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
@@ -57,7 +58,7 @@ for mode in pie non-pie; do
     timeout 20 chroot "$work/execution-root" "/private-symbols-$mode" \
         >"$work/private-symbols-$mode.stdout"
     cmp "$work/oracle-private-symbols.stdout" "$work/private-symbols-$mode.stdout"
-    timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+    timeout 20 chroot "$work/execution-root" "/lib/ld-crabc-$arch.so.1" \
         "/private-symbols-$mode" >"$work/private-symbols-direct-$mode.stdout"
     cmp "$work/oracle-private-symbols.stdout" "$work/private-symbols-direct-$mode.stdout"
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 "$probe" -o "$work/dynamic-$mode"
@@ -65,7 +66,7 @@ for mode in pie non-pie; do
     for scenario in ordinary exit-hooks; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
-        timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+        timeout 20 chroot "$work/execution-root" "/lib/ld-crabc-$arch.so.1" \
             "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done

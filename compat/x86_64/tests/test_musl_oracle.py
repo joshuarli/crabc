@@ -49,11 +49,11 @@ class NativeMuslOracleTests(unittest.TestCase):
             Path(args[args.index("--output") + 1]).write_bytes(data)
             return subprocess.CompletedProcess(args, 0)
         with patch.object(ORACLE.subprocess, "run", side_effect=fetch) as run:
-            ORACLE.acquire_source(self.pin, destination)
+            ORACLE.acquire_source(self.pin, destination, "x86_64")
         self.assertEqual(run.call_count, 1)
         self.assertEqual((destination / "VERSION").read_bytes(), b"1.2.6\n")
         self.assertEqual((destination / "configure").stat().st_mode & 0o777, 0o755)
-        self.assertEqual((destination / ".crabc-oracle").read_text(), ORACLE.manifest(self.pin))
+        self.assertEqual((destination / ".crabc-oracle").read_text(), ORACLE.manifest(self.pin, "x86_64"))
         self.assertFalse(destination.with_name("source.tar.gz").exists())
 
     def test_bad_archive_checksum_never_uses_git_fallback(self):
@@ -62,7 +62,7 @@ class NativeMuslOracleTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0)
         with patch.object(ORACLE.subprocess, "run", side_effect=fetch) as run:
             with self.assertRaisesRegex(ValueError, "digest differs"):
-                ORACLE.acquire_source(self.pin, self.root / "source")
+                ORACLE.acquire_source(self.pin, self.root / "source", "x86_64")
         self.assertEqual(run.call_count, 1)
         self.assertFalse((self.root / "source").exists())
 
@@ -74,7 +74,7 @@ class NativeMuslOracleTests(unittest.TestCase):
         with patch.object(ORACLE.subprocess, "run", side_effect=command), patch.object(
                 ORACLE.subprocess, "check_output", return_value="0" * 40 + "\n"):
             with self.assertRaisesRegex(ValueError, "checkout revision differs"):
-                ORACLE.acquire_source(self.pin, self.root / "source")
+                ORACLE.acquire_source(self.pin, self.root / "source", "x86_64")
         self.assertEqual(calls[2][-4:], ["--depth", "1", self.pin["fallback_repository"], self.pin["fallback_revision"]])
         self.assertEqual(calls[3][-3:], ["checkout", "--detach", "FETCH_HEAD"])
 
@@ -90,8 +90,8 @@ class NativeMuslOracleTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0)
         with patch.object(ORACLE.subprocess, "run", side_effect=command), patch.object(
                 ORACLE.subprocess, "check_output", return_value=self.pin["fallback_revision"] + "\n"):
-            ORACLE.acquire_source(self.pin, destination)
-        self.assertEqual((destination / ".crabc-oracle").read_text(), ORACLE.manifest(self.pin))
+            ORACLE.acquire_source(self.pin, destination, "x86_64")
+        self.assertEqual((destination / ".crabc-oracle").read_text(), ORACLE.manifest(self.pin, "x86_64"))
         self.assertFalse((destination / ".git").exists())
 
     def test_archive_rejects_wrong_root_and_traversal_before_extraction(self):

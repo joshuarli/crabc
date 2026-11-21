@@ -18,7 +18,6 @@ extern "C" {
 #define __seq seq
 #endif
 
-#if defined(__x86_64__)
 #define __NEED_uid_t
 #define __NEED_gid_t
 #define __NEED_mode_t
@@ -27,23 +26,7 @@ extern "C" {
 #include <bits/alltypes.h>
 #include <bits/ipc.h>
 #include <bits/ipcstat.h>
-#else
-#include <sys/types.h>
-#endif
 
-#if !defined(__x86_64__)
-struct ipc_perm {
-	key_t __ipc_perm_key;
-	uid_t uid;
-	gid_t gid;
-	uid_t cuid;
-	gid_t cgid;
-	mode_t mode;
-	int __ipc_perm_seq;
-	long __pad1;
-	long __pad2;
-};
-#endif
 
 #define IPC_CREAT  01000
 #define IPC_EXCL   02000
@@ -51,9 +34,6 @@ struct ipc_perm {
 
 #define IPC_RMID 0
 #define IPC_SET  1
-#if !defined(__x86_64__)
-#define IPC_STAT 2
-#endif
 #define IPC_INFO 3
 
 #define IPC_PRIVATE ((key_t) 0)

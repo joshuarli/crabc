@@ -4,6 +4,7 @@
 
 use crabc_rs::fs::{self, Utimbuf};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

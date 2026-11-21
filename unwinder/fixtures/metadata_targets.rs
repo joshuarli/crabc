@@ -1,5 +1,8 @@
 //! Present personality and LSDA targets must remain in their declared loads.
 use std::ffi::c_void;
+
+const SP: u8 = if cfg!(target_arch = "aarch64") { 31 } else { 7 };
+const RA: u8 = if cfg!(target_arch = "aarch64") { 30 } else { 16 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[repr(C)]
@@ -81,15 +84,14 @@ unsafe fn write_personality_eh_frame(eh_frame: *mut u8, text: usize, target: usi
         eh_frame.add(11).write(0);
         eh_frame.add(12).write(1);
         eh_frame.add(13).write(0x78);
-        eh_frame.add(14).write(16);
+        eh_frame.add(14).write(RA);
         eh_frame.add(15).write(9);
         eh_frame.add(16).write(encoding);
         (eh_frame.add(17) as *mut u64).write_unaligned(target as u64);
-        // cfa = rsp + 8; the caller return address is cfa - 8.
         eh_frame.add(25).write(0x0c);
-        eh_frame.add(26).write(7);
+        eh_frame.add(26).write(SP);
         eh_frame.add(27).write(8);
-        eh_frame.add(28).write(0x90);
+        eh_frame.add(28).write(0x80 | RA);
         eh_frame.add(29).write(1);
 
         let fde = eh_frame.add(30);
@@ -121,14 +123,13 @@ unsafe fn write_direct_lsda_eh_frame(eh_frame: *mut u8, text: usize, target: usi
         eh_frame.add(11).write(0);
         eh_frame.add(12).write(1);
         eh_frame.add(13).write(0x78);
-        eh_frame.add(14).write(16);
+        eh_frame.add(14).write(RA);
         eh_frame.add(15).write(1);
         eh_frame.add(16).write(0);
-        // cfa = rsp + 8; the caller return address is cfa - 8.
         eh_frame.add(17).write(0x0c);
-        eh_frame.add(18).write(7);
+        eh_frame.add(18).write(SP);
         eh_frame.add(19).write(8);
-        eh_frame.add(20).write(0x90);
+        eh_frame.add(20).write(0x80 | RA);
         eh_frame.add(21).write(1);
 
         let fde = eh_frame.add(22);

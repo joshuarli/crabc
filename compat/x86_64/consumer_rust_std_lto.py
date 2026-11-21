@@ -67,10 +67,14 @@ import installed_backtrace  # noqa: E402
 import owned_rust_link  # noqa: E402
 import owned_posix_product_evidence as product_evidence  # noqa: E402
 import mold_link_trace
+import native_rustc
+from native_arch import native_arch
 
 SCHEMA = "crabc.x86_64-consumer-rust-std-lto/v1"
 GATE = "consumer.rust-std-lto"
-TARGET = "x86_64-unknown-linux-musl"
+ARCHITECTURE = native_arch()
+ARCH = ARCHITECTURE["arch"]
+TARGET = ARCHITECTURE["target_triple"]
 CHANNEL = pinned_toolchain(ROOT)
 FROZEN_GATES = ("rust-std", "rust-std-dependent", "lto", "lto-native-facade")
 FROZEN_LANES = {
@@ -89,7 +93,7 @@ NATIVE_SHADOW_PRODUCT = "native-shadow"
 ALLOCATOR_EVIDENCE_PASS_MARKER = (
     "x86 consumer.rust-std-lto: native-shadow allocator evidence PASS (not a qualifying receipt)")
 PASS_MARKER = "x86 consumer.rust-std-lto: PASS (rust-std, rust-std-dependent, lto, lto-native-facade, unwind; installed/extracted owned products)"
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_CC = Path(ARCHITECTURE["oracle"])
 MUSL_LIB = Path("/opt/musl-1.2.6/lib")
 LIBGCC_S = Path("/usr/lib/libgcc_s.so.1")
 LINKER = ROOT / "unwinder/owned_rust_link.py"
@@ -208,6 +212,14 @@ def checked_output(argv: Sequence[str | Path], description: str) -> str:
     return result.stdout.decode()
 
 
+def compiler_tool_records() -> dict[str, dict[str, str]]:
+    return product_evidence.native_compiler_tool_records()
+
+
+def validate_compiler_tool_records(value: object) -> dict[str, dict[str, str]]:
+    return product_evidence.validate_native_compiler_tool_records(value)
+
+
 def toolchain_identity(retained: Retained) -> dict[str, Any]:
     """Bind the pinned compiler, standard-library sources and LTO linker.
 
@@ -231,7 +243,7 @@ def toolchain_identity(retained: Retained) -> dict[str, Any]:
     lld_llvm = re.search(r"LLD (\d+\.\d+\.\d+)", lld_version)
     require(lld_llvm is not None and llvm.group(1).startswith(lld_llvm.group(1)),
             f"linker-plugin LLD {lld_version!r} does not carry rustc LLVM {llvm.group(1)}")
-    compiler_tools = product_evidence.native_compiler_tool_records()
+    compiler_tools = compiler_tool_records()
     library = sysroot / "lib/rustlib/src/rust/library"
     return {
         "channel": CHANNEL,
@@ -386,6 +398,8 @@ def cargo_consumer(
     target = lane / "target"
     target.mkdir()
     rustflags = list(flags)
+    if ARCH == "aarch64" and link == "owned-static":
+        rustflags += ["-C", "relocation-model=pic", "-C", "link-arg=-static-pie"]
     environment = {
         **tool_environment(),
         "CARGO_HOME": str(context.cargo_home),
@@ -483,7 +497,7 @@ def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path, 
     require(receipt["schema"] == 1 and receipt["format"] == "crabc-owned-rust-cargo-link/v1"
             and receipt["target"] == TARGET, "owned Rust Cargo link receipt identity differs")
     try:
-        compiler_tools = product_evidence.validate_native_compiler_tool_records(
+        compiler_tools = validate_compiler_tool_records(
             context.toolchain["native_compiler_tools"]
         )
     except product_evidence.ProductEvidenceError as error:
@@ -555,6 +569,10 @@ def _validate_cargo_link_receipt(context: Context, receipt: object, path: Path, 
         objects=final_objects, archives=final_archives, output=output, export_dynamic=False,
         rust_mode=requested_mode,
     )
+    # The pinned aarch64 musl target's gnu-cc pre-link arguments always
+    # include this erratum option.  Do not infer it from the receipt itself.
+    if ARCH == "aarch64":
+        expected_command.insert(1, "--fix-cortex-a53-843419")
     require(receipt["command"] == list(map(str, expected_command)),
             "owned Rust Cargo final link argv differs")
     admitted = {*final_objects, *final_archives,
@@ -590,10 +608,11 @@ def inspect_elf(context: Context, path: Path, *, dynamic: bool, needed_dsos: Seq
     defined = checked_output([context.tool("llvm-nm"), "--defined-only", path], "llvm-nm defined")
     needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^]]+)\]", dynamic_section)
     interpreter = re.search(r"Requesting program interpreter: ([^]]+)\]", segments)
-    unwind = owned_cleanup.cleanup._unwind_symbols(path, defined, provider_build.UNWIND_ABI)
+    unwind = owned_cleanup.unwind_symbols(path, defined, provider_build.UNWIND_ABI)
     problems = []
-    if "Advanced Micro Devices X86-64" not in header or not re.search(r"Type:\s+DYN", header):
-        problems.append("image is not an x86-64 ET_DYN")
+    machine = "Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64"
+    if machine not in header or not re.search(r"Type:\s+DYN", header):
+        problems.append(f"image is not an {'x86-64' if ARCH == 'x86_64' else 'aarch64'} ET_DYN")
     for segment in ("GNU_EH_FRAME", "GNU_RELRO", "GNU_STACK"):
         if segment not in segments:
             problems.append(f"image lacks {segment}")
@@ -620,12 +639,12 @@ def execution_root(root: Path, *, runtime: str, product: Path | None) -> list[di
     elif runtime == "candidate":
         assert product is not None
         shutil.copytree(product, root, symlinks=True)
-        runtime_files = [product / "lib/ld-crabc-x86_64.so.1", product / "usr/lib/libc.so"]
+        runtime_files = [product / f"lib/ld-crabc-{ARCH}.so.1", product / "usr/lib/libc.so"]
     else:
         musl = root / str(MUSL_LIB).lstrip("/")
         musl.mkdir(parents=True)
         shutil.copy2(MUSL_LIB / "libc.so", musl / "libc.so")
-        (musl / "ld-musl-x86_64.so.1").symlink_to("libc.so")
+        (musl / f"ld-musl-{ARCH}.so.1").symlink_to("libc.so")
         (root / "usr/lib").mkdir(parents=True)
         shutil.copy2(LIBGCC_S, root / "usr/lib/libgcc_s.so.1")
         runtime_files = [MUSL_LIB / "libc.so", LIBGCC_S]
@@ -923,10 +942,19 @@ def inspect_native_route(disassembly: str) -> dict[str, Any]:
     witness = function_disassembly(disassembly, NATIVE_FACADE_WITNESS)
     if witness is None:
         return {"anchor_present": False, "direct_route_proven": False}
-    getpid = len(re.findall(x86_syscall_pattern(X86_SYSCALLS["getpid"]), witness))
-    write_direct = bool(re.search(x86_syscall_pattern(X86_SYSCALLS["write"]), disassembly))
+    if ARCH == "x86_64":
+        getpid_pattern = x86_syscall_pattern(X86_SYSCALLS["getpid"])
+        write_pattern = x86_syscall_pattern(X86_SYSCALLS["write"])
+        branch = r"(?:call|jmp)\w*"
+    else:
+        def arm_syscall(number: int) -> str:
+            return rf"\b(?:mov|movz|movk)\s+[wx]8,\s*#(?:0x{number:x}|{number})\b[\s\S]{{0,800}}?\bsvc(?:\s+#?0)?\b"
+        getpid_pattern, write_pattern = arm_syscall(172), arm_syscall(64)
+        branch = r"(?:bl|b)"
+    getpid = len(re.findall(getpid_pattern, witness))
+    write_direct = bool(re.search(write_pattern, disassembly))
     forbidden = [name for name in FORBIDDEN_WITNESS_CALLS
-                 if re.search(rf"\b(?:call|jmp)\w*\s+[^\n]*<{re.escape(name)}(?:@[^>]*)?>", witness)]
+                 if re.search(rf"\b{branch}\s+[^\n]*<{re.escape(name)}(?:@[^>]*)?>", witness)]
     return {
         "anchor_present": True,
         "witness_direct_getpid_syscalls": getpid,
@@ -1181,7 +1209,9 @@ def lane_unmet(report: Mapping[str, Any]) -> list[str]:
 
 
 def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require(platform.system() == "Linux" and platform.machine() in
+            ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}),
+            f"native Linux/{'x86-64' if ARCH == 'x86_64' else 'aarch64'} required")
     require(os.geteuid() == 0, "execution roots require container root for chroot and device nodes")
     import owned_dynamic_qualification as qualification  # pylint: disable=import-outside-toplevel
     import source_seal
@@ -1359,7 +1389,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
             and isinstance(toolchain, dict) and isinstance(toolchain.get("rustc_vv"), str),
             "consumer gate receipt lacks provider or compiler identity")
     try:
-        product_evidence.validate_native_compiler_tool_records(toolchain.get("native_compiler_tools"))
+        validate_compiler_tool_records(toolchain.get("native_compiler_tools"))
     except product_evidence.ProductEvidenceError as error:
         raise GateError(f"consumer gate native compiler tools differ: {error}") from error
     archive = provider["archive"]

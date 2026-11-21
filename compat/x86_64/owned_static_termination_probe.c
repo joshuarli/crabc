@@ -24,8 +24,8 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
-#error "owned static termination requires native Linux/x86-64 LP64"
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
+#error "owned static termination requires native Linux x86-64 or aarch64 LP64"
 #endif
 
 #include <pthread.h>

@@ -7,15 +7,20 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
 DRIVER = ROOT / "compat/x86_64/owned_text_locale_numeric_component_driver.c"
 SOURCE_SPECIFIC_DRIVER = ROOT / "compat/x86_64/owned_text_locale_numeric_source_specific_driver.c"
 SCRATCH = ROOT / ".work/x86_64/tmp"
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+ORACLE_CC = Path(native_arch()["oracle"])
 ORACLE_SPECS = Path("/opt/musl-1.2.6/lib/musl-gcc.specs")
 ORACLE_ENV = {
     "LC_ALL": "C",
@@ -43,8 +48,8 @@ SOURCE_SPECIFIC_FRAME_NAMES = (
 )
 
 
-@unittest.skipUnless(platform.system() == "Linux" and platform.machine() in {"x86_64", "amd64"},
-                     "driver framing is a native Linux/x86-64 check")
+@unittest.skipUnless(platform.system() == "Linux" and platform.machine() in {"x86_64", "amd64", "aarch64"},
+                     "driver framing is a native Linux check")
 @unittest.skipUnless(ORACLE_CC.is_file() and ORACLE_SPECS.is_file(),
                      "driver framing requires the pinned musl-1.2.6 image")
 class DriverFramingTests(unittest.TestCase):
@@ -52,7 +57,7 @@ class DriverFramingTests(unittest.TestCase):
                                 prefix: str) -> None:
         self.assertTrue(os.access(ORACLE_CC, os.X_OK), "pinned musl compiler is not executable")
         wrapper = ORACLE_CC.read_text(encoding="utf-8")
-        self.assertIn("x86-64 C/POSIX oracle compiler", wrapper)
+        self.assertIn(f"{'x86-64' if ARCH == 'x86_64' else 'AArch64'} C/POSIX oracle compiler", wrapper)
         self.assertIn("exec /usr/bin/gcc -fuse-ld=mold -specs /opt/musl-1.2.6/lib/musl-gcc.specs", wrapper)
         specs = ORACLE_SPECS.read_text(encoding="utf-8")
         self.assertIn("-isystem /opt/musl-1.2.6/include", specs)

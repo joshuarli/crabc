@@ -90,7 +90,7 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
         header = bytearray(64)
         header[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
         header[16:18] = etype.to_bytes(2, "little")
-        header[18:20] = (62).to_bytes(2, "little")
+        header[18:20] = (183 if self.module.qualification.ARCH["arch"] == "aarch64" else 62).to_bytes(2, "little")
         return self.write(relative, bytes(header))
 
     def relative(self, path: Path) -> str:

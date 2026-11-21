@@ -21,6 +21,7 @@ import tempfile
 
 import owned_static_sysroot_package as package
 import source_seal
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-posix-static-preparation/v1"
@@ -111,6 +112,8 @@ def commands(root: Path, work: Path, allocator_backend: str = "accepted-c") -> d
     result = {}
     for label in ("primary", "reproduction"):
         result[f"{label}-build"] = [*GUARD, "python3", "-B", PRODUCER, "--output", f"{base}/products/{label}"]
+        if native_arch()["arch"] == "aarch64":
+            result[f"{label}-build"].extend(("--architecture", "aarch64"))
         if allocator_backend == "native-shadow":
             result[f"{label}-build"].extend(("--allocator-backend", allocator_backend))
     for label in ("primary", "reproduction"):
@@ -177,6 +180,7 @@ def collect(root: Path, work: Path) -> dict:
     require(primary_manifest.get("build_profile", "release") == "release"
             and primary_manifest.get("allocator_lifecycle_test_audit", False) is False,
             "static preparation requires a release product without lifecycle test audit")
+    arm = native_arch()["arch"] == "aarch64"
     allocator_backend = primary_manifest.get("allocator_backend")
     require(type(allocator_backend) is str and allocator_backend in ALLOCATOR_BACKENDS,
             "unsupported or absent preparation allocator backend")
@@ -197,13 +201,18 @@ def collect(root: Path, work: Path) -> dict:
         tree = tree_identity(product)
         manifest_path = product / package.MANIFEST_RELATIVE_PATH
         manifest = read(manifest_path)
-        require(isinstance(manifest, dict) and manifest.get("allocator_backend") == allocator_backend,
+        require(isinstance(manifest, dict), f"invalid manifest: {label}")
+        if arm:
+            import owned_posix_product_evidence
+            owned_posix_product_evidence._validate_static_product_uncached(product)
+        require(manifest.get("allocator_backend") == allocator_backend,
                 f"allocator backend differs from primary: {label}")
-        require(isinstance(manifest.get("producer_tools"), dict) and manifest["producer_tools"],
+        producer_tools = manifest.get("producer_tools")
+        require(isinstance(producer_tools, dict) and producer_tools,
                 f"producer tool provenance absent: {label}")
         require(isinstance(manifest.get("toolchain"), str), f"toolchain provenance absent: {label}")
         products[label] = {"path": relative(root, product), "manifest": file_identity(root, manifest_path),
-                           "tree": tree, "producer_tools": manifest["producer_tools"], "toolchain": manifest["toolchain"]}
+                           "tree": tree, "producer_tools": producer_tools, "toolchain": manifest["toolchain"]}
     primary = products["primary"]
     for label in ("reproduction", "extracted"):
         require(products[label]["tree"] == primary["tree"], f"product differs from primary: {label}")
@@ -213,7 +222,7 @@ def collect(root: Path, work: Path) -> dict:
             "independent package archive bytes differ")
     # A completed run may be container-root-owned and intentionally not
     # host-writable. Only new disposable validation scratch needs write access.
-    scratch = physical(root, root / ".work/x86_64/tmp")
+    scratch = physical(root, root / ".work" / native_arch()["work_name"] / "tmp")
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".verify-static-package.", dir=scratch) as temporary:
         extracted = package.extract_archive(work / "archives/primary.tar.xz", Path(temporary) / "extraction")

@@ -3,9 +3,10 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1" driver="$1/bin/crabc-cc-dynamic"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys

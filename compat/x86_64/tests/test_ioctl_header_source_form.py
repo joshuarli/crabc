@@ -17,32 +17,20 @@ CXX_PROBE = ROOT / "compat" / "x86_64" / "ioctl_header_source_form_probe.cpp"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 
 X86_LITERAL_BRANCH = """\
-#if defined(__x86_64__)
 #define SIOCSIFBRDADDR     0x891a
 #define SIOCGIFNETMASK     0x891b
 #define SIOCSIFNETMASK     0x891c
 #define SIOCGIFMETRIC      0x891d
 #define SIOCSIFMETRIC      0x891e
 #define SIOCGIFMEM         0x891f
-#else
 """
-
-FROZEN_AARCH64_LITERALS = """\
-#define SIOCSIFBRDADDR 0x891A
-#define SIOCGIFNETMASK 0x891B
-#define SIOCSIFNETMASK 0x891C
-#define SIOCGIFMETRIC 0x891D
-#define SIOCSIFMETRIC 0x891E
-#define SIOCGIFMEM 0x891F
-#endif
-"""
-
 
 class IoctlHeaderSourceFormTests(unittest.TestCase):
     def test_x86_literals_match_musl_and_non_x86_literals_stay_frozen(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
         self.assertIn(X86_LITERAL_BRANCH, header)
-        self.assertIn(FROZEN_AARCH64_LITERALS, header)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
         for name in (
             "SIOCSIFBRDADDR",
             "SIOCGIFNETMASK",
@@ -51,7 +39,7 @@ class IoctlHeaderSourceFormTests(unittest.TestCase):
             "SIOCSIFMETRIC",
             "SIOCGIFMEM",
         ):
-            self.assertEqual(header.count(f"#define {name}"), 2)
+            self.assertEqual(header.count(f"#define {name}"), 1)
 
     def test_direct_c_and_cpp_probes_cover_x86_and_frozen_non_x86_branches(self) -> None:
         for probe_path in (C_PROBE, CXX_PROBE):

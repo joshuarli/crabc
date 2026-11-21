@@ -39,8 +39,7 @@ aggregate admission cannot block independently testable feature work.
   the x86 runtime tree plus one architecture layer, runs only natively on an
   arm64 host (an Apple Silicon Linux VM with its own disk; never a macOS bind
   mount, never emulated), and replaces the older AArch64 composition and its
-  August evidence instead of refreshing them. Nothing from it that touches the
-  x86 product source seal merges before x86 F2 is accepted.
+  August evidence instead of refreshing them.
 - No new architectures, 32-bit or big-endian targets, non-Linux libc, or
   speculative portability layers. The macOS/AArch64 libSystem backend for
   `crabc-rs` ([CRAB-7](rfc/CRAB-7-macos-libsystem-backend.md)) is deferred

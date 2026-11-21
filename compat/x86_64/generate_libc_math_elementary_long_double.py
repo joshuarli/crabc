@@ -8,6 +8,7 @@ assembly is the build input, so `crabc-libc` never invokes a foreign compiler.
 from __future__ import annotations
 
 import argparse
+from generate_libc_math_long_double_completion import architecture_flags, architecture_source, finalize_assembly, checked_compiler
 import hashlib
 import re
 import subprocess
@@ -134,7 +135,7 @@ def transform_assembly(relative: str, text: str) -> str:
         re.findall(rf"^\s*\.(?:globl|global|weak)\s+({SYMBOL})\s*$", text, re.MULTILINE)
     )
     typed = set(
-        re.findall(rf"^\s*\.type\s+({SYMBOL})\s*,\s*@(?:function|object)\s*$", text, re.MULTILINE)
+        re.findall(rf"^\s*\.type\s+({SYMBOL})\s*,\s*[@%](?:function|object)\s*$", text, re.MULTILINE)
     )
     for name in sorted(typed - globals_and_weak, key=len, reverse=True):
         if not name.startswith(".L"):
@@ -147,7 +148,7 @@ def transform_assembly(relative: str, text: str) -> str:
 
     for private in RENAME.values():
         text = re.sub(
-            rf"^(\s*)\.globl\s+{re.escape(private)}\s*$",
+            rf"^(\s*)\.(?:globl|global)\s+{re.escape(private)}\s*$",
             rf"\1.local\t{private}",
             text,
             flags=re.MULTILINE,
@@ -193,6 +194,7 @@ def retained_notices(source_root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--musl-source", required=True, type=Path)
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--cc", default="/usr/local/bin/crabc-x86_64-musl-gcc")
     parser.add_argument(
         "--output",
@@ -201,6 +203,9 @@ def main() -> int:
         / "libc/src/c_abi/x86_64/math_elementary_long_double_musl_x86_64.S",
     )
     args = parser.parse_args()
+    if args.arch == "aarch64":
+        checked_compiler(args.cc, arch=args.arch)
+        args.output = args.output.with_name(args.output.name.replace("_x86_64.S", "_aarch64.S"))
 
     source_root = args.musl_source.resolve()
     actual_digest = normalized_tree_digest(source_root)
@@ -219,7 +224,7 @@ def main() -> int:
         f"-I{source_root / 'src/math'}",
         f"-I{source_root / 'src/internal'}",
         f"-I{source_root / 'src/include'}",
-        f"-I{source_root / 'arch/x86_64'}",
+        f"-I{source_root / 'arch' / args.arch}",
         f"-I{source_root / 'arch/generic'}",
         f"-I{source_root / 'include'}",
     )
@@ -235,20 +240,44 @@ def main() -> int:
         " */",
         *retained_notices(source_root),
     ]
+    if args.arch == "aarch64":
+        blocks = [line.replace("x86-64", "aarch64").replace("binary80", "binary128") for line in blocks]
+        blocks = [line.replace("in math_scalar_corrections.py", "in the generator and math_scalar_corrections.py") for line in blocks]
+        blocks.insert(1, " * AArch64 translation generated with the pinned musl compiler.")
     with tempfile.TemporaryDirectory(prefix="crabc-math-elementary-long-double-generate.") as temp:
         temp_root = Path(temp)
         for index, relative in enumerate(PUBLIC_SOURCES + PRIVATE_SOURCES):
             assembly = temp_root / f"{index:03}.s"
             original = (source_root / relative).read_text()
             corrected = corrected_source(relative, original)
-            input_path = source_root / relative
+            if args.arch == "aarch64" and relative == "src/math/acoshl.c":
+                old = "// TODO: broken implementation to make things compile\nlong double acoshl(long double x)\n{\n\treturn acosh(x);\n}"
+                new = '''#include <fenv.h>
+long double acoshl(long double x)
+{
+    union ldshape u = {x};
+    uint64_t magnitude = u.i2.hi & UINT64_C(0x7fffffffffffffff);
+    if ((magnitude < UINT64_C(0x7fff000000000000) ||
+         (magnitude == UINT64_C(0x7fff000000000000) && u.i2.lo == 0)) &&
+        ((u.i2.hi >> 63) || magnitude < UINT64_C(0x3fff000000000000))) {
+        feraiseexcept(FE_INVALID);
+        u.i2.hi = UINT64_C(0x7fff800000000000);
+        u.i2.lo = 0;
+        return u.f;
+    }
+    return acosh(x);
+}'''
+                if corrected.count(old) != 1:
+                    raise SystemExit("pinned aarch64 acoshl source anchor drifted")
+                corrected = corrected.replace(old, new)
+            input_path = architecture_source(source_root, relative, args.arch)
             if corrected != original:
                 input_path = temp_root / f"{index:03}.c"
                 input_path.write_text(corrected)
             subprocess.run(
                 [
                     args.cc,
-                    *COMPILE_FLAGS,
+                    *architecture_flags(COMPILE_FLAGS, args.arch),
                     *include_flags,
                     "-S",
                     str(input_path),
@@ -257,12 +286,12 @@ def main() -> int:
                 ],
                 check=True,
             )
-            blocks.append(f"\n/* musl-1.2.6/{relative} */")
+            blocks.append(f"\n/* musl-1.2.6/{architecture_source(source_root, relative, args.arch).relative_to(source_root)} */")
             blocks.append(transform_assembly(relative, assembly.read_text()))
     blocks.append('\n.section .note.GNU-stack,"",@progbits\n')
     output = "\n".join(blocks)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(output)
+    args.output.write_text(finalize_assembly(output, args.arch))
     print(f"wrote {args.output} ({output.count(chr(10))} lines)")
     return 0
 

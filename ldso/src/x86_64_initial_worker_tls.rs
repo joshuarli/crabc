@@ -155,11 +155,23 @@ pub unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
         }
         return -1;
     }
-    // GCC's guard is process entropy, not a per-thread generator. Copy only
-    // this reserved TCB field; initialized TLS always comes from ELF templates.
-    let guard: usize;
-    unsafe { core::arch::asm!("mov {}, fs:[40]", out(reg) guard, options(nostack, readonly)); }
-    unsafe { core::ptr::write(block.thread_pointer.add(40).cast::<usize>(), guard); }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let guard: usize;
+        // SAFETY: The current thread has an installed x86 TLS block.
+        unsafe { core::arch::asm!("mov {}, fs:[40]", out(reg) guard, options(nostack, readonly)); }
+        // SAFETY: The worker allocation reserves the x86 TCB guard word.
+        unsafe { core::ptr::write(block.thread_pointer.add(40).cast::<usize>(), guard); }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let tp: usize;
+        // SAFETY: The current thread has an installed AArch64 TLS block.
+        unsafe { core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nostack, readonly)); }
+        // SAFETY: Both thread records reserve the canary at TP - 16.
+        unsafe { core::ptr::write(block.thread_pointer.sub(16).cast::<usize>(),
+            core::ptr::read((tp - 16) as *const usize)); }
+    }
     let token = WorkerTlsAllocation { mapping: block.mapping,
         mapping_size: if embedded { 0 } else { block.mapping_byte_len },
         thread_pointer: block.thread_pointer, allocation_id: id };
@@ -207,33 +219,35 @@ mod tests {
         let aligned_image = [21u8, 22, 23];
         let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 32,
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 },
             ..EMPTY_OBJECT };
         // A TLS-free object between providers must not consume a DTV ID.
         objects[2] = Object { tls_image: aligned_image.as_ptr(), tls_filesz: aligned_image.len(),
-            tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096,
+            tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096 + if cfg!(target_arch = "aarch64") { aligned_image.as_ptr() as usize & 4095 } else { 0 },
             ..EMPTY_OBJECT };
         let before = unsafe { read_thread_pointer() };
         let first = unsafe { materialize_initial_tls(&objects, core::mem::size_of::<AllocationNode>()) }.unwrap();
-        unsafe { *first.thread_pointer.sub(32) = 99; }
+        unsafe { *(*first.dtv.add(1) as *mut u8) = 99; }
         let second = unsafe { materialize_initial_tls(&objects, core::mem::size_of::<AllocationNode>()) }.unwrap();
         assert_eq!(unsafe { read_thread_pointer() }, before);
         assert_ne!(first.thread_pointer, second.thread_pointer);
         for block in [first, second] {
-            assert_eq!(unsafe { *block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() }, 0);
+            assert_eq!(unsafe { *(if cfg!(target_arch = "aarch64") { block.thread_pointer.sub(24) } else { block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET) }).cast::<usize>() }, 0);
             assert_eq!(block.thread_pointer as usize % 4096, 0);
             assert!(block.mapping as usize + core::mem::size_of::<AllocationNode>()
-                <= block.thread_pointer as usize - 4096);
+                <= if cfg!(target_arch = "aarch64") { block.thread_pointer as usize - 32 } else { block.thread_pointer as usize - 4096 });
             assert_eq!(unsafe { *block.dtv }, 2);
-            assert_eq!(unsafe { *block.dtv.add(1) }, block.thread_pointer as usize - 32);
-            assert_eq!(unsafe { *block.dtv.add(2) }, block.thread_pointer as usize - 4096);
-            assert_eq!(unsafe { core::slice::from_raw_parts(block.thread_pointer.sub(4096), 3) }, aligned_image);
-            assert!(unsafe { core::slice::from_raw_parts(block.thread_pointer.sub(4096).add(3), 126) }.iter().all(|byte| *byte == 0));
-            let sizes = unsafe { *block.thread_pointer.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
+            let expected = |offset| if cfg!(target_arch = "aarch64") { block.thread_pointer as usize + offset } else { block.thread_pointer as usize - offset };
+            assert_eq!(unsafe { *block.dtv.add(1) }, expected(objects[0].tls_offset_below_tp));
+            assert_eq!(unsafe { *block.dtv.add(2) }, expected(objects[2].tls_offset_below_tp));
+            let second_image = unsafe { *block.dtv.add(2) } as *const u8;
+            assert_eq!(unsafe { core::slice::from_raw_parts(second_image, 3) }, aligned_image);
+            assert!(unsafe { core::slice::from_raw_parts(second_image.add(3), 126) }.iter().all(|byte| *byte == 0));
+            let sizes = unsafe { *(if cfg!(target_arch = "aarch64") { block.thread_pointer } else { block.thread_pointer.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET) }).cast::<*const usize>() };
             assert_eq!(unsafe { *sizes.add(1) }, 32);
             assert_eq!(unsafe { *sizes.add(2) }, 129);
         }
-        assert_eq!(unsafe { core::slice::from_raw_parts(second.thread_pointer.sub(32), 4) }, image);
+        assert_eq!(unsafe { core::slice::from_raw_parts(*second.dtv.add(1) as *const u8, 4) }, image);
         for block in [first, second] {
             assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
         }
@@ -243,7 +257,7 @@ mod tests {
     fn retired_worker_generations_are_reclaimed_before_survivor_and_late_worker_growth() {
         unsafe fn resident(address: usize) -> bool {
             let mut residency = 0u8;
-            unsafe { syscall3(27, address as i64, 1,
+            unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, address as i64, 1,
                 core::ptr::addr_of_mut!(residency) as i64) == 0 }
         }
         unsafe fn register(block: InstalledInitialTls) -> WorkerTlsAllocation {
@@ -262,7 +276,7 @@ mod tests {
             let mut initial = [EMPTY_OBJECT; 32];
             initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2,
                 tls_memsz: 32, tls_align: 16, tls_module_id: 1,
-                tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+                tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
             let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 2,
                 tls_memsz: 97, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT };
             let modules = [initial[0], runtime,
@@ -351,10 +365,10 @@ mod tests {
         let image = [11u8, 12, 13, 14];
         let mut objects = [EMPTY_OBJECT; 32];
         objects[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 32,
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 },
             ..EMPTY_OBJECT };
         objects[2] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
-            tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096,
+            tls_memsz: 129, tls_align: 4096, tls_module_id: 2, tls_offset_below_tp: 4096 + if cfg!(target_arch = "aarch64") { image.as_ptr() as usize & 4095 } else { 0 },
             ..EMPTY_OBJECT };
         let prefix = core::mem::size_of::<AllocationNode>();
         let layout = unsafe { super::super::initial_tls_block_layout(&objects, prefix) }.unwrap();
@@ -367,7 +381,7 @@ mod tests {
             Some((span as *mut u8, size))) }.unwrap();
         assert_eq!(block.mapping as i64, span);
         assert_eq!(block.mapping_byte_len, size);
-        assert_eq!(unsafe { core::slice::from_raw_parts(block.thread_pointer.sub(4096), 4) }, image);
+        assert_eq!(unsafe { core::slice::from_raw_parts(*block.dtv.add(2) as *const u8, 4) }, image);
         assert_eq!(unsafe { *block.dtv }, 2);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, span, size as i64) }, 0);
     }
@@ -376,7 +390,7 @@ mod tests {
     fn embedded_worker_token_release_keeps_the_caller_span_mapped() {
         unsafe fn resident(address: usize) -> bool {
             let mut residency = 0u8;
-            unsafe { syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) == 0 }
+            unsafe { syscall3(if cfg!(target_arch = "aarch64") { 232 } else { 27 }, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) == 0 }
         }
         let span = unsafe { syscall6(SYS_MMAP, 0, PAGE as i64, PROT_READ | PROT_WRITE,
             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };

@@ -7,7 +7,7 @@ purpose = "C-linkable compiler helper archive for the crabc Linux/AArch64 sysroo
 [implementation]
 source_languages = ["Rust"]
 upstream = "crabc Rust helpers plus the source-built compiler_builtins 0.1.160 selected from the pinned rust-src component"
-rust_sources = ["src/lib.rs", "pinned rust-src compiler-builtins/compiler-builtins/src/**/*.rs", "pinned rust-src compiler-builtins/libm/src/math/support/**/*.rs"]
+rust_sources = ["src/lib.rs", "src/aarch64_binary128.rs", "pinned rust-src compiler-builtins/compiler-builtins/src/**/*.rs", "pinned rust-src compiler-builtins/libm/src/math/support/**/*.rs"]
 native_sources = []
 build_dependencies = []
 normal_dependencies = []
@@ -47,6 +47,7 @@ required_symbols = [
   "__lttf2",
   "__modti3",
   "__muldc3",
+  "__multc3",
   "__muloti4",
   "__multf3",
   "__multi3",
@@ -78,5 +79,4 @@ prebuilt_target_archive = false
 [excluded]
 memory_intrinsics = "crabc libc owns memcpy, memmove, and memset; compiler_builtins's mem feature is disabled and its archive is rejected if it exports them"
 unwind = "C++ exceptions and unwind registration are outside the supported sysroot; every member is rejected if it contains unwind sections"
-outline_atomics = "the builder disables AArch64 outline atomics and rejects any __aarch64_* helper export"
 native_compiler_rt = "compiler_builtins retains links = compiler-rt metadata upstream, but the source build verifies that its c feature is disabled, no native build command runs, and no prebuilt compiler_builtins target archive is consumed"

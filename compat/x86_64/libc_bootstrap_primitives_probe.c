@@ -13,7 +13,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -39,6 +39,16 @@ enum {
 };
 
 _Static_assert(sizeof(long) == 8, "x86 LP64 long width");
+#if defined(__aarch64__)
+_Static_assert(sizeof(fexcept_t) == 4 && sizeof(fenv_t) == 8 && _Alignof(fenv_t) == 4,
+    "aarch64 fenv layout");
+_Static_assert(sizeof(jmp_buf) == 312 && _Alignof(jmp_buf) == 8,
+    "aarch64 musl jmp_buf layout");
+_Static_assert(sizeof(sigjmp_buf) == 312 && _Alignof(sigjmp_buf) == 8,
+    "aarch64 musl sigjmp_buf layout");
+_Static_assert(SYS_mmap == 222 && SYS_mprotect == 226 && SYS_munmap == 215 &&
+    SYS_rt_sigprocmask == 135, "aarch64 fixture syscalls");
+#else
 _Static_assert(sizeof(fexcept_t) == 2, "x86 fexcept_t width");
 _Static_assert(sizeof(fenv_t) == 32 && _Alignof(fenv_t) == 4,
     "x86 fenv_t layout");
@@ -53,6 +63,7 @@ _Static_assert(SIGUSR1 == 10 && SIG_SETMASK == 2, "x86 signal constants");
 _Static_assert(SYS_mmap == 9 && SYS_mprotect == 10 && SYS_munmap == 11,
     "x86 mapping syscall numbers");
 _Static_assert(SYS_rt_sigprocmask == 14, "x86 rt_sigprocmask syscall number");
+#endif
 _Static_assert(__builtin_types_compatible_p(__typeof__(&memcpy),
     void *(*)(void *, const void *, size_t)), "memcpy declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&memmove),
@@ -64,11 +75,35 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&memcmp),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&bcmp),
     int (*)(const void *, const void *, size_t)), "bcmp declaration");
 
+#if defined(__aarch64__)
+#define PROBE_DENORM 0
+#else
+#define PROBE_DENORM __FE_DENORM
+#endif
+
 /* `__flt_rounds` is musl's C99 helper behind FLT_ROUNDS. */
 extern int __flt_rounds(void);
 /* This ABI alias is intentionally not part of musl's public header. */
 extern int __setjmp(jmp_buf) __attribute__((returns_twice));
 
+#if defined(__aarch64__)
+static long raw_syscall6(long number, long a, long b, long c, long d, long e, long f)
+{
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    register long x5 __asm__("x5") = f;
+    register long x8 __asm__("x8") = number;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x8) : "memory", "cc");
+    return x0;
+}
+static long raw_syscall4(long number, long a, long b, long c, long d)
+{
+    return raw_syscall6(number, a, b, c, d, 0, 0);
+}
+#else
 static long raw_syscall4(long number, long argument1, long argument2,
     long argument3, long argument4)
 {
@@ -101,6 +136,7 @@ static long raw_syscall6(long number, long argument1, long argument2,
     return result;
 }
 
+#endif
 static int raw_failed(long result)
 {
     return result < 0 && result >= -4095;
@@ -159,6 +195,7 @@ static void reference_move(unsigned char *destination, const unsigned char *sour
     }
 }
 
+#if defined(__x86_64__)
 static int direction_flag_is_clear(void)
 {
     unsigned long flags;
@@ -166,6 +203,7 @@ static int direction_flag_is_clear(void)
     __asm__ volatile("pushfq; popq %0" : "=r"(flags));
     return (flags & (1UL << 10)) == 0;
 }
+#endif
 
 static int test_memory(void)
 {
@@ -205,7 +243,11 @@ static int test_memory(void)
             reference_move(expected_destination, expected_source, length);
             if (memmove(moved_destination, moved_source, length) != moved_destination)
                 return 3;
+#if defined(__x86_64__)
             if (!equal(moved, moved_expected, sizeof moved) || !direction_flag_is_clear())
+#else
+            if (!equal(moved, moved_expected, sizeof moved))
+#endif
                 return 4;
         }
     }
@@ -277,8 +319,10 @@ static int test_memory(void)
                 if (memmove(overlap_source + 1, overlap_source, length) !=
                     overlap_source + 1)
                     return 18;
+#if defined(__x86_64__)
                 if (!direction_flag_is_clear())
                     return 19;
+#endif
                 for (size_t index = 0; index < length; index++)
                     if (overlap_source[index + 1] !=
                         (unsigned char)(19U + index * 37U))
@@ -313,11 +357,11 @@ static int test_fenv(void)
     prior_round = fegetround();
     if (fesetround(0x200) != -1 || fegetround() != prior_round)
         return 4;
-    if (feraiseexcept(FE_INVALID | __FE_DENORM | FE_INEXACT) != 0 ||
-        fetestexcept(FE_ALL_EXCEPT) != (FE_INVALID | __FE_DENORM | FE_INEXACT))
+    if (feraiseexcept(FE_INVALID | PROBE_DENORM | FE_INEXACT) != 0 ||
+        fetestexcept(FE_ALL_EXCEPT) != (FE_INVALID | PROBE_DENORM | FE_INEXACT))
         return 5;
     if (fegetexceptflag(&flags, FE_ALL_EXCEPT) != 0 ||
-        flags != (FE_INVALID | __FE_DENORM | FE_INEXACT))
+        flags != (FE_INVALID | PROBE_DENORM | FE_INEXACT))
         return 6;
     flags = FE_DIVBYZERO | FE_OVERFLOW;
     if (fesetexceptflag(&flags, FE_ALL_EXCEPT) != 0 ||

@@ -274,7 +274,7 @@ def validate_qualification_manifest() -> dict[str, Any]:
     )
     execution = value.get("execution")
     require(
-        execution == qualification_manifest.EXECUTION_CONTRACT,
+        execution == qualification_manifest.DECLARED_EXECUTION_CONTRACT,
         "qualification manifest execution boundary is invalid",
     )
     require(

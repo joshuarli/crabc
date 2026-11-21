@@ -53,6 +53,21 @@ unsafe fn kernel_name(name: *const c_char) -> *const c_char {
 // Two-argument callers do not supply mode/attribute registers. The O_CREAT
 // branch alone admits the promoted mode_t and pointer varargs in edx/rcx.
 static_archive_member! { mq_open_source {
+    /// # Safety
+    /// The name must be a readable C string and O_CREAT requires a mode and mq_attr pointer.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub unsafe extern "C" fn mq_open(name: *const c_char, flags: c_int, mut arguments: ...) -> c_int {
+        if flags & O_CREAT == 0 {
+            // SAFETY: the caller supplies a valid queue name.
+            return unsafe { open_existing(name, flags) };
+        }
+        // SAFETY: O_CREAT requires a mode and an mq_attr pointer.
+        let (mode, attr) = unsafe { (arguments.next_arg::<c_uint>(), arguments.next_arg::<*const c_void>()) };
+        // SAFETY: the caller supplies the creation arguments required by O_CREAT.
+        unsafe { open_create(name, flags, mode, attr) }
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.mq_open,"ax",@progbits
@@ -115,11 +130,14 @@ static_archive_member! { mq_unlink_source {
 // or new-attribute argument, with the caller's return address still in place.
 // Musl's `src/mq/mq_getattr.c` object.
 static_archive_member! { mq_getattr_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("mq_getattr_aarch64.S"));
     /// Query queue attributes through the public mq_setattr entry.
     /// # Safety
     /// `attributes` must designate writable LP64 `struct mq_attr` storage and the
     /// descriptor must remain open during the call. Invalid kernel inputs retain
     /// their direct errors.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(r#"
     .section .text.mq_getattr,"ax",@progbits
     .p2align 4
@@ -136,10 +154,13 @@ mq_getattr:
 
 // Musl's `src/mq/mq_send.c` object.
 static_archive_member! { mq_send_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("mq_send_aarch64.S"));
     /// Send one message, waiting for space as a pthread cancellation point.
     /// # Safety
     /// `message` must designate `length` readable bytes for the call. The caller
     /// owns descriptor lifetime and shared queue synchronization.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(r#"
     .section .text.mq_send,"ax",@progbits
     .p2align 4
@@ -155,11 +176,14 @@ mq_send:
 
 // Musl's `src/mq/mq_receive.c` object.
 static_archive_member! { mq_receive_source {
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(include_str!("mq_receive_aarch64.S"));
     /// Receive one message, waiting for availability as a cancellation point.
     /// # Safety
     /// `message` must designate `length` writable bytes; `priority` must be null
     /// or writable unsigned-int storage. The caller owns descriptor lifetime and
     /// any concurrent accesses to the queue or destination storage.
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(r#"
     .section .text.mq_receive,"ax",@progbits
     .p2align 4

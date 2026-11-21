@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import signal
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -114,6 +117,51 @@ class PureHelperTests(unittest.TestCase):
         self.assertFalse(RUNNER.fixture_has_dependencies(default_manifest))
         self.assertEqual(RUNNER.fixture_package_name(dependent_manifest), "crabc-rust-dependent-fixture")
         self.assertTrue(RUNNER.fixture_has_dependencies(dependent_manifest))
+
+
+class TimeoutTests(unittest.TestCase):
+    def test_timeout_kills_a_grandchild_that_holds_the_output_pipes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = Path(temporary_name)
+            pid_file = temporary / "grandchild.pid"
+            script = temporary / "case"
+            script.write_text(
+                "#!/bin/sh\n"
+                f"sleep 60 &\necho $! > {pid_file}\necho $!\nexec sleep 60\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+
+            def watchdog(signum: int, frame: object) -> None:
+                raise AssertionError("run_binary hung after its timeout")
+
+            previous = signal.signal(signal.SIGALRM, watchdog)
+            signal.alarm(10)
+            started = time.monotonic()
+            try:
+                result = RUNNER.run_binary(script, {"PATH": "/bin:/usr/bin"}, temporary, 0.5)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous)
+                if pid_file.is_file():
+                    try:
+                        os.kill(int(pid_file.read_text(encoding="utf-8")), signal.SIGKILL)
+                    except (ProcessLookupError, ValueError):
+                        pass
+            self.assertLess(time.monotonic() - started, 8)
+            self.assertEqual(result.status, "TIMEOUT")
+            self.assertTrue(result.timed_out)
+            grandchild = int(result.stdout)
+            self.assertEqual(int(pid_file.read_text(encoding="utf-8")), grandchild)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(grandchild, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail(f"grandchild {grandchild} survived the timeout")
 
 
 class PinTests(unittest.TestCase):

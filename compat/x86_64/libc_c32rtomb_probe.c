@@ -10,10 +10,10 @@
  * objects, environment lookup, databases, general locale, or wide streams.
  */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#error "this fixture requires native Linux/x86-64 or Linux/AArch64 little-endian LP64"
 #endif
 
 #include <errno.h>

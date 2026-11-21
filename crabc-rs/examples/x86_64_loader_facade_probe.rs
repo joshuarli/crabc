@@ -12,10 +12,14 @@ use core::ptr::NonNull;
 
 use crabc_rs::dl::{Library, LoadedImageSnapshot, LoaderText, OpenFlags};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
-    // SAFETY: `ud2` raises SIGILL, ending this probe process immediately.
+    // SAFETY: The illegal instruction terminates the probe process.
+    #[cfg(target_arch = "x86_64")]
     unsafe { core::arch::asm!("ud2", options(noreturn)) }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("udf #0", options(noreturn)) }
 }
 
 /// Mirrors `struct facade_image` in the C driver.

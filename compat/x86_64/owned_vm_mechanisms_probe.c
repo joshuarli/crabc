@@ -13,10 +13,16 @@
 
 #define PAGE_SIZE 4096u
 
-_Static_assert(PTRDIFF_MAX == INT64_MAX, "x86-64 ptrdiff maximum");
+_Static_assert(PTRDIFF_MAX == INT64_MAX, "ptrdiff maximum");
+#if defined(__aarch64__)
+_Static_assert(SYS_brk == 214, "aarch64 brk syscall number");
+_Static_assert(SYS_mremap == 216, "aarch64 mremap syscall number");
+_Static_assert(SYS_remap_file_pages == 234, "aarch64 remap_file_pages syscall number");
+#else
 _Static_assert(SYS_brk == 12, "x86-64 brk syscall number");
 _Static_assert(SYS_mremap == 25, "x86-64 mremap syscall number");
 _Static_assert(SYS_remap_file_pages == 216, "x86-64 remap_file_pages syscall number");
+#endif
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -27,6 +33,16 @@ _Static_assert(SYS_remap_file_pages == 216, "x86-64 remap_file_pages syscall num
 
 static long raw5(long number, long first, long second, long third, long fourth, long fifth)
 {
+#if defined(__aarch64__)
+    register long x0 __asm__("x0") = first;
+    register long x1 __asm__("x1") = second;
+    register long x2 __asm__("x2") = third;
+    register long x3 __asm__("x3") = fourth;
+    register long x4 __asm__("x4") = fifth;
+    register long x8 __asm__("x8") = number;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x8) : "memory", "cc");
+    return x0;
+#else
     register long r10 __asm__("r10") = fourth;
     register long r8 __asm__("r8") = fifth;
     long result;
@@ -38,6 +54,7 @@ static long raw5(long number, long first, long second, long third, long fourth, 
         : "rcx", "r11", "cc", "memory"
     );
     return result;
+#endif
 }
 
 static int expect_write_fault(const volatile unsigned char *address)

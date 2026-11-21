@@ -1,5 +1,5 @@
 Prefix: CRAB
-Next: 19
+Next: 22
 
 ### CRAB-6 · P2 · Unreproduced fork-child SIGEV_THREAD timer wait failure
 
@@ -19,7 +19,6 @@ Next: 19
 - **Fix with:** test-audit
 - **Effort:** L
 
-
 ### CRAB-10 · P2 · Architecture facts are hard-coded across hundreds of harness files
 
 - **Area:** Qualification harness / AArch64 convergence
@@ -30,27 +29,6 @@ Next: 19
 - **Effort:** L
 - **Design:** docs/rfc/CRAB-8-linux-aarch64-feature-completion.md
 
-
-### CRAB-17 · P2 · Concurrent or recursive exit runs handlers and finalizers twice or truncates output
-
-- **Area:** Process exit lifecycle
-- **Where:** libc/src/c_abi/x86_64/static_startup.rs:124-134; libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs:209-228; libc/src/c_abi/x86_64/process_exit.rs:215-243
-- **Problem:** musl 1.2.6 exit (oracle src/exit/exit.c) takes a static exit_lock CAS on the caller's tid: a recursive exit crashes and a second thread pauses forever. crabc's static exit has no gate, so two threads both drain __funcs_on_exit (which drops its lock around callbacks), both take EXECUTABLE_FINI through a non-atomic ptr::replace on a static mut (a Rust data race; C++ destructors can run twice), and either can _exit while the other is mid-handler. The dynamic exit's failed READY->EXITING CAS calls _Exit(status) immediately, killing the first exiting thread mid-flush and losing buffered stdout with the second caller's status. Reachable whenever a worker thread calls exit while main returns, or an atexit handler calls exit.
-- **Recommendation:** Add one exit gate shared by both compositions, matching musl: CAS a static owner tid before __funcs_on_exit, crash on recursion, pause forever on contention; remove the dynamic _Exit fallback. Add a native differential case with two threads exiting while stdout is buffered.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** S
-
-
-### CRAB-18 · P2 · Setuid processes honor MIMALLOC_* environment options
-
-- **Area:** Allocator glue / privileged execution
-- **Where:** libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs:85-98; scripts/build_x86_64_owned_sysroot.py:933; COMPATIBILITY-PROFILE.md:67
-- **Problem:** COMPATIBILITY-PROFILE requires secure execution to preserve environment filtering. crabc's mimalloc glue hands upstream _mi_prim_getenv the live C environ with no AT_SECURE check, and the build defines no MI_USE_ENVIRON override, so a setuid program reads MIMALLOC_VERBOSE/SHOW_STATS/SHOW_ERRORS (printing heap addresses to stderr) and reserve/large-page policy from an untrusted caller. The musl oracle's allocator reads no environment. The v3.5.0 prim.c path is inferred from the pinned glue comment and the libmimalloc-sys v2 source; a setuid fixture has not been run (unproven at runtime).
-- **Recommendation:** In runtime_source_environment, return an empty environment vector when the cached secure-execution state is set, leaving upstream source unedited; add a secure-mode fixture with MIMALLOC_VERBOSE=1 that must print nothing.
-- **Fix with:** os-boundaries
-- **Effort:** S
-
-
 ### CRAB-11 · P3 · pthread_getspecific takes a process-wide spin lock
 
 - **Area:** Thread-specific data
@@ -59,7 +37,6 @@ Next: 19
 - **Recommendation:** Make current-thread get/set lock-free over the existing per-thread atomics, rejecting deleted keys with a per-key generation as musl does; keep a futex lock only for key create/delete.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
-
 
 ### CRAB-12 · P3 · crabc-rs owns a second process-global atfork registry
 
@@ -70,27 +47,6 @@ Next: 19
 - **Fix with:** api-surface-and-module-boundaries
 - **Effort:** M
 
-
-### CRAB-13 · P3 · Stopping a candidate leaves its dispatcher and containers running
-
-- **Area:** Qualification candidate lifecycle
-- **Where:** compat/x86_64/qualification_candidate.py:763-765; scripts/dev-x86_64.sh:3295
-- **Problem:** _run waits on the dispatcher with subprocess.run and installs no signal handling or process-group ownership; the dispatcher runs `docker run --rm` against writable checkout mounts. Killing only the candidate process (as nohup-launched runs are stopped) leaves the container writing into the work tree while a resume renames and reuses those output paths, so a resumed run can mix outputs. Not reproduced.
-- **Recommendation:** Run the dispatcher in its own process group, forward SIGTERM/SIGINT to it and to named containers, and verify termination before a resume may reuse a step's outputs.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** M
-
-
-### CRAB-14 · P3 · Rust consumer timeout can hang on a surviving child
-
-- **Area:** Rust std consumer qualification
-- **Where:** compat/rust-std/run.py:236-240; compat/rust-std/fixtures/src/main.rs:133; compat/rust-std/dependent-fixture/src/main.rs:136
-- **Problem:** On timeout run_binary kills only the immediate binary and then calls process.communicate() with no timeout. Both fixtures spawn children that inherit the pipes, so a stuck descendant keeps the pipes open and the timeout handler never returns, turning one timed-out case into a hung consumer gate. Not reproduced.
-- **Recommendation:** Start each case in its own process group, kill the group on timeout, and bound the post-kill communicate.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** S
-
-
 ### CRAB-15 · P3 · Rebuilding the pinned images is not reproducible
 
 - **Area:** Build environment
@@ -100,13 +56,11 @@ Next: 19
 - **Fix with:** none
 - **Effort:** M
 
+### CRAB-21 · P3 · Two readers still reject a same-source cross-revision resume
 
-### CRAB-16 · P4 · Public unsafe functions lack a Safety section
-
-- **Area:** Rust facade API documentation
-- **Where:** crabc-rs/src/event.rs:496; crabc-rs/src/stdio.rs:131,148,165; crabc-core/src/pipe.rs:90
-- **Problem:** AGENTS.md requires documented caller obligations for every public unsafe API; these functions state them only in prose or not at all, so rustdoc and clippy::missing_safety_doc do not surface them. (posix_madvise is already fixed on the CRAB-8 branch.)
-- **Recommendation:** Move the obligations under `# Safety` headings and enable clippy::missing_safety_doc for crabc-rs and crabc-core.
+- **Area:** Qualification harness
+- **Where:** compat/x86_64/owned_resolver_alias_contract_reader.py `_source_identity`; compat/x86_64/owned_resolver_family.py `_validate_admission_sources`; compat/x86_64/compiler_helper_evidence.py `_source_seal`, `_aggregate_record`
+- **Problem:** The CRAB-19 fix (`source_seal.same_evidence`) lets readers accept a recollected seal that differs only in revision, but these readers bind a retained git revision outside the seal pattern (`selected_source {revision, tree, source_sha256}` and `checkout {revision, clean}`) and compare it with the current HEAD. A resumed candidate whose later steps run at a different revision with the same product source therefore still fails at the resolver alias and compiler-helper readers. Not reproduced in a full run.
+- **Recommendation:** Record a product-source seal in these receipts and compare it with `same_product`, keeping the tree/clean checks, then add the same move-HEAD regression the CRAB-19 tests use.
 - **Fix with:** none
 - **Effort:** S
-

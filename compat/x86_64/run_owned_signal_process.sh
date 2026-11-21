@@ -6,7 +6,8 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly EVIDENCE="$ROOT/compat/x86_64/owned_signal_process_evidence.py"
 readonly SOURCE="$ROOT/compat/signal-process/tests/signal_process.c"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly SUBCASES=(
     siginfo nodefer mask-pending sa-restart altstack thread-mask sigwait timer
     wait-signal wait-nohang atfork fork-worker-exec
@@ -178,7 +179,7 @@ for mode in pie non-pie; do
         compare_case "oracle-$subcase" "$mode-kernel-$subcase"
         step="dynamic-$mode-direct-$subcase"
         capture_case "$mode-direct-$subcase" /usr/sbin/chroot "$execution_root" \
-            /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$subcase"
+            /lib/ld-crabc-${arch}.so.1 "/consumer-$mode" "$subcase"
         compare_case "oracle-$subcase" "$mode-direct-$subcase"
     done
 done

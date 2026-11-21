@@ -44,7 +44,7 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
             f"{arm}-{mode}" for arm in producer.ARMS for mode in producer.ENTRY_MODES
         }})
         self.assertEqual(len(matrix), 19)
-        self.assertEqual(matrix["installed-dynamic-pie-direct"][1], ["/lib/ld-crabc-x86_64.so.1", "/workload"])
+        self.assertEqual(matrix["installed-dynamic-pie-direct"][1], [f"/lib/ld-crabc-{producer.ARCH}.so.1", "/workload"])
 
     def test_receipt_source_map_selects_proto_c_provider_not_system_parser(self) -> None:
         sources = producer.source_records()
@@ -127,11 +127,27 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(producer.ProtocolDatabaseError, "does not select one endprotoent input"):
             producer._oracle_provider_map(link_map, owners)
 
+    def test_arm_oracle_map_accepts_only_mapping_symbols_before_provider(self) -> None:
+        owner = "/opt/musl-1.2.6/lib/libc.a(proto.lo)"
+        owners = {name: owner for name in producer.PROVIDERS}
+        rows = ["VMA Size Align Out In Symbol"]
+        for index, name in enumerate(producer.PROVIDERS, start=1):
+            rows.extend((f"0x{index * 16:x} 16 1 {owner}:(.text.{name})",
+                         f"0x{index * 16:x} 0 0 $x", f"0x{index * 16:x} 0 0 {name}"))
+        link_map = self.work / "oracle-arm.map"
+        link_map.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        with mock.patch.object(producer, "ARCH", "aarch64"):
+            self.assertEqual(producer._oracle_provider_map(link_map, owners), link_map.read_bytes())
+            rows[2] = "0x10 0 0 foreign"
+            link_map.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(producer.ProtocolDatabaseError, "does not bind"):
+                producer._oracle_provider_map(link_map, owners)
+
     def test_oracle_provider_authority_keeps_temporary_map_outside_report_tree(self) -> None:
         evidence = self.work / "evidence"
         evidence.mkdir()
         archive = Path("/opt/musl-1.2.6/lib/libc.a")
-        compiler_root = Path("/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0")
+        compiler_root = Path(f"/usr/lib/gcc/{producer.ARCH}-alpine-linux-musl/15.2.0")
         owner_members = {name: "proto.lo" for name in producer.PROVIDERS}
         owner_members.update({"strcmp": "strcmp.lo", "strlen": "strlen.lo"})
         owners = {name: f"{archive}({member})" for name, member in owner_members.items()}
@@ -153,7 +169,7 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         ]
         trace = evidence / "oracle.trace"
         trace.write_text("\n".join(trace_rows) + "\n", encoding="utf-8")
-        scratch_root = self.work / ".work/x86_64/tmp"
+        scratch_root = self.work / f".work/{producer.ARCH}/tmp"
         evidence.chmod(0o555)
 
         def check_scratch(path: Path, _executable: Path, admitted: object, _contracts: object) -> None:
@@ -194,13 +210,17 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
             provider_lines.extend((f".globl {name}", f".type {name},@function", f"{name}:",
                                    "call strcmp", "call strlen", "ret", f".size {name},.-{name}"))
         provider_lines.extend((".globl _start", ".type _start,@function", "_start: ret", ".size _start,.-_start"))
-        provider_source.write_text("\n".join(provider_lines) + "\n", encoding="utf-8")
-        target_source.write_text(
+        provider_asm = "\n".join(provider_lines) + "\n"
+        target_asm = (
             ".text\n.globl strcmp\n.type strcmp,@function\nstrcmp: mov $7,%eax\nret\n"
             ".size strcmp,.-strcmp\n.globl strlen\n.type strlen,@function\nstrlen: mov $9,%eax\nret\n"
-            ".size strlen,.-strlen\n",
-            encoding="utf-8",
+            ".size strlen,.-strlen\n"
         )
+        if producer.ARCH == "aarch64":
+            provider_asm = provider_asm.replace("@function", "%function").replace("call ", "bl ")
+            target_asm = target_asm.replace("@function", "%function").replace("mov $7,%eax", "mov w0, #7").replace("mov $9,%eax", "mov w0, #9")
+        provider_source.write_text(provider_asm, encoding="utf-8")
+        target_source.write_text(target_asm, encoding="utf-8")
         subprocess.run((compiler, "-c", provider_source, "-o", provider_object), check=True,
                        capture_output=True)
         subprocess.run((compiler, "-c", target_source, "-o", target_object), check=True,
@@ -238,10 +258,10 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         archive.write_bytes(b"current image archive")
         compiler = self.work / "musl-gcc"
         compiler.write_bytes(b"compiler fixture")
-        manifest_path = self.work / "compat/x86_64/owned_resolver_network_image_inputs.json"
+        manifest_path = self.work / producer.ORACLE_IMAGE_MANIFEST
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(json.dumps({
-            "schema": "crabc.x86_64-owned-resolver-network-image-inputs/v1",
+            "schema": f"crabc.{producer.ARCH}-owned-resolver-network-image-inputs/v1",
             "files": {str(archive): {
                 "path": str(archive), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
                 "size": archive.stat().st_size, "mode": stat.S_IMODE(archive.stat().st_mode),
@@ -341,16 +361,16 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "raw outcome differs"):
             receipt._executions(ROOT, entries, roots)
 
-    @unittest.skipUnless(os.getuid() == 0 and Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+    @unittest.skipUnless(os.getuid() == 0 and Path(f"/usr/local/bin/crabc-{producer.ARCH}-musl-gcc").is_file(),
                          "requires the pinned compiler and an isolated unprivileged child")
     def test_source_recompile_uses_private_scratch_with_read_only_artifacts(self) -> None:
-        temporary = ROOT / ".work/x86_64/tmp"
+        temporary = ROOT / f".work/{producer.ARCH}/tmp"
         temporary.mkdir(parents=True, exist_ok=True)
         original_mode = stat.S_IMODE(temporary.stat().st_mode)
         with tempfile.TemporaryDirectory(dir=temporary) as directory:
             work = Path(directory)
             workload = work / "workload.o"
-            compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+            compiler = f"/usr/local/bin/crabc-{producer.ARCH}-musl-gcc"
             argv = [compiler, "-std=c11", "-fno-builtin", "-fno-stack-protector", "-I", str(ROOT / "include"),
                     "-c", str(ROOT / producer.PROBE), "-o", str(workload)]
             subprocess.run(argv, check=True, capture_output=True)

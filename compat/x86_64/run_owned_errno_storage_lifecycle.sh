@@ -10,6 +10,7 @@ ulimit -c 0
 export LC_ALL=C
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 readonly READER="$ROOT/compat/x86_64/owned_errno_storage_lifecycle.py"
 readonly PROBE="$ROOT/compat/x86_64/owned_errno_storage_lifecycle_probe.c"
 readonly DSO="$ROOT/compat/x86_64/owned_errno_storage_lifecycle_dso.c"
@@ -20,12 +21,12 @@ readonly H_ERRNO_SOURCE="$ROOT/libc/src/c_abi/x86_64/h_errno.rs"
 readonly PTHREAD_SOURCE="$ROOT/libc/src/c_abi/x86_64/pthread_create_join.rs"
 readonly PRODUCT_VALIDATOR="$ROOT/compat/x86_64/owned_posix_product_evidence.py"
 readonly DYNAMIC_BUILDER="$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly ORACLE_CC="$oracle"
 readonly MUSL_ROOT=/opt/musl-1.2.6
 readonly MUSL_ARCHIVE="$MUSL_ROOT/lib/libc.a"
 readonly MUSL_LIBRARY="$MUSL_ROOT/lib/libc.so"
-readonly MUSL_LOADER=/lib/ld-musl-x86_64.so.1
-readonly CRABC_LOADER=/lib/ld-crabc-x86_64.so.1
+readonly MUSL_LOADER="/lib/ld-musl-$arch.so.1"
+readonly CRABC_LOADER="/lib/ld-crabc-$arch.so.1"
 readonly TIMEOUT=30
 readonly EXPECTED_OUTPUT='errno-storage-lifecycle: PASS'
 
@@ -59,10 +60,6 @@ done
 [ -n "$static_product" ] && [ -n "$dynamic_product" ] || usage
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) fail "refuses emulation on $(uname -m)" ;;
-esac
 [ -n "${TMPDIR:-}" ] || fail 'requires explicit checkout-local TMPDIR'
 for tool in ar chroot cmp cp env git grep mkdir mktemp python3 readelf realpath sha256sum timeout; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing tool: $tool"
@@ -173,7 +170,7 @@ prepare_static_root() {
 prepare_oracle_root() {
     local root="$1" executable="$2"
     mkdir -p "$root/lib" "$root/usr/lib"
-    cp "$MUSL_LIBRARY" "$root/lib/ld-musl-x86_64.so.1"
+    cp "$MUSL_LIBRARY" "$root$MUSL_LOADER"
     cp "$MUSL_LIBRARY" "$root/usr/lib/libc.so"
     cp "$work/oracle-plugin.so" "$root/usr/lib/liberrno-storage-lifecycle-probe.so"
     cp "$executable" "$root/consumer"
@@ -193,7 +190,7 @@ python3 -B "$READER" snapshot --root "$ROOT" --output "$work/source-before.json"
 # The sealed dynamic driver intentionally does not offer diagnostic -H. Trace
 # the exact supplied installed tree with the pinned compiler, then compile all
 # workload objects only through that installed driver.
-action installed-header-preprocess /usr/bin/clang --target=x86_64-linux-musl -std=c11 -nostdinc \
+action installed-header-preprocess /usr/bin/clang "--target=$arch-linux-musl" -std=c11 -nostdinc \
     -isystem "$dynamic_product/usr/include" -D_GNU_SOURCE -DCRABC_ERRNO_STORAGE_DYNAMIC_DSO -H -E "$PROBE"
 for header in errno.h netdb.h pthread.h dlfcn.h; do
     grep -Fq "$dynamic_product/usr/include/$header" "$work/installed-header-preprocess.stderr" ||

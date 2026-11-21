@@ -4,6 +4,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || { printf 'usage: %s INSTALLED_DYNAMIC_SYSROOT\n' "$0" >&2; exit 2; }
 readonly installed="$1" driver="$1/bin/crabc-cc-dynamic"
 readonly entry_mode="${CRABC_GENERAL_DYNAMIC_ENTRY_MODE:---dynamic-pie}"
@@ -20,7 +21,7 @@ readonly work
 mkdir "$work/oracle"
 cp -a "$installed" "$work/execution-root"
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 for contract in undeclared wrong-name; do
     imports=()
     [ "$contract" = undeclared ] || imports=(--runtime-import accidental_import)
@@ -45,8 +46,9 @@ for mode in plt got; do
     ! grep -E 'BIND_NOW|FLAGS_1.*NOW' "$work/$mode.dynamic"
     cp "$work/libdeferred-$mode.so" "$work/execution-root/usr/lib/"
 done
-grep -F 'R_X86_64_JUMP_SLOT' "$work/plt.relocations" | grep -F 'deferred_function'
-grep -F 'R_X86_64_GLOB_DAT' "$work/got.relocations" | grep -F 'deferred_value'
+if [ "$arch" = aarch64 ]; then relocation_arch=AARCH64; else relocation_arch=X86_64; fi
+grep -F "R_${relocation_arch}_JUMP_SLOT" "$work/plt.relocations" | grep -F 'deferred_function'
+grep -F "R_${relocation_arch}_GLOB_DAT" "$work/got.relocations" | grep -F 'deferred_value'
 "$driver" --dynamic-shared-object "$ROOT/compat/x86_64/general_dynamic_lazy_provider.c" -o "$work/libdeferred-provider.so"
 "$driver" --dynamic-shared-object --binding lazy --runtime-import unrelated_missing -DDEFERRED_BAD \
     "$ROOT/compat/x86_64/general_dynamic_lazy_provider.c" -o "$work/libdeferred-bad.so"

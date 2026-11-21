@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -26,20 +27,25 @@ from typing import Any, Iterable, Sequence
 import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as product_evidence
 import installed_compiler_translation as translation_contract
+from native_arch import native_arch
+from native_runtime_profile import NativeRuntimeProfile
 
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[2]
+ARCH_CONFIG = native_arch() if platform.system() == "Linux" else native_arch("x86_64")
+ARCH = ARCH_CONFIG["arch"]
+ARCH_LABEL = "x86-64" if ARCH == "x86_64" else ARCH
 SCHEMA = "crabc.x86_64-owned-libc-test/v1"
-PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
-TARGET = "x86_64-unknown-linux-musl"
-ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+PRODUCT_FORMAT = f"crabc-{ARCH_LABEL}-owned-dynamic-sysroot-v1"
+TARGET = ARCH_CONFIG["target_triple"]
+ORACLE_CC = Path(ARCH_CONFIG["oracle"])
 ORACLE_ROOT = Path("/opt/musl-1.2.6")
 ORACLE_LIBC = ORACLE_ROOT / "lib/libc.so"
 ORACLE_INCLUDE = ORACLE_ROOT / "include"
 ORACLE_SPECS = ORACLE_ROOT / "lib/musl-gcc.specs"
-CANONICAL_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-MUSL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
+CANONICAL_INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+MUSL_INTERPRETER = f"/lib/ld-musl-{ARCH}.so.1"
 SOURCE_RUNTEST_TIMEOUT_SECONDS = 5
 SOURCE_RUNTEST_WRAP = ""
 EXECUTION_IDENTITY_UNIT = "regression/pthread_atfork-errno-clobber"
@@ -295,7 +301,7 @@ def ensure_source() -> tuple[Path, dict[str, Any]]:
     """Acquire or validate exactly the pinned libc-test checkout below `.work`."""
 
     url, revision = pin()
-    cache = ROOT / ".work/x86_64/source-oracles" / f"laputa-libc-test-{revision}"
+    cache = ROOT / ".work" / ARCH_CONFIG["work_name"] / "source-oracles" / f"laputa-libc-test-{revision}"
     cache.parent.mkdir(parents=True, exist_ok=True)
     if not cache.exists():
         if cache.is_symlink():
@@ -447,17 +453,26 @@ def validate_product(product: Path) -> dict[str, Any]:
     product = physical_within(product, ROOT / ".work", "supplied dynamic product", directory=True)
     manifest_path = product / "share/crabc/manifest.json"
     manifest = read_json(manifest_path, "supplied dynamic product manifest")
-    if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (1, PRODUCT_FORMAT, TARGET):
+    expected_schema = 1
+    if (manifest.get("schema"), manifest.get("format"), manifest.get("target")) != (expected_schema, PRODUCT_FORMAT, TARGET):
         fail("supplied dynamic product manifest identity drifted")
     files = manifest.get("files")
-    aliases = manifest.get("symlinks")
-    if not isinstance(files, dict) or aliases != {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}:
+    aliases = manifest.get("symlinks", {})
+    if ARCH == "x86_64":
+        expected_aliases = {MUSL_INTERPRETER.lstrip("/"): Path(CANONICAL_INTERPRETER).name}
+    else:
+        try:
+            expected_aliases = NativeRuntimeProfile(manifest["hardening_profile"]).aliases_for_architecture(ARCH)
+        except (KeyError, ValueError, TypeError) as error:
+            raise EvidenceError("supplied dynamic product profile drifted") from error
+    if not isinstance(files, dict) or aliases != expected_aliases:
         fail("supplied dynamic product manifest roster drifted")
     required = {
         "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py", "usr/lib/libc.so",
         "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
-        "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1",
+        "usr/lib/libcrabc-builtins.a", CANONICAL_INTERPRETER.lstrip("/"),
     }
+    required.add("usr/lib/crabc-dynamic-attach.o")
     if not required <= set(files):
         fail("supplied dynamic product omits required payload")
     observed_files: set[str] = set()
@@ -529,7 +544,11 @@ def seal_candidate_product(source: Path, destination: Path, source_before: dict[
 
     if destination.exists() or destination.is_symlink():
         fail("sealed candidate product destination already exists")
-    shutil.copytree(source, destination, symlinks=True)
+    if ARCH == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(source, destination)
+    else:
+        shutil.copytree(source, destination, symlinks=True)
     sealed = validate_product(destination)
     require_same_product_payload(source_before, sealed, "sealed candidate product copy")
     return sealed
@@ -569,7 +588,9 @@ def pinned_musl_identity() -> dict[str, Any]:
     expected_names = {
         "compiler_wrapper", "libc", "loader", "specs", "source_manifest", "specs_manifest", "headers",
     }
-    paths = qualification.MUSL_RUNTIME_PATHS
+    paths = dict(qualification.MUSL_RUNTIME_PATHS)
+    paths["compiler_wrapper"] = str(ORACLE_CC)
+    paths["loader"] = str(ORACLE_ROOT / "lib" / Path(MUSL_INTERPRETER).name)
     if set(paths) != expected_names:
         fail("shared pinned-musl identity roster drifted")
     try:
@@ -595,7 +616,7 @@ def pinned_musl_identity() -> dict[str, Any]:
     expected_manifest = (
         "format=crabc-pinned-musl-oracle-v1\n"
         f"version={version}\nsource_sha256={source_sha256}\n"
-        f"fallback_revision={fallback_revision}\narchitecture=x86_64\n"
+        f"fallback_revision={fallback_revision}\narchitecture={ARCH}\n"
     )
     source_manifest = Path(files["source_manifest"]["resolved_path"])
     specs_manifest = Path(files["specs_manifest"]["resolved_path"])
@@ -604,7 +625,7 @@ def pinned_musl_identity() -> dict[str, Any]:
     expected_specs_manifest = f"{files['specs']['sha256']}  /opt/musl-1.2.6/lib/musl-gcc.specs\n"
     if specs_manifest.read_text(encoding="utf-8") != expected_specs_manifest:
         fail("pinned musl specs verification manifest drifted")
-    if files["compiler_wrapper"]["sha256"] != digest(ROOT / "docker/x86_64-musl-oracle-gcc"):
+    if files["compiler_wrapper"]["sha256"] != digest(ROOT / f"docker/{ARCH}-musl-oracle-gcc"):
         fail("pinned musl compiler wrapper differs from its pinned source")
     return {
         "version": f"musl-{version}",
@@ -656,6 +677,9 @@ def driver_support(product: Path) -> dict[str, Any]:
     driver = physical(product / "bin/crabc-cc-dynamic", "installed dynamic driver", executable=True)
     static_helper = physical(product / "share/crabc/crabc_cc_static.py", "installed compiler helper")
     text = driver.read_text(encoding="utf-8", errors="replace")
+    if ARCH == "aarch64":
+        shared_driver = physical(product / "share/crabc/crabc_cc_owned_dynamic.py", "installed shared dynamic driver")
+        text += shared_driver.read_text(encoding="utf-8", errors="replace")
     helper_text = static_helper.read_text(encoding="utf-8", errors="replace")
     required = {
         "quote_include": "--application-quote-include-dir",
@@ -897,9 +921,14 @@ def verify_candidate_receipt(
     linker = receipt["resolved_linker"]
     if not isinstance(linker, dict) or set(linker) != {"path", "sha256"}:
         fail("candidate dynamic link receipt linker identity drifted")
-    linker_path = physical(Path(linker["path"]), "candidate resolved linker", executable=True)
-    if linker["sha256"] != digest(linker_path):
-        fail("candidate dynamic link receipt linker hash drifted")
+    if ARCH == "aarch64":
+        if linker != product_evidence.source_native_compiler_tool_records()["linker"]:
+            fail("candidate dynamic link receipt linker differs from source image manifest")
+        linker_path = Path(linker["path"])
+    else:
+        linker_path = physical(Path(linker["path"]), "candidate resolved linker", executable=True)
+        if linker["sha256"] != digest(linker_path):
+            fail("candidate dynamic link receipt linker hash drifted")
     library = product / "usr/lib"
     link = [str(linker_path), *( ["-shared"] if shared_object else ["-pie"]), "--hash-style=sysv",
             "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
@@ -910,8 +939,12 @@ def verify_candidate_receipt(
     runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
     if not shared_object:
         entry = library / "Scrt1.o"
-        runtime.extend((entry, library / "crabc-dynamic-attach.o"))
-        link.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", CANONICAL_INTERPRETER, str(entry), str(library / "crabc-dynamic-attach.o")))
+        runtime.append(entry)
+        if ARCH == "x86_64":
+            runtime.append(library / "crabc-dynamic-attach.o")
+        link.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", CANONICAL_INTERPRETER, str(entry)))
+        if ARCH == "x86_64":
+            link.append(str(library / "crabc-dynamic-attach.o"))
     if shared_object:
         link.extend(("-soname", output.name))
     link.extend((str(library / "crti.o"), *(str(path) for path in objects), str(library / "libcrabc-builtins.a"),
@@ -941,7 +974,8 @@ def verify_candidate_receipt(
             fail("candidate dynamic link receipt trace has an unadmitted input")
     if seen != direct_text:
         fail("candidate dynamic link receipt trace omits a direct input")
-    return {"receipt": artifact(receipt_path, "candidate link receipt"), "linker": artifact(linker_path, "candidate linker"),
+    return {"receipt": artifact(receipt_path, "candidate link receipt"),
+            "linker": dict(linker) if ARCH == "aarch64" else artifact(linker_path, "candidate linker"),
             "link_command": link, "link_trace": trace}
 
 
@@ -962,8 +996,8 @@ def expected_candidate_elf(path: Path, observations: dict[str, Any], *, shared_o
     header = Path(observations["header"]["output"]["path"]).read_text(errors="replace")
     segments = Path(observations["segments"]["output"]["path"]).read_text(errors="replace")
     dynamic = Path(observations["dynamic"]["output"]["path"]).read_text(errors="replace")
-    if "Advanced Micro Devices X86-64" not in header or "Type:" not in header or "DYN" not in header:
-        return False, "candidate ELF is not x86-64 ET_DYN"
+    if ("Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64") not in header or "Type:" not in header or "DYN" not in header:
+        return False, f"candidate ELF is not {ARCH_LABEL} ET_DYN"
     if shared_object:
         if "INTERP" in segments or "Requesting program interpreter" in segments:
             return False, "candidate shared object has PT_INTERP"
@@ -991,8 +1025,8 @@ def expected_candidate_elf(path: Path, observations: dict[str, Any], *, shared_o
 def expected_oracle_elf(observations: dict[str, Any], *, shared_object: bool) -> tuple[bool, str]:
     header = Path(observations["header"]["output"]["path"]).read_text(errors="replace")
     segments = Path(observations["segments"]["output"]["path"]).read_text(errors="replace")
-    if "Advanced Micro Devices X86-64" not in header or "DYN" not in header:
-        return False, "pinned-musl output is not x86-64 ET_DYN"
+    if ("Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64") not in header or "DYN" not in header:
+        return False, f"pinned-musl output is not {ARCH_LABEL} ET_DYN"
     if not shared_object and MUSL_INTERPRETER not in segments:
         return False, "pinned-musl executable interpreter drifted"
     if shared_object and ("INTERP" in segments or "Requesting program interpreter" in segments):
@@ -1020,7 +1054,7 @@ def make_char_device(path: Path, minor: int) -> None:
 
 CONTROL_DIRECTORY = "/control"
 CONTROL_BUSYBOX = f"{CONTROL_DIRECTORY}/busybox"
-CONTROL_LOADER = f"{CONTROL_DIRECTORY}/ld-musl-x86_64.so.1"
+CONTROL_LOADER = f"{CONTROL_DIRECTORY}/ld-musl-{ARCH}.so.1"
 CONTROL_SHELL_SOURCE = b'''#include <unistd.h>
 
 extern char **environ;
@@ -1059,6 +1093,9 @@ int main(int argc, char *argv[])
 	return 127;
 }
 '''
+
+CONTROL_SHELL_SOURCE = CONTROL_SHELL_SOURCE.replace(b"ld-musl-x86_64.so.1", Path(CONTROL_LOADER).name.encode())
+CONTROL_ECHO_SOURCE = CONTROL_ECHO_SOURCE.replace(b"ld-musl-x86_64.so.1", Path(CONTROL_LOADER).name.encode())
 
 
 def physical_control_file(path: Path, description: str) -> Path:
@@ -1201,7 +1238,11 @@ def echo_fixture(
 def make_candidate_root(product: Path, destination: Path) -> None:
     if destination.exists() or destination.is_symlink():
         fail("candidate execution root already exists")
-    shutil.copytree(product, destination, symlinks=True)
+    if ARCH == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(product, destination)
+    else:
+        shutil.copytree(product, destination, symlinks=True)
 
 
 def copied_oracle_runtime_record(

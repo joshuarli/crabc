@@ -174,9 +174,22 @@ class ProviderClosureReaderTests(unittest.TestCase):
                 rows(member="tz.lo"), armap("tz.lo", PROCESS_GLOBALS.names),
             )
 
+    def test_aarch64_copy_relocations(self) -> None:
+        original = reader.COPY_RELOCATION
+        try:
+            reader.COPY_RELOCATION = "R_AARCH64_COPY"
+            self.assertEqual(reader.parse_copy_relocations(
+                "00000000002338e8  0000001500000400 R_AARCH64_COPY 00000000002338e8 __progname + 0"
+            ), {"__progname"})
+            self.assertEqual(reader.parse_copy_relocations(
+                "0000000000404d60  0000003100000005 R_X86_64_COPY 0000000000404d60 optind + 0"
+            ), set())
+        finally:
+            reader.COPY_RELOCATION = original
+
     def test_non_pie_consumer_requires_copy_storage_for_each_group(self) -> None:
         relocations = "\n".join(
-            f"0000000000404d60  0000003100000005 R_X86_64_COPY          0000000000404d60 {group[0]} + 0"
+            f"0000000000404d60  0000003100000005 {reader.COPY_RELOCATION}          0000000000404d60 {group[0]} + 0"
             for group in GROUPS if group[0] not in FUNCTION_NAMES
         )
         library = rows()
@@ -187,7 +200,7 @@ class ProviderClosureReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.ProviderClosureError, "does not own COPY storage for tzname"):
             audit(PROCESS_GLOBALS, rows(omit=FUNCTION_NAMES | {"tzname"}), relocations, library,
                   library, "fixture")
-        with self.assertRaisesRegex(reader.ProviderClosureError, "no R_X86_64_COPY"):
+        with self.assertRaisesRegex(reader.ProviderClosureError, f"no {reader.COPY_RELOCATION}"):
             audit(PROCESS_GLOBALS, executable, relocations.replace("optind", "stdout"), library,
                   library, "fixture")
         with self.assertRaisesRegex(reader.ProviderClosureError, "COPY alias partition"):

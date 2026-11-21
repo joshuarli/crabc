@@ -33,7 +33,7 @@
 //! transition must preserve this identity and the opaque `%fs:32` cache before
 //! it can reuse this static implementation.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 pthread identity leaf requires little-endian Linux/x86-64");
 
 use core::arch::asm;
@@ -41,7 +41,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::pthread_cancel::SelectedWorkerCancellation;
 
-const CANCELLATION_STATE_POINTER_OFFSET: usize = 32;
+#[cfg(target_arch = "x86_64")]
+const fn cancellation_state_offset() -> isize { 32 }
+#[cfg(target_arch = "aarch64")]
+const fn cancellation_state_offset() -> isize {
+    -(super::aarch64_tls_layout::CANCELLATION_OFFSET_BELOW_TP as isize)
+}
 
 /// Read the current x86-64 Variant-II thread pointer from its `%fs:0` self
 /// word.
@@ -55,6 +60,7 @@ pub(super) fn current_thread_pointer() -> *mut u8 {
     // SAFETY: the selected static runtime establishes a readable `%fs:0`
     // self word before this leaf runs. The instruction reads that word only;
     // it does not dereference the returned opaque handle or alter TLS state.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         asm!(
             "mov {thread_pointer}, fs:[0]",
@@ -62,6 +68,9 @@ pub(super) fn current_thread_pointer() -> *mut u8 {
             options(readonly, nostack, preserves_flags),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: TPIDR_EL0 is the calling thread's user-accessible thread pointer.
+    unsafe { asm!("mrs {thread_pointer}, tpidr_el0", thread_pointer = out(reg) thread_pointer, options(nostack, preserves_flags)); }
     thread_pointer as *mut u8
 }
 
@@ -92,7 +101,7 @@ pub(super) unsafe fn publish_current_selected_cancellation_state(
     unsafe {
         AtomicUsize::from_ptr(
             thread_pointer
-                .add(CANCELLATION_STATE_POINTER_OFFSET)
+                .offset(cancellation_state_offset())
                 .cast::<usize>(),
         )
     }
@@ -133,7 +142,7 @@ pub(super) fn current_selected_cancellation_state() -> *const SelectedWorkerCanc
     unsafe {
         AtomicUsize::from_ptr(
             thread_pointer
-                .add(CANCELLATION_STATE_POINTER_OFFSET)
+                .offset(cancellation_state_offset())
                 .cast::<usize>(),
         )
     }
@@ -148,6 +157,7 @@ pub(super) fn current_selected_cancellation_state() -> *const SelectedWorkerCanc
 // callers, and C callers that undefine the equality macros, consequently see
 // the same ABI surface without pulling in C11 creation, TSD, or
 // synchronization machinery.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -175,4 +185,15 @@ pthread_equal:
 
     .section .note.GNU-stack,"",@progbits
 "#,
+);
+
+// musl 1.2.6 arch/aarch64/pthread_arch.h: TPIDR_EL0 supplies the thread pointer.
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".text", ".weak pthread_self", ".type pthread_self,%function", "pthread_self:",
+    "mrs x0, tpidr_el0", "ret", ".size pthread_self, .-pthread_self",
+    ".weak thrd_current", ".set thrd_current, pthread_self",
+    ".weak pthread_equal", ".type pthread_equal,%function", "pthread_equal:",
+    "cmp x0, x1", "cset w0, eq", "ret", ".size pthread_equal, .-pthread_equal",
+    ".weak thrd_equal", ".set thrd_equal, pthread_equal",
 );

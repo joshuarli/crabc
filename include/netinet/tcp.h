@@ -1,7 +1,6 @@
 #ifndef _NETINET_TCP_H
 #define _NETINET_TCP_H
 
-#if defined(__x86_64__)
 #include <features.h>
 
 #define TCP_NODELAY 1
@@ -303,8 +302,5 @@ struct tcp_zerocopy_receive {
 
 #endif
 
-#else
-#define TCP_NODELAY 1
-#endif
 
 #endif

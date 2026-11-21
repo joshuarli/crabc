@@ -35,23 +35,25 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import core_image
+from native_arch import native_arch
 import resolver_network_component_receipt as component_receipt
 
 import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as product_evidence
 import owned_static_link_authority as static_authority
 
+ARCH = native_arch()["arch"]
 MUSL_ROOT = Path("/opt/musl-1.2.6")
-MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+MUSL_COMPILER = Path(f"/usr/local/bin/crabc-{ARCH}-musl-gcc")
 SOURCE = ROOT / "compat/resolver-network/workload.c"
 DNS_SERVER = ROOT / "compat/resolver-network/dns_server.py"
-DEFAULT_WORK_ROOT = ROOT / ".work/x86_64/resolver-network"
-DEFAULT_REPORT = ROOT / "compat/reports/resolver-network/x86_64/latest.json"
-STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
-DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
-DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
-IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json"
+DEFAULT_WORK_ROOT = ROOT / f".work/{ARCH}/resolver-network"
+DEFAULT_REPORT = ROOT / f"compat/reports/resolver-network/{ARCH}/latest.json"
+STATIC_FORMAT = ("crabc-x86-64-sealed-static-driver-v1" if ARCH == "x86_64" else "crabc-aarch64-sealed-static-driver-v1")
+DYNAMIC_FORMAT = ("crabc-x86-64-owned-dynamic-sysroot-v1" if ARCH == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1")
+DYNAMIC_INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+PINNED_IMAGE = "crabc-core-evidence@" + core_image.core_image_id(ARCH)
+IMAGE_MANIFEST = ROOT / component_receipt.IMAGE_MANIFEST
 PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v4"
 COMPONENT_SCOPE = ["libc.resolver"]
 COMPILER_ORACLE_INPUTS = component_receipt.COMPILER_ORACLE_INPUTS
@@ -146,7 +148,7 @@ def stream_record(value: bytes) -> dict[str, object]:
 def require_native_loopback_container() -> None:
     """Reject a host or a container that has any network interface but lo."""
 
-    if platform.system() != "Linux" or platform.machine() not in {"x86_64", "amd64"}:
+    if platform.system() != "Linux" or platform.machine() not in ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}):
         raise RunnerError("native resolver-network gate requires Linux/x86-64 without emulation")
     if os.geteuid() != 0:
         raise RunnerError("native resolver-network gate requires root only for private chroot execution")
@@ -189,7 +191,7 @@ def physical_regular(path: Path, description: str, *, executable: bool = False) 
 def pinned_musl_loader() -> dict[str, object]:
     """Record the fixed musl loader/libc identity without treating its alias as unsafe."""
 
-    loader = MUSL_ROOT / "lib/ld-musl-x86_64.so.1"
+    loader = MUSL_ROOT / f"lib/ld-musl-{ARCH}.so.1"
     libc = physical_regular(MUSL_ROOT / "lib/libc.so", "pinned musl libc", executable=True)
     if not loader.is_symlink() or os.readlink(loader) != str(MUSL_ROOT / "lib/libc.so"):
         raise RunnerError("pinned musl loader alias drifted")
@@ -285,7 +287,7 @@ def static_manifest(sysroot: Path) -> dict[str, object]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RunnerError("static sysroot manifest is unreadable") from error
-    if not isinstance(manifest, dict) or manifest.get("format") != "crabc-x86-64-owned-static-sysroot-v1":
+    if not isinstance(manifest, dict) or manifest.get("format") != ("crabc-x86-64-owned-static-sysroot-v1" if ARCH == "x86_64" else "crabc-aarch64-owned-static-sysroot-v1"):
         raise RunnerError("static sysroot has the wrong installed product format")
     installed = manifest.get("installed")
     if not isinstance(installed, dict) or not isinstance(installed.get("files"), dict):
@@ -323,10 +325,12 @@ def dynamic_manifest(sysroot: Path) -> dict[str, object]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RunnerError("dynamic sysroot manifest is unreadable") from error
-    aliases = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
+    aliases = {f"lib/ld-musl-{ARCH}.so.1": f"ld-crabc-{ARCH}.so.1"}
+    if ARCH == "aarch64":
+        aliases["lib/libc.musl-aarch64.so.1"] = "../usr/lib/libc.so"
     if not isinstance(manifest, dict) or (
         manifest.get("schema"), manifest.get("format"), manifest.get("target"), manifest.get("symlinks")
-    ) != (1, DYNAMIC_FORMAT, "x86_64-unknown-linux-musl", aliases):
+    ) != (1, DYNAMIC_FORMAT, f"{ARCH}-unknown-linux-musl", aliases):
         raise RunnerError("dynamic sysroot has the wrong installed product format")
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
@@ -352,7 +356,7 @@ def dynamic_manifest(sysroot: Path) -> dict[str, object]:
         artifact = physical_regular(sysroot / relative, f"dynamic sysroot payload {relative}")
         if sha256_file(artifact) != digest:
             raise RunnerError(f"dynamic sysroot payload hash drifted: {relative}")
-    for required in ("bin/crabc-cc-dynamic", "lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o"):
+    for required in ("bin/crabc-cc-dynamic", f"lib/ld-crabc-{ARCH}.so.1", "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o"):
         physical_regular(sysroot / required, f"dynamic sysroot required payload {required}", executable=required.startswith(("bin/", "lib/")))
     return manifest
 
@@ -678,7 +682,7 @@ def compile_object(compiler: Path, resource: Path, output: Path, timeout: float)
     header = run_checked(["readelf", "-hW", str(output)], cwd=ROOT, timeout=timeout, description="resolver object ELF inspection")
     text = header["stdout"]
     assert isinstance(text, Mapping)
-    if "REL (Relocatable file)" not in str(text["text"]) or "Advanced Micro Devices X86-64" not in str(text["text"]):
+    if "REL (Relocatable file)" not in str(text["text"]) or ("Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64") not in str(text["text"]):
         raise RunnerError("shared resolver workload object is not x86-64 ET_REL")
     return {"compile": record, "object": object_record, "elf_header": header}
 
@@ -755,7 +759,7 @@ def dynamic_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: P
           sha256_file(sysroot / "share/crabc/manifest.json"), {}):
         raise RunnerError(f"dynamic {mode} receipt contract drifted")
     library = sysroot / "usr/lib"
-    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", library / selected[1], library / "crabc-dynamic-attach.o"]
+    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", library / selected[1], *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or mode == "--dynamic-non-pie" else [])]
     archive = library / "libcrabc-builtins.a"
     expected_inputs = [{"path": str(path), "sha256": sha256_file(path)} for path in [*runtime, object_file.resolve(), archive]]
     if data.get("input_receipts") != expected_inputs:
@@ -789,7 +793,7 @@ def elf_audit(path: Path, *, mode: str, dynamic: bool) -> dict[str, object]:
     dynamic_text = str(dynamic_record["stdout"]["text"])
     symbol_text = str(symbols["stdout"]["text"])
     expected_type = "DYN" if mode in {"static-pie", "dynamic-pie"} else "EXEC"
-    if "Advanced Micro Devices X86-64" not in header_text or not re.search(rf"Type:\s+{expected_type}\b", header_text):
+    if ("Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64") not in header_text or not re.search(rf"Type:\s+{expected_type}\b", header_text):
         raise RunnerError(f"{mode} ELF type or machine drifted")
     text = "\n".join((header_text, program_text, dynamic_text, symbol_text))
     forbidden = ("ld-musl-", "libc.musl-", "/opt/musl-", "libc.so.6", "ld-linux", "libgcc", "compiler-rt")

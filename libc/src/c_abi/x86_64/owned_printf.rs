@@ -42,7 +42,7 @@ impl Kind {
 }
 
 #[derive(Clone, Copy)]
-enum Argument { Integer(u64), Pointer(*mut c_void), Float(owned_printf_float::Binary80) }
+enum Argument { Integer(u64), Pointer(*mut c_void), Float(owned_printf_float::LongDouble) }
 
 // Concrete x86 C ABI va_arg types, including int promotion before h/hh
 // narrowing. Cached positional slots retain musl's final classification of

@@ -164,10 +164,7 @@ fn resolve_and_publish_clock_gettime() -> ClockGettime {
 
 #[inline]
 fn process_sysinfo_ehdr() -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
-    { crate::param::vdso_sysinfo_ehdr() }
-    #[cfg(target_arch = "aarch64")]
-    { crate::param::auxv_value(crate::param::AT_SYSINFO_EHDR) }
+    crate::param::vdso_sysinfo_ehdr()
 }
 
 #[inline]
@@ -239,7 +236,6 @@ unsafe extern "C" fn direct_gettimeofday(timeval: *mut u8, timezone: *mut u8) ->
 /// # Safety
 ///
 /// `base` must be zero or this process's kernel-supplied `AT_SYSINFO_EHDR`.
-#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn kernel_clock_gettime(base: usize) -> Option<ClockGettime> {
     // SAFETY: the caller supplies the kernel-owned process vDSO base.
     unsafe { resolve_kernel_clock_gettime(base) }

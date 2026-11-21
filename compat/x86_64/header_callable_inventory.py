@@ -56,23 +56,39 @@ PLATFORM = "Linux/x86-64 little-endian"
 MUSL_VERSION = "1.2.6"
 MUSL_PIN = tomllib.loads((ROOT / "compat/upstreams.toml").read_text(encoding="utf-8"))["musl_native"]
 MUSL_SOURCE_SHA256 = MUSL_PIN["sha256"]
+CONTRACT_LINUX_UAPI_HEADER_MANIFEST_SHA256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
 LINUX_UAPI_VERSION = "5.10"
 LINUX_UAPI_SOURCE_SHA256 = "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
-LINUX_UAPI_HEADER_MANIFEST_SHA256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
+from native_arch import native_arch
+
+ARCH = native_arch()["arch"]
+if ARCH == "aarch64":
+    import re
+    dockerfile = (ROOT / "docker/Dockerfile.aarch64").read_text(encoding="utf-8")
+    def docker_arg(name: str) -> str:
+        matches = re.findall(r"^ARG " + re.escape(name) + r"=([^\s]+)$", dockerfile, re.MULTILINE)
+        if len(matches) != 1:
+            raise ValueError(f"expected one Dockerfile ARG {name}")
+        return matches[0]
+    LINUX_UAPI_VERSION = docker_arg("LINUX_UAPI_VERSION")
+    LINUX_UAPI_SOURCE_SHA256 = docker_arg("LINUX_UAPI_SHA256")
+    LINUX_UAPI_HEADER_MANIFEST_SHA256 = docker_arg("LINUX_UAPI_HEADER_MANIFEST_SHA256")
+else:
+    LINUX_UAPI_HEADER_MANIFEST_SHA256 = CONTRACT_LINUX_UAPI_HEADER_MANIFEST_SHA256
 MUSL_ORACLE_MARKER = {
     "format": "crabc-pinned-musl-oracle-v1",
     "version": MUSL_VERSION,
     "source_sha256": MUSL_SOURCE_SHA256,
     "fallback_revision": MUSL_PIN["fallback_revision"],
-    "architecture": "x86_64",
+    "architecture": ARCH,
 }
 LINUX_UAPI_MARKER = {
     "format": "crabc-linux-uapi-v1",
     "version": LINUX_UAPI_VERSION,
     "source_sha256": LINUX_UAPI_SOURCE_SHA256,
-    "architecture": "x86_64",
-    "install_arch": "x86",
-    "header_count": "935",
+    "architecture": ARCH,
+    "install_arch": "arm64" if ARCH == "aarch64" else "x86",
+    "header_count": docker_arg("LINUX_UAPI_HEADER_COUNT") if ARCH == "aarch64" else "935",
     "header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
 }
 
@@ -143,7 +159,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> InventoryContract:
     require(inputs.get("linux_uapi_version") == LINUX_UAPI_VERSION, "inventory contract Linux UAPI version changed")
     require(inputs.get("linux_uapi_source_sha256") == LINUX_UAPI_SOURCE_SHA256, "inventory contract Linux UAPI pin changed")
     require(
-        inputs.get("linux_uapi_header_manifest_sha256") == LINUX_UAPI_HEADER_MANIFEST_SHA256,
+        inputs.get("linux_uapi_header_manifest_sha256") == CONTRACT_LINUX_UAPI_HEADER_MANIFEST_SHA256,
         "inventory contract Linux UAPI export manifest changed",
     )
 

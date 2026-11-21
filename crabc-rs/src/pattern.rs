@@ -1,9 +1,10 @@
-//! Native, allocation-free filename pattern matching.
+//! Native filename matching and explicit-root traversal for Linux/x86-64.
 //!
-//! This facade accepts `CStr` values so its no-interior-NUL contract is
-//! explicit while still supporting non-UTF-8 Unix names. It calls the pure
-//! `crabc-core` matcher directly: no public C `fnmatch`, C sentinel, or C
-//! `errno` participates in the operation.
+//! The allocation-free matcher delegates directly to the shared byte matcher.
+//! With `alloc`, the module additionally traverses an explicit pathname or
+//! borrowed directory descriptor through `openat` and `RawDir` calls.
+//! It does not select C `fnmatch`, `glob`, `globfree`, `DIR`, `errno`, or a
+//! process-global current-directory search policy.
 
 use bitflags::bitflags;
 use core::ffi::CStr;
@@ -16,7 +17,7 @@ use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 
 #[cfg(feature = "alloc")]
-use crate::{fs, path::Arg, AsFd, Errno, Result};
+use crate::{fs, fs::PathArg, AsFd, Errno, Result};
 
 bitflags! {
     /// POSIX and musl filename-pattern matching options.
@@ -87,11 +88,11 @@ impl AsRef<[u8]> for GlobPath {
 /// [`fnmatch`]. Absolute patterns, empty components, `..` components, and
 /// interior NUL bytes are rejected with [`crate::Errno::INVAL`]. The supplied
 /// `root` is the only starting location; the pattern never silently uses the
-/// process current directory as its search root.
-/// A component exactly equal to `.` is retained, while `.` and `..` directory
-/// records are never wildcard candidates, so patterns have no syntactic
-/// parent traversal. Intermediate symlinks follow Linux `openat` semantics;
-/// this API is not a filesystem-confinement boundary.
+/// process current directory as its search root. A component exactly equal to
+/// `.` is retained, while `.` and `..` directory records are never wildcard
+/// candidates, so patterns have no syntactic parent traversal. Intermediate
+/// symlinks follow Linux `openat` semantics; this API is not a filesystem-
+/// confinement boundary.
 ///
 /// Returned paths retain the supplied root spelling followed by one `/` and
 /// the matching relative path. Entries are owned and preserve arbitrary Unix
@@ -102,7 +103,7 @@ impl AsRef<[u8]> for GlobPath {
 /// such as `missing/*` at the documented no-match result.
 #[cfg(feature = "alloc")]
 #[inline]
-pub fn glob<P: Arg>(root: P, pattern: &[u8]) -> Result<Vec<GlobPath>> {
+pub fn glob<P: PathArg>(root: P, pattern: &[u8]) -> Result<Vec<GlobPath>> {
     root.into_with_c_str(|root| {
         let directory = fs::openat(
             fs::CWD,

@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "x86_64"))]
 // x86 coverage: x86_64_terminal.rs:x86_64_explicit_session_handoff_is_confined_to_a_child covers explicit handoff; x86_64_terminal_operations_reject_non_tty_descriptors covers errors.
 
-use crabc_rs::{pipe, process, pty, termios, Errno, OwnedFd};
+use crabc_rs::{fs, pipe, process, pty, termios, Errno, OwnedFd};
 
 fn pty_master() -> OwnedFd {
     let master =
@@ -14,15 +14,19 @@ fn pty_master() -> OwnedFd {
 
 fn terminal_control_child(master: &OwnedFd) -> ! {
     let pid = process::getpid();
-    if process::setsid().is_err() {
+    if crabc_core::process::setsid().is_err() {
         process::exit_immediately(10);
     }
 
     // Opening the slave without O_NOCTTY from this new session makes this
     // child the controlling-terminal/session owner. The parent never changes
     // its own session or foreground process group.
-    let slave =
-        match pty::ioctl_tiocgptpeer(master, pty::OpenptFlags::RDWR | pty::OpenptFlags::CLOEXEC) {
+    let mut name_buffer = [core::mem::MaybeUninit::uninit(); 128];
+    let name = match pty::ptsname_into(master, &mut name_buffer) {
+        Ok(name) => name,
+        Err(_) => process::exit_immediately(11),
+    };
+    let slave = match fs::open(name, fs::OFlags::RDWR | fs::OFlags::CLOEXEC, fs::Mode::empty()) {
             Ok(slave) => slave,
             Err(_) => process::exit_immediately(11),
         };
@@ -68,18 +72,18 @@ fn terminal_control_child(master: &OwnedFd) -> ! {
 #[test]
 fn terminal_control_round_trips_attributes_and_session_state_in_isolated_child() {
     let master = pty_master();
-    let child = match unsafe { process::fork_raw() }.expect("fork isolated terminal-control child")
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork isolated terminal-control child")
     {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => terminal_control_child(&master),
+        Some(child) => child,
+        None => terminal_control_child(&master),
     };
 
-    let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("reap terminal-control child")
-        .expect("terminal-control child status");
+    let mut status = 0;
+    // SAFETY: The status word is writable and the child is owned by this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
     assert_eq!(
-        status.exit_status(),
-        Some(0),
+        status,
+        0,
         "terminal-control child status: {status:?}"
     );
 }

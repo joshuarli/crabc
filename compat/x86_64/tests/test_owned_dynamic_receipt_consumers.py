@@ -20,11 +20,11 @@ import owned_dynamic_receipt as receipt_contract
 RUNNERS = {
     "io-cancellation": (
         ROOT / "compat/x86_64/run_owned_dynamic_io_cancellation.sh",
-        'python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" "$object" "$arch" <<\'PY\'\n',
     ),
     "process-control": (
         ROOT / "compat/x86_64/run_owned_process_control.sh",
-        'python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" "$arch" <<\'PY\'\n',
     ),
     "driver-source-inputs": (
         ROOT / "compat/x86_64/run_owned_dynamic_driver_source_inputs.sh",
@@ -33,11 +33,11 @@ RUNNERS = {
     "syslog": (
         ROOT / "compat/x86_64/run_owned_syslog.sh",
         'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" \\\n'
-        '        "$candidate.provider-symbols" "$provider" <<\'PY\'\n',
+        '        "$candidate.provider-symbols" "$provider" "$arch" <<\'PY\'\n',
     ),
     "error-reporting": (
         ROOT / "compat/x86_64/run_owned_error_reporting.sh",
-        'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<\'PY\'\n',
+        'python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" "$arch" <<\'PY\'\n',
     ),
 }
 
@@ -174,11 +174,11 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
         runner, anchor = RUNNERS[label]
         self.receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
         arguments = {
-            "io-cancellation": [ROOT, self.product, "pie", self.candidate, INTERPRETER],
-            "process-control": [ROOT, self.product, self.candidate, "pie", self.object, self.receipt_path],
+            "io-cancellation": [ROOT, self.product, "pie", self.candidate, INTERPRETER, self.object, "x86_64"],
+            "process-control": [ROOT, self.product, self.candidate, "pie", self.object, self.receipt_path, "x86_64"],
             "driver-source-inputs": [ROOT, self.receipt_path, self.candidate],
-            "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, self.provider],
-            "error-reporting": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider],
+            "syslog": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, self.provider, "x86_64"],
+            "error-reporting": [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider, "x86_64"],
         }[label]
         return subprocess.run(
             ["python3", "-B", "-c", self._block(runner, anchor), *(str(item) for item in arguments)],
@@ -190,6 +190,36 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
             with self.subTest(label=label):
                 result = self._run(label, self._receipt(2))
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_aarch64_inline_audits_validate_receipts_and_machine(self) -> None:
+        record = {**self._receipt(2), "format": "crabc-aarch64-owned-dynamic-sysroot-v1"}
+        self.receipt_path.write_text(json.dumps(record), encoding="utf-8")
+        self.candidate.with_suffix(".header").write_text("Machine: AArch64\nType: DYN\n")
+        self.candidate.with_suffix(".segments").write_text(
+            "Requesting program interpreter: /lib/ld-crabc-aarch64.so.1]\n"
+        )
+        for label in ("syslog", "error-reporting"):
+            runner, anchor = RUNNERS[label]
+            args = [ROOT, "dynamic", "pie", self.candidate, self.receipt_path, self.provider]
+            if label == "syslog":
+                args.append(self.provider)
+            args.append("aarch64")
+            command = [sys.executable, "-B", "-c", self._block(runner, anchor), *map(str, args)]
+            with self.subTest(label=label):
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.receipt_path.write_text(json.dumps({**record, "application_hash_style": "gnu"}))
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.receipt_path.write_text(json.dumps(record))
+        runner, anchor = RUNNERS["io-cancellation"]
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", self._block(runner, anchor), str(ROOT),
+             str(self.product), "pie", str(self.candidate), "/lib/ld-crabc-aarch64.so.1",
+             str(self.object), "aarch64"], cwd=ROOT, capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ProductEvidenceError", result.stderr)
 
     def test_legacy_schema_one_receipt_remains_accepted_by_the_common_contract(self) -> None:
         for label in RUNNERS:
@@ -215,6 +245,25 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
                     receipt_contract.validate(
                         record, format=FORMAT, label="forged direct DSO receipt", fail=self._contract_failure,
                     )
+
+    def test_aarch64_receipts_reject_native_reserved_dso_names(self) -> None:
+        arm_format = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        for schema in (1, 2, 3):
+            for name in ("libc.so", "ld-crabc-aarch64.so.1", "ld-musl-aarch64.so.1"):
+                with self.subTest(schema=schema, name=name):
+                    if schema == 3:
+                        record = json.loads(json.dumps(self._transitive_receipt()).replace("libroot.so", name))
+                    else:
+                        record = self._receipt(schema)
+                        dso = self.work / name
+                        record["application_dsos"] = {name: "a" * 64}
+                        record["input_receipts"].append({"path": str(dso), "sha256": "a" * 64})
+                        record["link_command"].append(str(dso))
+                        record["link_trace"].append(str(dso))
+                    record["format"] = arm_format
+                    with self.assertRaisesRegex(ValueError, "application DSO"):
+                        receipt_contract.validate(record, format=arm_format, label="ARM receipt",
+                                                  fail=self._contract_failure, allow_application_dso_closure=True)
 
     def test_schema_three_closure_requires_explicit_reader_admission_and_typed_roles(self) -> None:
         receipt = self._transitive_receipt()

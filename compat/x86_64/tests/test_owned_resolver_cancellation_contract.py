@@ -32,7 +32,7 @@ BASE_OBSERVATION = {
 
 class ResolverCancellationObservationContractTests(unittest.TestCase):
     def compare(self, *, api: str = 'modern-dual', scenario: str = 'masked-dual-mixed-tcp',
-                oracle_errno: int = errno.ECANCELED, owned_errno: int = errno.EAGAIN,
+                oracle_errno: int = 125, owned_errno: int = 11,
                 current: dict[str, int] | None = None, stderr: bytes = b'') -> str | None:
         expected = {**BASE_OBSERVATION, 'errno': oracle_errno}
         current = {**BASE_OBSERVATION, 'errno': owned_errno} if current is None else current
@@ -42,7 +42,7 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
         self.assertIn(cancellation.POST_TCP_LATER_EAGAIN_CASE, cancellation.CASES)
         self.assertNotIn(cancellation.POST_TCP_LATER_EAGAIN_CASE[1], cancellation.SCENARIOS)
         self.assertEqual(self.compare(), 'source-later-syscall')
-        self.assertEqual(self.compare(oracle_errno=errno.EAGAIN, owned_errno=errno.ECANCELED),
+        self.assertEqual(self.compare(oracle_errno=11, owned_errno=125),
                          'source-later-syscall')
 
     def test_named_dual_cell_rejects_every_unlisted_errno(self) -> None:
@@ -54,7 +54,7 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
     def test_named_dual_cell_keeps_every_lifecycle_observation_exact(self) -> None:
         for key in BASE_OBSERVATION:
             with self.subTest(key=key):
-                changed = {**BASE_OBSERVATION, 'errno': errno.EAGAIN}
+                changed = {**BASE_OBSERVATION, 'errno': 11}
                 changed[key] += 1
                 with self.assertRaisesRegex(RuntimeError, 'observation differs'):
                     self.compare(current=changed)
@@ -68,7 +68,7 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
     def test_dedicated_post_tcp_case_requires_eagain_exactly(self) -> None:
         with self.assertRaisesRegex(RuntimeError, 'observation differs'):
             self.compare(scenario=cancellation.POST_TCP_LATER_EAGAIN_CASE[1],
-                         oracle_errno=errno.EAGAIN, owned_errno=errno.ECANCELED)
+                         oracle_errno=11, owned_errno=125)
 
     def test_stderr_cannot_drift_with_the_admitted_errno(self) -> None:
         with self.assertRaisesRegex(RuntimeError, 'stderr differs'):

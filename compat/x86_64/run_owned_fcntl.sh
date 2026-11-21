@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly witness="$ROOT/compat/x86_64/run_pthread_wait_witness.py"
 readonly probe="$ROOT/compat/x86_64/owned_fcntl_probe.c"
 # Aggregate dynamic gates supply an already built installed or extracted
@@ -56,7 +57,7 @@ for mode in pie non-pie; do
     for scenario in ordinary; do
         timeout 35 python3 -B "$witness" "$work/execution-root" "/consumer-$mode" "/kernel-$mode-files" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
-        timeout 35 python3 -B "$witness" "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+        timeout 35 python3 -B "$witness" "$work/execution-root" /lib/ld-crabc-${arch}.so.1 \
             "/consumer-$mode" "/direct-$mode-files" >"$work/direct-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done

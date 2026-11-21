@@ -9,6 +9,8 @@ import subprocess
 import tarfile
 import tomllib
 
+ARCHITECTURES = ("x86_64", "aarch64")
+
 
 def load_pin(path: Path) -> dict[str, str]:
     pin = tomllib.loads(path.read_text(encoding="utf-8"))["musl_native"]
@@ -27,10 +29,10 @@ def load_pin(path: Path) -> dict[str, str]:
     return pin
 
 
-def manifest(pin: dict[str, str]) -> str:
+def manifest(pin: dict[str, str], architecture: str) -> str:
     return ("format=crabc-pinned-musl-oracle-v1\n"
             f"version={pin['version']}\nsource_sha256={pin['sha256']}\n"
-            f"fallback_revision={pin['fallback_revision']}\narchitecture=x86_64\n")
+            f"fallback_revision={pin['fallback_revision']}\narchitecture={architecture}\n")
 
 
 def extract_archive(archive: Path, destination: Path, pin: dict[str, str]) -> None:
@@ -53,7 +55,7 @@ def extract_archive(archive: Path, destination: Path, pin: dict[str, str]) -> No
     extracted.rmdir()
 
 
-def acquire_source(pin: dict[str, str], destination: Path) -> None:
+def acquire_source(pin: dict[str, str], destination: Path, architecture: str) -> None:
     if destination.exists() or destination.is_symlink():
         raise ValueError("native musl source destination already exists")
     archive = destination.with_name(destination.name + ".tar.gz")
@@ -75,13 +77,14 @@ def acquire_source(pin: dict[str, str], destination: Path) -> None:
         shutil.rmtree(destination / ".git")
     if (destination / "VERSION").read_text().strip() != pin["version"]:
         raise ValueError("native musl source base version differs")
-    (destination / ".crabc-oracle").write_text(manifest(pin), encoding="utf-8")
+    (destination / ".crabc-oracle").write_text(manifest(pin, architecture), encoding="utf-8")
     archive.unlink(missing_ok=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pins", type=Path, required=True)
+    parser.add_argument("--architecture", choices=ARCHITECTURES, default="x86_64")
     parser.add_argument("operation", choices=("version", "manifest", "acquire"))
     parser.add_argument("destination", type=Path, nargs="?")
     args = parser.parse_args()
@@ -89,11 +92,11 @@ def main() -> None:
     if args.operation == "version":
         print(pin["version"])
     elif args.operation == "manifest":
-        print(manifest(pin), end="")
+        print(manifest(pin, args.architecture), end="")
     else:
         if args.destination is None:
             parser.error("acquire requires a destination")
-        acquire_source(pin, args.destination)
+        acquire_source(pin, args.destination, args.architecture)
 
 
 if __name__ == "__main__":

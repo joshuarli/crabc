@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_wcsftime_probe.c"
 
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
@@ -110,7 +111,7 @@ cp -a "$provided_dynamic/." "$work/root/"
 for mode in pie non-pie; do
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$work/root/dynamic-$mode"
     compare "dynamic-$mode-kernel" "/dynamic-$mode"
-    compare "dynamic-$mode-direct" /lib/ld-crabc-x86_64.so.1 "/dynamic-$mode"
+    compare "dynamic-$mode-direct" "/lib/ld-crabc-$arch.so.1" "/dynamic-$mode"
 done
 
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"

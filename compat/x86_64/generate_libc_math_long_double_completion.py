@@ -84,16 +84,18 @@ def compiler_environment() -> dict[str, str]:
     return environment
 
 
-def checked_compiler(command: str, *, environment: dict[str, str] | None = None) -> str:
+def checked_compiler(command: str, *, environment: dict[str, str] | None = None, arch: str = "x86_64") -> str:
     """Require the exact pinned musl-GCC wrapper, version, and target."""
     compiler = Path(command).resolve()
     if not compiler.is_file():
         raise SystemExit(f"pinned compiler is not a regular file: {compiler}")
     digest = hashlib.sha256(compiler.read_bytes()).hexdigest()
-    if digest != EXPECTED_COMPILER_WRAPPER_DIGEST:
+    expected_digest = EXPECTED_COMPILER_WRAPPER_DIGEST if arch == "x86_64" else "6d0cd1906d9df0c0a54867d779aa8b1133ed5fb7af6ce286ca3c8ff19201e837"
+    expected_target = EXPECTED_COMPILER_TARGET if arch == "x86_64" else "aarch64-alpine-linux-musl"
+    if digest != expected_digest:
         raise SystemExit(
             "pinned compiler wrapper digest mismatch: "
-            f"expected {EXPECTED_COMPILER_WRAPPER_DIGEST}, got {digest}"
+            f"expected {expected_digest}, got {digest}"
         )
     environment = compiler_environment() if environment is None else environment
     version_lines = subprocess.run(
@@ -116,12 +118,41 @@ def checked_compiler(command: str, *, environment: dict[str, str] | None = None)
         text=True,
         env=environment,
     ).stdout.strip()
-    if compiler_target != EXPECTED_COMPILER_TARGET:
+    if compiler_target != expected_target:
         raise SystemExit(
             "pinned compiler target mismatch: "
-            f"expected {EXPECTED_COMPILER_TARGET!r}, got {compiler_target!r}"
+            f"expected {expected_target!r}, got {compiler_target!r}"
         )
     return str(compiler)
+
+
+def architecture_flags(flags: tuple[str, ...], arch: str) -> tuple[str, ...]:
+    if arch == "x86_64":
+        return flags
+    return tuple(flag for flag in flags if not flag.startswith(("-mfpmath=", "-mno-avx", "-mno-fma")))
+
+
+def architecture_source(root: Path, relative: str, arch: str) -> Path:
+    original = root / relative
+    if arch == "aarch64" and relative.startswith("src/math/"):
+        override = root / "src/math/aarch64" / original.name
+        if override.is_file():
+            return override
+    return original
+
+
+def finalize_assembly(text: str, arch: str) -> str:
+    if arch == "x86_64":
+        return text
+    chunks = re.split(r"(?=^/\* musl-1\.2\.6/)", text, flags=re.MULTILINE)
+    definitions = [set(re.findall(r"^([A-Za-z_][A-Za-z0-9_.$]*):", chunk, re.MULTILINE)) for chunk in chunks]
+    exported = set(re.findall(r"(?m)^\s*\.(?:global|globl|weak)\s+([A-Za-z_][A-Za-z0-9_.$]*)", text))
+    duplicates = {name for names in definitions for name in names if name not in exported and sum(name in other for other in definitions) > 1}
+    for index, names in enumerate(definitions):
+        for name in names & duplicates:
+            chunks[index] = re.sub(r"(?<![A-Za-z0-9_.$])" + re.escape(name) + r"(?![A-Za-z0-9_.$])", f"crabc_aarch64_{index}_{name}", chunks[index])
+        chunks[index] = re.sub(r"(?m)^(\s*)crabc_x86_[A-Za-z0-9_]*_fabs(\s+[ds][0-9]+,)", r"\1fabs\2", chunks[index])
+    return "".join(chunks)
 
 
 def transform_assembly(relative: str, text: str) -> str:
@@ -166,6 +197,7 @@ def notices(source_root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--musl-source", required=True, type=Path)
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--cc", default="/usr/local/bin/crabc-x86_64-musl-gcc")
     parser.add_argument(
         "--output",
@@ -174,6 +206,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.arch == "aarch64":
+        if args.output == ROOT / "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64.S":
+            args.output = args.output.with_name(args.output.name.replace("_x86_64.S", "_aarch64.S"))
+
     source_root = args.musl_source.resolve()
     actual_digest = normalized_tree_digest(source_root)
     if actual_digest != EXPECTED_MUSL_TREE_DIGEST:
@@ -181,12 +217,12 @@ def main() -> int:
             "musl source tree digest mismatch: "
             f"expected {EXPECTED_MUSL_TREE_DIGEST}, got {actual_digest}"
         )
-    compiler = checked_compiler(args.cc)
+    compiler = checked_compiler(args.cc, arch=args.arch)
 
     include_flags = (
         f"-I{source_root / 'src/internal'}",
         f"-I{source_root / 'src/include'}",
-        f"-I{source_root / 'arch/x86_64'}",
+        f"-I{source_root / 'arch' / args.arch}",
         f"-I{source_root / 'arch/generic'}",
         f"-I{source_root / 'include'}",
     )
@@ -201,6 +237,9 @@ def main() -> int:
         " */",
         *notices(source_root),
     ]
+    if args.arch == "aarch64":
+        blocks.insert(1, " * AArch64 binary128 translation using the pinned aarch64 musl compiler.")
+        blocks[2] = blocks[2].replace("x86 binary80", "aarch64 binary128")
     with tempfile.TemporaryDirectory(prefix="crabc-math-long-double-generate.") as temp:
         temporary = Path(temp)
         for index, relative in enumerate(SOURCES):
@@ -222,7 +261,7 @@ def main() -> int:
     blocks.append('\n.section .note.GNU-stack,"",@progbits\n')
     output = "\n".join(blocks)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(output)
+    args.output.write_text(finalize_assembly(output, args.arch))
     print(f"wrote {args.output} ({output.count(chr(10))} lines)")
     return 0
 

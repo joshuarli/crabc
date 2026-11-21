@@ -3,6 +3,7 @@ import importlib.util
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import tempfile
@@ -42,11 +43,12 @@ class OwnedRustLinkContract(unittest.TestCase):
                                   "--plugin-opt=mcpu=x86-64", "--trace", "/owned/consumer.o",
                                   "/owned/libstd.rlib", "-o", "/owned/consumer.lto.o"])
 
+    @unittest.skipUnless(platform.machine() in ("x86_64", "aarch64"), "requires native linker fixture")
     @unittest.skipUnless(Path("/opt/cargo/bin/rustup").is_file() and Path("/usr/bin/mold").is_file(), "requires pinned native image")
     def test_bitcode_archive_materializes_before_mold_preserving_call_behavior(self):
         from scripts.rust_toolchain import pinned_toolchain
         repository = Path(__file__).resolve().parents[2]
-        sysroot = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(repository)}-x86_64-unknown-linux-musl"
+        sysroot = Path("/opt/rustup/toolchains") / f"{pinned_toolchain(repository)}-{linker.TARGET}"
         scratch = repository / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
@@ -60,7 +62,10 @@ class OwnedRustLinkContract(unittest.TestCase):
             archive = work / "libvalues.rlib"
             subprocess.run([str(sysroot / "lib/rustlib" / linker.TARGET / "bin/llvm-ar"), "rcs", str(archive), str(bitcode)], check=True)
             caller = work / "caller.c"
-            caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { long status = lto_value(6) == 7 ? 0 : 1; __asm__ volatile("syscall" : : "a"(60L), "D"(status) : "rcx", "r11", "memory"); __builtin_unreachable(); }\n')
+            if platform.machine() == "aarch64":
+                caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { register long status __asm__("x0") = lto_value(6) == 7 ? 0 : 1; register long call __asm__("x8") = 93; __asm__ volatile("svc #0" : : "r"(status), "r"(call) : "memory"); __builtin_unreachable(); }\n')
+            else:
+                caller.write_text('extern int lto_value(int); __attribute__((noreturn)) void _start(void) { long status = lto_value(6) == 7 ? 0 : 1; __asm__ volatile("syscall" : : "a"(60L), "D"(status) : "rcx", "r11", "memory"); __builtin_unreachable(); }\n')
             caller_object = work / "caller.o"
             subprocess.run(["/usr/bin/gcc", "-fno-pie", "-fno-stack-protector", "-ffreestanding", "-c", str(caller), "-o", str(caller_object)], check=True)
             executable = work / "consumer"
@@ -669,6 +674,44 @@ class CargoConsumerLinkContract(unittest.TestCase):
         self.assertEqual(parsed["plugin_options"], ["-plugin-opt=O3", "-plugin-opt=mcpu=x86-64"])
         with self.assertRaisesRegex(linker.LinkError, "linker-plugin option"):
             self.parse(self.arguments(extra=("-Wl,-plugin-opt=O3,-plugin-opt=-load=/tmp/pass.so",)))
+
+    def test_arm64_rejects_conflicting_static_pie_modes(self):
+        with patch.object(linker, "ARCH", "aarch64"):
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-no-pie", unwind="-lunwind", extra=("-static-pie",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-pie", extra=("-static-pie",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static-pie", extra=("-static",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static", unwind="-lunwind"))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static", unwind="-lunwind", extra=("-static-pie",)))
+            with self.assertRaises(linker.LinkError):
+                self.parse(self.arguments(mode="-static-pie", unwind="-lunwind", extra=("-static", "-no-pie")))
+
+    def test_arm64_rustc_static_spelling_selects_the_requested_static_pie(self):
+        rustc_static = self.arguments(mode="-static", unwind="-lunwind", extra=("-static-pie",))
+        rustc_static.insert(rustc_static.index("-static") + 1, "-no-pie")
+        with patch.object(linker, "ARCH", "aarch64"):
+            self.assertEqual(self.parse(rustc_static)["rust_mode"], "static-pie")
+        with patch.object(linker, "ARCH", "x86_64"):
+            with self.assertRaises(linker.LinkError):
+                self.parse(rustc_static)
+
+    def test_arm64_cargo_object_requires_relocatable_elf(self):
+        obj = Path(self.temporary.name) / "input.o"
+        header = bytearray(20)
+        header[:4] = b"\x7fELF"
+        header[16:18] = b"\x01\x00"
+        header[18:20] = b"\xb7\x00"
+        obj.write_bytes(header)
+        with patch.object(linker, "ARCH", "aarch64"), patch.object(linker, "ELF_MACHINE", b"\xb7\x00"):
+            self.assertEqual(linker._cargo_input_kind(obj), "elf-aarch64")
+            header[16:18] = b"\x03\x00"
+            obj.write_bytes(header)
+            with self.assertRaises(linker.LinkError):
+                linker._cargo_input_kind(obj)
 
     def test_foreign_inputs_and_request_spellings_are_rejected(self):
         ambient = Path(self.temporary.name) / "libgcc_eh.a"

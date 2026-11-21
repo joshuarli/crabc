@@ -141,10 +141,18 @@ def install(relative: str, expected: str | None, url: str, seed: Path | None, re
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default={"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}.get(subprocess.check_output(["uname", "-m"], text=True).strip().lower()))
     parser.add_argument("--refresh-index", action="store_true", help="download a new index snapshot")
     parser.add_argument("--mirror-base-url", action="append", default=[],
                         help="HTTPS repository containing the same exact pinned APK filenames; repeatable")
     arguments = parser.parse_args(argv)
+    if arguments.architecture is None:
+        parser.error("unsupported native architecture")
+    global MANIFEST, INPUT, INDEX_NAME
+    if arguments.architecture == "aarch64":
+        MANIFEST = Path(__file__).with_name(f"manifest-{arguments.architecture}.toml")
+        INPUT = Path(f".work/{arguments.architecture}/owned-package-corpus-input")
+        INDEX_NAME = f"index/main-{arguments.architecture}.APKINDEX.tar.gz"
     mirrors = tuple(base.rstrip("/") for base in arguments.mirror_base_url)
     for base in mirrors:
         parsed = urllib.parse.urlsplit(base)
@@ -175,10 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         errors.append(f"unpinned archives present: {', '.join(extra)}")
     if errors:
         for error in errors:
-            print(f"x86 corpus input: FAIL: {error}", file=sys.stderr)
+            print(f"{'x86' if arguments.architecture == 'x86_64' else arguments.architecture} corpus input: FAIL: {error}", file=sys.stderr)
         return 1
     summary = ", ".join(f"{count} {origin}" for origin, count in sorted(origins.items()))
-    print(f"x86 corpus input: PASS ({len(manifest['archive_roster'])} pinned archives: {summary}; "
+    print(f"{'x86' if arguments.architecture == 'x86_64' else arguments.architecture} corpus input: PASS ({len(manifest['archive_roster'])} pinned archives: {summary}; "
           f"index snapshot {sha256(ROOT / INPUT / INDEX_NAME)} from {index_origin}); input: {INPUT}")
     return 0
 

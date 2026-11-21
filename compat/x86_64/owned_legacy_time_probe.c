@@ -2,9 +2,9 @@
 
 #define _GNU_SOURCE 1
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || !(defined(__x86_64__) || defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native Linux/x86-64 little-endian LP64"
+#error "this fixture requires native Linux x86-64 or AArch64 little-endian LP64"
 #endif
 
 #include <errno.h>
@@ -34,11 +34,19 @@ _Static_assert(sizeof(struct timex) == 208 && _Alignof(struct timex) == 8,
 _Static_assert(offsetof(struct timex, modes) == 0 &&
     offsetof(struct timex, offset) == 8 && offsetof(struct timex, time) == 72,
     "x86 timex offsets");
+#if defined(__aarch64__)
+_Static_assert(SYS_times == 153 && SYS_getitimer == 102 && SYS_setitimer == 103,
+    "arm64 timer/accounting syscall numbers");
+_Static_assert(SYS_adjtimex == 171 && SYS_clock_adjtime == 266 &&
+    SYS_settimeofday == 170 && SYS_clock_settime == 112 && SYS_prctl == 167 &&
+    SYS_seccomp == 277, "arm64 clock-adjustment/seccomp numbers");
+#else
 _Static_assert(SYS_times == 100 && SYS_getitimer == 36 && SYS_setitimer == 38,
     "x86 timer/accounting syscall numbers");
 _Static_assert(SYS_adjtimex == 159 && SYS_clock_adjtime == 305 &&
     SYS_settimeofday == 164 && SYS_clock_settime == 227 && SYS_prctl == 157 &&
     SYS_seccomp == 317, "x86 clock-adjustment/seccomp numbers");
+#endif
 
 typedef clock_t (*times_signature)(struct tms *);
 typedef int (*getitimer_signature)(int, struct itimerval *);
@@ -336,16 +344,35 @@ static void run_settimeofday_guards(void)
 
 static long raw_syscall3(long number, long first, long second, long third)
 {
+#if defined(__aarch64__)
+    register long x8 __asm__("x8") = number;
+    register long x0 __asm__("x0") = first;
+    register long x1 __asm__("x1") = second;
+    register long x2 __asm__("x2") = third;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory");
+    return x0;
+#else
     unsigned long result;
 
     __asm__ volatile ("syscall" : "=a"(result) : "a"(number), "D"(first),
         "S"(second), "d"(third) : "rcx", "r11", "memory");
     return (long)result;
+#endif
 }
 
 static long raw_syscall5(long number, long first, long second, long third,
     long fourth, long fifth)
 {
+#if defined(__aarch64__)
+    register long x8 __asm__("x8") = number;
+    register long x0 __asm__("x0") = first;
+    register long x1 __asm__("x1") = second;
+    register long x2 __asm__("x2") = third;
+    register long x3 __asm__("x3") = fourth;
+    register long x4 __asm__("x4") = fifth;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4) : "memory");
+    return x0;
+#else
     unsigned long result;
     register long argument_four __asm__("r10") = fourth;
     register long argument_five __asm__("r8") = fifth;
@@ -354,6 +381,7 @@ static long raw_syscall5(long number, long first, long second, long third,
         "S"(second), "d"(third), "r"(argument_four), "r"(argument_five) :
         "rcx", "r11", "memory");
     return (long)result;
+#endif
 }
 
 static void install_adjustment_denial(void)

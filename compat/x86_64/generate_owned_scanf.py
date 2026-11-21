@@ -94,15 +94,18 @@ def translation(source_root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--musl-source", required=True, type=Path)
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--cc", default="/usr/local/bin/crabc-x86_64-musl-gcc")
     parser.add_argument("--output", type=Path,
         default=ROOT / "libc/src/c_abi/x86_64/owned_scanf_musl_x86_64.S")
     args = parser.parse_args()
+    if args.arch == "aarch64":
+        args.output = args.output.with_name(args.output.name.replace("_x86_64.S", "_aarch64.S"))
     source_root = args.musl_source.resolve()
     if normalized_tree_digest(source_root) != NATIVE_MUSL_TREE_DIGEST:
         raise SystemExit("pinned musl tree digest mismatch")
     environment = generation_environment()
-    compiler = checked_compiler(args.cc, environment=environment)
+    compiler = checked_compiler(args.cc, environment=environment, arch=args.arch)
     source, sources = translation(source_root)
     with tempfile.TemporaryDirectory(prefix="owned-scanf.", dir=environment["TMPDIR"]) as temporary:
         unit, assembly = Path(temporary) / "scan.c", Path(temporary) / "scan.S"
@@ -118,6 +121,8 @@ def main():
     for name, contents in sources.items():
         header += name + " SHA256: " + hashlib.sha256(contents.encode()).hexdigest() + "\n"
     header += "Translation SHA256: " + hashlib.sha256(source.encode()).hexdigest() + "\n\n"
+    if args.arch == "aarch64":
+        header = "/* AArch64 translation using the pinned musl compiler. */\n" + header
     args.output.write_text(header + notice + "\n*/\n" + text)
 
 

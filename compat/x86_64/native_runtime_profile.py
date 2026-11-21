@@ -17,6 +17,16 @@ class NativeRuntimeProfile(str, Enum):
             return {}
         return {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 
+    def aliases_for_architecture(self, architecture: str) -> dict[str, str]:
+        if architecture == "x86_64":
+            return self.aliases
+        if architecture != "aarch64":
+            raise ValueError(f"unsupported runtime architecture: {architecture}")
+        if self is NativeRuntimeProfile.HARDENED:
+            return {}
+        return {"lib/ld-musl-aarch64.so.1": "ld-crabc-aarch64.so.1",
+                "lib/libc.musl-aarch64.so.1": "../usr/lib/libc.so"}
+
     @property
     def combined_modes(self) -> tuple[str, ...]:
         dynamic = ("dynamic-pie", "dynamic-shared-object") if self is NativeRuntimeProfile.HARDENED else (

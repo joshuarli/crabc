@@ -54,7 +54,11 @@ result (`complete_profile` is true only when the profile's last gate passed).
 `qualification_gates.py` evaluates one gate as named conditions:
 
 - `prerequisite-families` lists every transitive `depends_on` family and every
-  earlier chain gate that is not `foundation-verified`.
+  earlier chain gate that is not `foundation-verified`. Integrated source keeps
+  the chain families `planned`, so an acceptance candidate branch carries one
+  provisional commit declaring them `foundation-verified` (with verified
+  evidence and a regenerated `aarch64_parity_inventory.json`); it integrates
+  only after that fresh candidate is accepted.
 - `evidence[N]` covers each `native_evidence` command of the gate family. A
   command needs a registered reader; a prose placeholder or unregistered
   command is itself the unmet condition. Readers call the leaf's own validator:
@@ -343,6 +347,17 @@ completed output, a revision change during one invocation, or a failed step
 stops the run; `NAME/summary.json` names the step and every step not run. A
 reused step is still re-read by every later reader; a reader that still
 compares revisions refuses it and stops the run.
+
+Each dispatcher runs in its own process group. SIGTERM or SIGINT to the
+candidate is forwarded to that group; the candidate waits for the group to
+exit (30 seconds, then SIGKILL), runs `docker stop` on every running container
+that bind-mounts this checkout and was not running when the step started, and
+records the step `failed` with status 128 plus the signal number. The
+dispatcher labels no container, so a container another process starts from the
+same checkout during that step is stopped too. The interrupted step has no
+completion record, so a resume sets it aside and reruns it. Only a signal the
+candidate can catch gets this cleanup; SIGKILL to the candidate leaves the
+dispatcher running.
 
 `NAME/summary.json` is `fresh` only when every completed step ran at the final
 revision. **F2 feature-completion acceptance requires one complete, fresh run**: a run that

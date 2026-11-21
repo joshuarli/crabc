@@ -3,6 +3,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1"
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2;; esac
@@ -17,31 +18,31 @@ for arm in oracle candidate; do
         cc=("$installed/bin/crabc-cc-dynamic")
         "${cc[@]}" --dynamic-shared-object -DCLI_LIBRARY=7 "$source" -o "$root/plugins/libcli.so"
         "${cc[@]}" --dynamic-shared-object -DCLI_LIBRARY=9 "$source" -o "$root/override/libcli.so"
-        interpreter=/lib/ld-crabc-x86_64.so.1
+        interpreter=/lib/ld-crabc-${arch}.so.1
     else
-        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-x86_64.so.1"
+        cp /opt/musl-1.2.6/lib/libc.so "$root/lib/ld-musl-${arch}.so.1"
         cp /opt/musl-1.2.6/lib/libc.so "$root/usr/lib/libc.so"
-        cc=(/usr/local/bin/crabc-x86_64-musl-gcc)
+        cc=("$oracle")
         "${cc[@]}" -fPIC -shared -DCLI_LIBRARY=7 "$source" -Wl,-soname,libcli.so -o "$root/plugins/libcli.so"
         "${cc[@]}" -fPIC -shared -DCLI_LIBRARY=9 "$source" -Wl,-soname,libcli.so -o "$root/override/libcli.so"
-        interpreter=/lib/ld-musl-x86_64.so.1
+        interpreter=/lib/ld-musl-${arch}.so.1
     fi
     cp "$root$interpreter" "$root/prefix/lib/loader"
     cp "$root$interpreter" "$root/ldd"
     printf invalid >"$root/invalid"
-    printf '/override:/usr/lib' >"$root/prefix/etc/ld-musl-x86_64.path"
+    printf '/override:/usr/lib' >"$root/prefix/etc/ld-musl-${arch}.path"
     cp "$root/plugins/libcli.so" "$root/p/libc.so"
     case_count=0
     for mode in pie non-pie; do
         if [ "$arm" = candidate ]; then
             "${cc[@]}" "--dynamic-$mode" -DCLI_CHECK_AUXV "$source" --application-runpath '$ORIGIN/plugins:/usr/lib' --application-dso "$root/plugins/libcli.so" -o "$root/consumer-$mode"
         else
-            "${cc[@]}" -fPIE "-${mode/non-pie/no-pie}" "$source" -L"$root/plugins" -lcli '-Wl,-rpath,$ORIGIN/plugins:/usr/lib' -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -o "$root/consumer-$mode"
+            "${cc[@]}" -fPIE "-${mode/non-pie/no-pie}" "$source" -L"$root/plugins" -lcli '-Wl,-rpath,$ORIGIN/plugins:/usr/lib' -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -o "$root/consumer-$mode"
         fi
         if [ "$arm" = candidate ]; then
             "${cc[@]}" "--dynamic-$mode" -DCLI_CHECK_AUXV "$source" --application-runpath /usr/lib --application-dso "$root/plugins/libcli.so" -o "$root/system-$mode"
         else
-            "${cc[@]}" -fPIE "-${mode/non-pie/no-pie}" "$source" -L"$root/plugins" -lcli -Wl,-rpath,/usr/lib -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 -o "$root/system-$mode"
+            "${cc[@]}" -fPIE "-${mode/non-pie/no-pie}" "$source" -L"$root/plugins" -lcli -Wl,-rpath,/usr/lib -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 -o "$root/system-$mode"
         fi
         cp "$root/system-$mode" "$root/system"
         cp "$root/consumer-$mode" "$root/consumer"
@@ -110,19 +111,19 @@ PYTHON
             [ "$status" -eq "$expected" ]
             if [[ "$test" = list* ]] || [ "$test" = ldd ]; then
                 ! grep -q 'initialized\|application entered' "$work/$arm-$mode-$test.stdout"
-                python3 -B - "$work/$arm-$mode-$test.stdout" >"$work/$arm-$mode-$test.names" <<'PYTHON'
+                python3 -B - "$work/$arm-$mode-$test.stdout" "$arch" >"$work/$arm-$mode-$test.names" <<'PYTHON'
 from pathlib import Path
 import re
 import sys
 lines = Path(sys.argv[1]).read_text().splitlines()
-assert lines and re.fullmatch(r'\t/lib/ld-(crabc|musl)-x86_64\.so\.1 \(0x[0-9a-f]+\)', lines[0])
+assert lines and re.fullmatch(rf'\t/lib/ld-(crabc|musl)-{re.escape(sys.argv[2])}\.so\.1 \(0x[0-9a-f]+\)', lines[0])
 application = []
 for line in lines[1:]:
     match = re.fullmatch(r'\t(.+) => (.+) \(0x[0-9a-f]+\)', line)
     assert match, line
     requested, resolved = match.groups()
     # crabc and musl intentionally have different libc/loader layouts.
-    if requested == 'libc.so' and resolved in ('/usr/lib/libc.so', '/lib/ld-musl-x86_64.so.1'): continue
+    if requested == 'libc.so' and resolved in ('/usr/lib/libc.so', f'/lib/ld-musl-{sys.argv[2]}.so.1'): continue
     application.append((requested, resolved))
 assert application
 for requested, resolved in application: print(f'{requested} => {resolved}')

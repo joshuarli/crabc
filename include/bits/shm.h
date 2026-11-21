@@ -1,4 +1,4 @@
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #define SHMLBA 4096
 
 struct shmid_ds {

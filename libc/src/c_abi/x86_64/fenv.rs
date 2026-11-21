@@ -20,16 +20,37 @@
 
 use core::ffi::c_int;
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 C fenv leaf requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "x86_64")]
 const FE_ALL_EXCEPT: c_int = 63;
 const FE_TONEAREST: c_int = 0;
+#[cfg(target_arch = "x86_64")]
 const FE_DOWNWARD: c_int = 0x400;
+#[cfg(target_arch = "x86_64")]
 const FE_UPWARD: c_int = 0x800;
+#[cfg(target_arch = "x86_64")]
 const FE_TOWARDZERO: c_int = 0xc00;
 
+// musl 1.2.6 arch/aarch64/bits/fenv.h.
+#[cfg(target_arch = "aarch64")]
+const FE_ALL_EXCEPT: c_int = 31;
+#[cfg(target_arch = "aarch64")]
+const FE_DOWNWARD: c_int = 0x800000;
+#[cfg(target_arch = "aarch64")]
+const FE_UPWARD: c_int = 0x400000;
+#[cfg(target_arch = "aarch64")]
+const FE_TOWARDZERO: c_int = 0xc00000;
+#[cfg(target_arch = "aarch64")]
+pub type Fexcept = u32;
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Fenv { fpcr: u32, fpsr: u32 }
+
 /// The x86 C header's unsigned-short exception-flag storage.
+#[cfg(target_arch = "x86_64")]
 pub type Fexcept = u16;
 
 /// Exact musl x86-64 public `fenv_t` storage.
@@ -39,6 +60,7 @@ pub type Fexcept = u16;
 /// `FLDENV` instructions. This is deliberately a private C-layout record,
 /// not `crabc-core::fenv::Environment`, whose smaller typed snapshot does not
 /// carry tag/instruction metadata.
+#[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -58,9 +80,13 @@ pub struct Fenv {
     mxcsr: u32,
 }
 
+#[cfg(target_arch = "x86_64")]
 const _: [(); 32] = [(); core::mem::size_of::<Fenv>()];
+#[cfg(target_arch = "x86_64")]
 const _: [(); 4] = [(); core::mem::align_of::<Fenv>()];
+#[cfg(target_arch = "x86_64")]
 const _: [(); 4] = [(); core::mem::offset_of!(Fenv, status_word)];
+#[cfg(target_arch = "x86_64")]
 const _: [(); 28] = [(); core::mem::offset_of!(Fenv, mxcsr)];
 
 // These are the fixed musl `src/fenv/x86_64/fenv.s` instruction sequences in
@@ -72,6 +98,73 @@ const _: [(); 28] = [(); core::mem::offset_of!(Fenv, mxcsr)];
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/fenv/fenv.c` object.
 static_archive_member! { fenv_source {
+    // musl 1.2.6 src/fenv/aarch64/fenv.s.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(r#"
+.text
+.global fegetround
+.type fegetround,%function
+fegetround:
+ mrs x0, fpcr
+ and w0, w0, #0xc00000
+ ret
+.global __fesetround
+.hidden __fesetround
+.type __fesetround,%function
+__fesetround:
+ mrs x1, fpcr
+ bic w1, w1, #0xc00000
+ orr w1, w1, w0
+ msr fpcr, x1
+ mov w0, #0
+ ret
+.global fetestexcept
+.type fetestexcept,%function
+fetestexcept:
+ and w0, w0, #0x1f
+ mrs x1, fpsr
+ and w0, w0, w1
+ ret
+.global feclearexcept
+.type feclearexcept,%function
+feclearexcept:
+ and w0, w0, #0x1f
+ mrs x1, fpsr
+ bic w1, w1, w0
+ msr fpsr, x1
+ mov w0, #0
+ ret
+.global feraiseexcept
+.type feraiseexcept,%function
+feraiseexcept:
+ and w0, w0, #0x1f
+ mrs x1, fpsr
+ orr w1, w1, w0
+ msr fpsr, x1
+ mov w0, #0
+ ret
+.global fegetenv
+.type fegetenv,%function
+fegetenv:
+ mrs x1, fpcr
+ mrs x2, fpsr
+ stp w1, w2, [x0]
+ mov w0, #0
+ ret
+.global fesetenv
+.type fesetenv,%function
+fesetenv:
+ mov x1, #0
+ mov x2, #0
+ cmn x0, #1
+ b.eq 1f
+ ldp w1, w2, [x0]
+1: msr fpcr, x1
+ msr fpsr, x2
+ mov w0, #0
+ ret
+"#);
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text

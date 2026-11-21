@@ -43,11 +43,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import native_abi_inventory as inventory  # noqa: E402
+from native_arch import native_arch
 import source_seal  # noqa: E402
 
 SCHEMA = "crabc.x86_64-abi-differential-evidence/v3"
 RECEIPT_NAME = "abi-evidence.json"
-OUTPUT_PARENT = ROOT / ".work" / "x86_64" / "abi-differential"
+OUTPUT_PARENT = ROOT / ".work" / native_arch()["work_name"] / "abi-differential"
 
 INPUT_KINDS = {"static_product": "directory", "static_preparation": "file", "dynamic_product": "directory"}
 REPORTS = (

@@ -11,6 +11,7 @@ use core::mem::MaybeUninit;
 use crabc_rs::{event, fs, io, mm, stdio, time};
 
 #[cfg(not(feature = "std"))]
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -110,7 +111,7 @@ pub extern "C" fn crabc_rs_descriptor_mapping_probe() -> i32 {
         return -error.raw();
     }
     let mut events = [MaybeUninit::uninit(); 1];
-    if let Err(error) = event::epoll::wait(&epoll, &mut events, Some(&time::Timespec::default())) {
+    if let Err(error) = event::epoll::wait(&epoll, &mut events, Some(&time::Timespec { tv_sec: 0, tv_nsec: 0 })) {
         return -error.raw();
     }
 

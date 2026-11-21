@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -301,14 +302,16 @@ def profile_from_manifest(manifest: dict) -> NativeRuntimeProfile:
         raise DriverError("owned manifest has an invalid native runtime profile") from error
 
 
-def static_product_payload_files(manifest: dict) -> dict[str, str]:
+def static_product_payload_files(manifest: dict, *, architecture: str = "x86_64") -> dict[str, str]:
     """Validate one static product manifest record and return its payload.
 
     The installed driver can verify seal syntax and installed bytes; source
     identity is checked while the product is built and qualified.
     """
 
-    if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
+    product_format = "crabc-aarch64-owned-static-sysroot-v1" if architecture == "aarch64" else SYSROOT_FORMAT
+    target = "aarch64-unknown-linux-musl" if architecture == "aarch64" else TARGET
+    if manifest.get("format") != product_format or manifest.get("target") != target:
         raise DriverError("owned manifest does not identify this x86 static sysroot")
     profile = profile_from_manifest(manifest)
     source_sha256 = manifest.get("source_sha256")
@@ -319,7 +322,8 @@ def static_product_payload_files(manifest: dict) -> dict[str, str]:
     driver = manifest.get("sealed_static_driver")
     if not isinstance(installed, dict) or installed.get("sealed_static_driver") != "bin/crabc-cc":
         raise DriverError("owned manifest does not bind the sealed static driver")
-    if not isinstance(driver, dict) or driver.get("format") != DRIVER_FORMAT:
+    driver_format = "crabc-aarch64-sealed-static-driver-v1" if architecture == "aarch64" else DRIVER_FORMAT
+    if not isinstance(driver, dict) or driver.get("format") != driver_format:
         raise DriverError("owned manifest sealed static driver record drifted")
     if driver.get("status") != "planned-owned-static-product-seed-not-family-completion-not-public-support":
         raise DriverError("owned manifest sealed static driver status drifted")
@@ -334,7 +338,7 @@ def manifest_payload_files(root: Path) -> dict[str, str]:
     return static_product_payload_files(load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest"))
 
 
-def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str], dict[str, str]]:
+def combined_manifest_payload(root: Path, manifest: dict, *, architecture: str = "x86_64") -> tuple[dict[str, str], dict[str, str]]:
     """Return the exact files and aliases of a combined tree embedding this product.
 
     The combined manifest owns the whole tree. The embedded static product
@@ -343,30 +347,49 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
     product metadata and the one unlinked entry object named above.
     """
 
-    if manifest.get("schema") != 1 or manifest.get("target") != TARGET:
-        raise DriverError("owned manifest does not identify an x86 combined sysroot")
+    target = "aarch64-unknown-linux-musl" if architecture == "aarch64" else TARGET
+    if manifest.get("schema") != 1 or manifest.get("target") != target:
+        label = "arm64" if architecture == "aarch64" else "x86"
+        raise DriverError(f"owned manifest does not identify an {label} combined sysroot")
     profile = profile_from_manifest(manifest)
     if manifest.get("modes") != list(profile.combined_modes):
         raise DriverError("owned combined manifest modes differ from its profile")
     files = payload_hashes(manifest.get("files"), "combined manifest")
     links = manifest.get("symlinks")
     products = manifest.get("products")
-    if links != profile.aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
+    expected_aliases = profile.aliases_for_architecture(architecture)
+    if links != expected_aliases or not isinstance(products, dict) or not isinstance(products.get("static"), dict):
         raise DriverError("owned combined manifest has no alias or product record")
     for link, target in links.items():
-        if (not isinstance(link, str) or not isinstance(target, str) or "/" in target
-                or target in {"", ".", ".."} or (Path(link).parent / target).as_posix() not in files):
+        if (not isinstance(link, str) or not isinstance(target, str)
+                or (architecture == "x86_64" and "/" in target)
+                or target in {"", ".", ".."} or os.path.isabs(target)
+                or os.path.normpath(str(Path(link).parent / target)).startswith("../")
+                or os.path.normpath(str(Path(link).parent / target)) not in files):
             raise DriverError(f"owned combined manifest has an unsafe alias: {link}")
     product = products["static"]
     placements = product.get("placements")
-    if (product.get("format") != SYSROOT_FORMAT or product.get("manifest") != COMBINED_STATIC_MANIFEST
+    static_format = "crabc-aarch64-owned-static-sysroot-v1" if architecture == "aarch64" else SYSROOT_FORMAT
+    if (product.get("format") != static_format or product.get("manifest") != COMBINED_STATIC_MANIFEST
             or COMBINED_STATIC_MANIFEST not in files or not isinstance(placements, dict)):
         raise DriverError("owned combined sysroot does not embed this static product")
     static_manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
     dynamic_manifest = load_manifest(root / "share/crabc/dynamic/manifest.json", "embedded dynamic manifest")
     if profile_from_manifest(static_manifest) is not profile or profile_from_manifest(dynamic_manifest) is not profile:
         raise DriverError("owned combined product profiles differ")
-    embedded = static_product_payload_files(static_manifest)
+    embedded = static_product_payload_files(static_manifest, architecture=architecture)
+    if architecture == "aarch64":
+        dynamic = products.get("dynamic")
+        dynamic_placements = dynamic.get("placements") if isinstance(dynamic, dict) else None
+        state_path = dynamic_placements.get("share/crabc/dynamic-product-state.json") if isinstance(dynamic_placements, dict) else None
+        if not isinstance(state_path, str) or state_path not in files:
+            raise DriverError("owned combined dynamic state is missing")
+        state = load_manifest(root / state_path, "embedded dynamic state")
+        if (state.get("schema") != "crabc.x86_64-owned-dynamic-materialization/v1"
+                or state.get("source_sha256") != static_manifest.get("source_sha256")
+                or state.get("allocator_backend") != static_manifest.get("allocator_backend")
+                or state.get("allocator_lifecycle_test_audit") != static_manifest.get("allocator_lifecycle_test_audit")):
+            raise DriverError("owned combined product state differs")
     for relative, expected_hash in embedded.items():
         if relative not in placements:
             raise DriverError(f"owned combined sysroot does not place static payload: {relative}")
@@ -382,7 +405,7 @@ def combined_manifest_payload(root: Path, manifest: dict) -> tuple[dict[str, str
     return files, links
 
 
-def validate_manifest_payload(root: Path) -> None:
+def validate_manifest_payload(root: Path, *, architecture: str = "x86_64") -> None:
     """Bind driver execution to the immutable installed regular-file payload.
 
     The tree is either this static product or a combined four-mode sysroot
@@ -391,10 +414,11 @@ def validate_manifest_payload(root: Path) -> None:
     """
 
     manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
-    if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
-        files, links = combined_manifest_payload(root, manifest)
+    combined_format = "crabc-aarch64-owned-sysroot-v1" if architecture == "aarch64" else COMBINED_SYSROOT_FORMAT
+    if manifest.get("format") == combined_format:
+        files, links = combined_manifest_payload(root, manifest, architecture=architecture)
     else:
-        files, links = static_product_payload_files(manifest), {}
+        files, links = static_product_payload_files(manifest, architecture=architecture), {}
     expected_files = set(files)
     observed_hashes, observed_links, other = installed_tree(root)
     observed_files = set(observed_hashes)
@@ -428,10 +452,10 @@ def validate_crt_provenance(root: Path, receipt_path: str, profile: NativeRuntim
         raise DriverError("invalid installed CRT provenance") from error
 
 
-def validate_installed_runtime(root: Path) -> NativeRuntimeProfile:
+def validate_installed_runtime(root: Path, *, architecture: str = "x86_64") -> NativeRuntimeProfile:
     """Fail before source translation if the installed static boundary is absent."""
 
-    validate_manifest_payload(root)
+    validate_manifest_payload(root, architecture=architecture)
     include = root / "usr" / "include"
     if not include.is_dir() or include.is_symlink():
         raise DriverError(f"owned installed headers are missing or unsafe: {include}")
@@ -439,10 +463,11 @@ def validate_installed_runtime(root: Path) -> NativeRuntimeProfile:
         require_regular(root / relative, relative)
     manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
     receipt_path = "share/crabc/crt.provenance.json"
-    if manifest.get("format") == COMBINED_SYSROOT_FORMAT:
+    combined_format = "crabc-aarch64-owned-sysroot-v1" if architecture == "aarch64" else COMBINED_SYSROOT_FORMAT
+    if manifest.get("format") == combined_format:
         receipt_path = manifest["products"]["static"]["placements"].get(receipt_path)
         manifest = load_manifest(root / COMBINED_STATIC_MANIFEST, "embedded static manifest")
-    if not isinstance(receipt_path, str) or "share/crabc/crt.provenance.json" not in static_product_payload_files(manifest):
+    if not isinstance(receipt_path, str) or "share/crabc/crt.provenance.json" not in static_product_payload_files(manifest, architecture=architecture):
         raise DriverError("installed CRT provenance is not bound to the static product")
     profile = profile_from_manifest(manifest)
     validate_crt_provenance(root, receipt_path, profile)
@@ -456,7 +481,7 @@ def static_mode(identifier: str) -> StaticMode:
         raise DriverError(f"unsupported owned static mode: {identifier}") from error
 
 
-def owned_link_plan(root: Path, mode: StaticMode) -> list[str]:
+def owned_link_plan(root: Path, mode: StaticMode, *, architecture: str = "x86_64") -> list[str]:
     """Return the complete explicit linker plan with only an application hole."""
 
     library = root / "usr" / "lib"
@@ -479,21 +504,23 @@ def owned_link_plan(root: Path, mode: StaticMode) -> list[str]:
         str(library / mode.crt_object),
         str(library / "crti.o"),
         APPLICATION_OBJECTS,
+        *(["--start-group"] if architecture == "aarch64" else []),
         str(library / "libc.a"),
         str(library / "libcrabc-builtins.a"),
+        *(["--end-group"] if architecture == "aarch64" else []),
         str(library / "crtn.o"),
         "-o",
         OUTPUT,
     ]
 
 
-def plan_record(root: Path, mode: StaticMode) -> dict[str, object]:
+def plan_record(root: Path, mode: StaticMode, *, architecture: str = "x86_64") -> dict[str, object]:
     """Serialize the inspected, deterministic link contract without executing it."""
 
     return {
         "schema": 1,
-        "format": DRIVER_FORMAT,
-        "target": TARGET,
+        "format": DRIVER_FORMAT if architecture == "x86_64" else "crabc-aarch64-sealed-static-driver-v1",
+        "target": TARGET if architecture == "x86_64" else "aarch64-unknown-linux-musl",
         "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
         "mode": {
             "id": mode.identifier,
@@ -503,7 +530,8 @@ def plan_record(root: Path, mode: StaticMode) -> dict[str, object]:
         },
         "headers": str(root / "usr" / "include"),
         "owned_target_inputs": [
-            str(root / "usr" / relative) for relative in REQUIRED_RUNTIME_PATHS
+            str(root / relative) if architecture == "aarch64" else str(root / "usr" / relative)
+            for relative in REQUIRED_RUNTIME_PATHS
         ],
         "rejected_ambient_target_inputs": [
             "headers",
@@ -519,9 +547,9 @@ def plan_record(root: Path, mode: StaticMode) -> dict[str, object]:
             "declared static-product coverage suite",
             "sysroot.static-tls family completion",
             "sysroot.owned-artifact family completion",
-            "x86-64 promotion or public support",
+            "x86-64 promotion or public support" if architecture == "x86_64" else "aarch64 promotion or public support",
         ],
-        "linker": owned_link_plan(root, mode),
+        "linker": owned_link_plan(root, mode, architecture=architecture),
     }
 
 
@@ -764,7 +792,7 @@ def require_application_file(root: Path, path: Path, kind: str) -> Path:
     return resolved
 
 
-def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
+def require_x86_64_relocatable_object(root: Path, path: Path, *, architecture: str = "x86_64") -> Path:
     """Admit only a structurally complete Linux/x86-64 ET_REL object.
 
     linker dispatches a named input by file contents, not by its ``.o`` suffix.
@@ -780,7 +808,7 @@ def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
 
     def malformed(detail: str) -> None:
         raise DriverError(
-            "admitted application object is not a Linux/x86-64 ELF64 ET_REL object: "
+            f"admitted application object is not a Linux/{architecture.replace('_', '-')} ELF64 ET_REL object: "
             f"{path} ({detail})"
         )
 
@@ -799,7 +827,7 @@ def require_x86_64_relocatable_object(root: Path, path: Path) -> Path:
                 malformed("not an ELF64 little-endian current object")
             if (
                 int.from_bytes(header[16:18], "little") != ET_REL
-                or int.from_bytes(header[18:20], "little") != EM_X86_64
+                or int.from_bytes(header[18:20], "little") != (EM_X86_64 if architecture == "x86_64" else 183)
                 or int.from_bytes(header[20:24], "little") != EV_CURRENT
                 or int.from_bytes(header[52:54], "little") != ELF64_HEADER_SIZE
             ):
@@ -1019,6 +1047,7 @@ def write_link_receipt(
     receipt: Path,
     map_path: Path,
     trace_path: Path,
+    *, architecture: str = "x86_64",
 ) -> None:
     """Write a stable receipt after linker produced the driver-owned sidecars."""
 
@@ -1028,8 +1057,8 @@ def write_link_receipt(
     require_regular(trace_path, "link trace")
     record = {
         "schema": LINK_RECEIPT_SCHEMA,
-        "format": DRIVER_FORMAT,
-        "target": TARGET,
+        "format": DRIVER_FORMAT if architecture == "x86_64" else "crabc-aarch64-sealed-static-driver-v1",
+        "target": TARGET if architecture == "x86_64" else "aarch64-unknown-linux-musl",
         "mode": {
             "id": mode.identifier,
             "elf_type": mode.elf_type,
@@ -1040,7 +1069,7 @@ def write_link_receipt(
             "path": str(resolved_path(linker_path, "resolved linker")),
             "sha256": sha256_file(linker_path),
         },
-        "owned_link_contract": owned_link_plan(root, mode),
+        "owned_link_contract": owned_link_plan(root, mode, architecture=architecture),
         "input_receipts": receipt_input_records(root, mode, applications, receipt),
         "output": {"path": receipt_file_path(output, receipt), "sha256": sha256_file(output)},
         "map": {"path": receipt_file_path(map_path, receipt), "sha256": sha256_file(map_path)},
@@ -1208,9 +1237,67 @@ def execute(root: Path, invocation: Invocation) -> None:
             )
 
 
+def execute_aarch64(root: Path, arguments: Sequence[str], manifest: dict) -> None:
+    validate_installed_runtime(root, architecture="aarch64")
+    cortex_flag = "-Wl,--fix-cortex-a53-843419"
+    if arguments.count(cortex_flag) > 1:
+        raise DriverError("duplicate cortex-a53 linker option")
+    fix_cortex = cortex_flag in arguments
+    profile = profile_from_manifest(manifest)
+    if "-no-pie" in arguments and profile is NativeRuntimeProfile.HARDENED:
+        raise DriverError("hardened static products require static PIE")
+    invocation = parse_invocation([arg for arg in arguments if arg not in {"-no-pie", cortex_flag}],
+                                  hardening_profile=profile)
+    static_pie = invocation.mode is STATIC_PIE
+    if fix_cortex and (invocation.compile_only or invocation.print_link_plan):
+        raise DriverError("cortex-a53 linker option requires a link")
+    static_mode = STATIC_PIE if static_pie else STATIC_ET_EXEC
+    if invocation.print_link_plan:
+        print(json.dumps(plan_record(root, static_mode, architecture="aarch64"), indent=2, sort_keys=True))
+        return
+    sources = [require_application_file(root, source, "source") for source in invocation.sources]
+    inputs = [require_x86_64_relocatable_object(root, obj, architecture="aarch64") for obj in invocation.objects]
+    output = invocation.output or (sources[0].with_suffix(".o") if invocation.compile_only else Path("a.out"))
+    validate_application_output(root, output)
+    if invocation.link_receipt is not None:
+        validate_receipt_output_disjoint(root, output, invocation.link_receipt)
+    validate_application_output_disjoint(output, (*sources, *inputs))
+    with tempfile.TemporaryDirectory(prefix="crabc-aarch64-cc.") as temporary:
+        objects = list(inputs)
+        for index, source in enumerate(sources):
+            obj = output if invocation.compile_only else Path(temporary) / f"application-{index}.o"
+            run_checked(["/usr/local/bin/crabc-aarch64-mold-gcc", "-nostdinc", "-isystem", str(root / "usr/include"), "-fstack-protector-strong", *invocation.compiler_flags, "-fPIE" if static_pie else "-fno-pie", "-c", str(source), "-o", str(obj)])
+            objects.append(obj)
+        if invocation.compile_only:
+            return
+        command = []
+        for item in owned_link_plan(root, static_mode, architecture="aarch64"):
+            if item == "mold":
+                command.append(linker(root))
+            elif item == APPLICATION_OBJECTS:
+                command.extend(str(obj) for obj in objects)
+            elif item == OUTPUT:
+                command.append(str(output))
+            else:
+                command.append(item)
+        if fix_cortex:
+            command.insert(1, "--fix-cortex-a53-843419")
+        if invocation.link_receipt is None:
+            run_checked(command)
+        else:
+            receipt, map_path, trace_path = run_link_with_receipt(root, static_mode, objects, command, invocation.link_receipt)
+            write_link_receipt(root, static_mode, objects, output, Path(command[0]), receipt, map_path, trace_path, architecture="aarch64")
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
         root = installed_root()
+        manifest = load_manifest(root / MANIFEST_RELATIVE_PATH, "manifest")
+        if manifest.get("format") in ("crabc-aarch64-owned-static-sysroot-v1", "crabc-aarch64-owned-sysroot-v1"):
+            if manifest.get("target") != "aarch64-unknown-linux-musl":
+                raise DriverError("aarch64 sysroot target mismatch")
+            execute_aarch64(root, sys.argv[1:] if arguments is None else arguments, manifest)
+            return 0
         profile = validate_installed_runtime(root)
         execute(root, parse_invocation(sys.argv[1:] if arguments is None else arguments,
                                        hardening_profile=profile))

@@ -12,7 +12,8 @@ export LC_ALL=C
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly MUSL_ROOT=/opt/musl-1.2.6
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly CANDIDATE_CC=/usr/bin/gcc
 readonly PROJECT_INCLUDE="$ROOT_DIR/include"
 readonly C_PROBE="$ROOT_DIR/compat/x86_64/endhostent_header_abi_probe.c"
@@ -26,10 +27,6 @@ fail() {
 
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
-    case "$(uname -m)" in
-        x86_64|amd64) ;;
-        *) fail "refuses emulation on $(uname -m)" ;;
-    esac
 }
 
 require_tool() {

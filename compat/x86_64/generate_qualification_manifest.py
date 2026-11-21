@@ -18,6 +18,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from native_arch import native_arch
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "qualification_manifest.json"
@@ -25,13 +27,13 @@ GENERATED_PATH = ROOT / "compat" / "x86_64" / "generated" / "qualification_manif
 SCHEMA = "crabc.x86_64-qualification-manifest/v2"
 CASE_SCHEMA = "crabc.x86_64-qualification-case-manifest/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-qualification-receipt/v1"
-TARGET = {
+DECLARED_TARGET = {
     "triple": "x86_64-unknown-linux-musl",
     "system": "Linux",
     "machine": "x86_64",
     "endianness": "little",
 }
-EXECUTION_CONTRACT = {
+DECLARED_EXECUTION_CONTRACT = {
     # Qualification case runners require the pinned native image.  The host
     # campaign runner may select only this dispatcher boundary; inside it,
     # cases receive the physical checkout-local work and temporary paths.
@@ -46,6 +48,17 @@ EXECUTION_CONTRACT = {
     "cargo_home": "/workspace/.work/x86_64/cargo",
     "receipt_directory": "/workspace/.work/x86_64/qualification-receipts",
     "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc",
+}
+_NATIVE = native_arch()
+_NATIVE_WORK = f"/workspace/.work/{_NATIVE['work_name']}"
+TARGET = {**DECLARED_TARGET, "triple": _NATIVE["target_triple"], "machine": _NATIVE["arch"]}
+EXECUTION_CONTRACT = {
+    **DECLARED_EXECUTION_CONTRACT,
+    "work_directory": _NATIVE_WORK,
+    "temporary_directory": f"{_NATIVE_WORK}/tmp",
+    "cargo_home": f"{_NATIVE_WORK}/cargo",
+    "receipt_directory": f"{_NATIVE_WORK}/qualification-receipts",
+    "oracle_compiler": _NATIVE["oracle"],
 }
 CHAIN = (
     "compat.abi-differential",
@@ -252,7 +265,7 @@ def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str,
     exact_keys(case, {"schema", "gate", "target", "oracle", "provenance", "purity", "isolation", "cases"}, f"{location} case manifest")
     require(case.get("schema") == CASE_SCHEMA, f"{location} case manifest schema drifted")
     require(case.get("gate") == gate["id"], f"{location} case manifest names the wrong gate")
-    require(case.get("target") == TARGET, f"{location} case manifest target is not native x86_64 musl")
+    require(case.get("target") == DECLARED_TARGET, f"{location} case manifest target is not native x86_64 musl")
     for field in ("oracle", "provenance", "purity", "isolation"):
         require(case.get(field) == gate[field], f"{location} case manifest {field} drifted")
     cases = case.get("cases")
@@ -284,13 +297,13 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
     exact_keys(document, {"schema", "id", "target", "policy", "execution", "private_admission", "promotion_chain", "qualification_profile"}, "qualification contract")
     require(document.get("schema") == SCHEMA, "qualification contract schema drifted")
     require(document.get("id") == "x86_64-native-qualification", "qualification contract id drifted")
-    require(document.get("target") == TARGET, "qualification contract target drifted")
+    require(document.get("target") == DECLARED_TARGET, "qualification contract target drifted")
     policy = document.get("policy")
     require(isinstance(policy, Mapping), "qualification policy must be an object")
     exact_keys(policy, {"public_support", "promotion_ready", "native_execution_only"}, "qualification policy")
     require(policy == {"public_support": False, "promotion_ready": False, "native_execution_only": True}, "qualification policy may not assert promotion or public support")
     require(
-        document.get("execution") == EXECUTION_CONTRACT,
+        document.get("execution") == DECLARED_EXECUTION_CONTRACT,
         "qualification execution boundary drifted",
     )
     profile = document.get("qualification_profile")
@@ -332,7 +345,7 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
                 runnable_prefix.append(identifier)
         normalized.append(row)
     require(not set(item["id"] for item in admission) & set(CHAIN), "private admission cannot be a promotion gate")
-    return {"qualification_profile": profile, "active_gate_ids": list(active), "deferred_gate_ids": list(deferred_gate_ids(profile)), "schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": 0, "ready_gate_count": ready_count, "runnable_prefix": runnable_prefix, "incomplete_gates": incomplete, "promotion_ready": False}
+    return {"qualification_profile": profile, "active_gate_ids": list(active), "deferred_gate_ids": list(deferred_gate_ids(profile)), "schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": DECLARED_TARGET, "policy": dict(policy), "execution": dict(DECLARED_EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": 0, "ready_gate_count": ready_count, "runnable_prefix": runnable_prefix, "incomplete_gates": incomplete, "promotion_ready": False}
 
 
 def load_contract(path: Path | None = None) -> dict[str, object]:

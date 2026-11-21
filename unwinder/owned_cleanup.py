@@ -21,6 +21,7 @@ import re
 import shlex
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,7 @@ COMPAT = Path(__file__).resolve().parent.parent / "compat/x86_64"
 if str(COMPAT) not in sys.path:
     sys.path.insert(0, str(COMPAT))
 import native_rustc
+from native_arch import native_arch
 
 import cleanup
 import build
@@ -39,8 +41,10 @@ import owned_rust_link
 
 ROOT = Path(__file__).resolve().parent
 CHECKOUT = ROOT.parent
-WORK = CHECKOUT / ".work/x86_64/owned-rust-std-cleanup"
-TARGET = "x86_64-unknown-linux-musl"
+ARCHITECTURE = native_arch()
+ARCH = ARCHITECTURE["arch"]
+WORK = CHECKOUT / ".work" / ARCHITECTURE["work_name"] / "owned-rust-std-cleanup"
+TARGET = ARCHITECTURE["target_triple"]
 FIXTURE = ROOT / "fixtures/cleanup.rs"
 BUILD_STD_FIXTURE = ROOT / "fixtures/build_std_cleanup"
 BUILD_STD_DSO_FIXTURE = ROOT / "fixtures/cleanup_dso"
@@ -1601,17 +1605,34 @@ def _host_link_output_matches(output: dict[str, str], linked: Path, host_build_r
     trusted = physical(native_rustc.native_build_tools.KACHE, "pinned kache", executable=True)
     trusted_bytes = trusted.read_bytes()
     launcher = linked.read_bytes()
-    try:
-        image = cleanup.Elf._from_bytes(launcher)
-    except ValueError:
-        return False
-    section_end = image.unpack("<Q", 40)[0] + len(image.sections) * 64
-    executable_entry = any(
-        kind == 1 and flags & 1 and address <= image.entry < address + size
-        for kind, flags, _offset, address, _physical, _file_size, size, _align in image.programs
-    )
+    if ARCH == "x86_64":
+        try:
+            image = cleanup.Elf._from_bytes(launcher)
+        except ValueError:
+            return False
+        section_end = image.unpack("<Q", 40)[0] + len(image.sections) * 64
+        executable_entry = any(
+            kind == 1 and flags & 1 and address <= image.entry < address + size
+            for kind, flags, _offset, address, _physical, _file_size, size, _align in image.programs
+        )
+        elf_type = image.elf_type
+    else:
+        try:
+            header = struct.unpack_from("<16sHHIQQQIHHHHHH", launcher)
+            if (header[0][:7] != b"\x7fELF\x02\x01\x01" or header[2] != 183
+                    or header[8] != 64 or header[9] != 56 or header[11] != 64
+                    or header[12] == 0 or header[5] + header[10] * 56 > len(launcher)):
+                return False
+            programs = [struct.unpack_from("<IIQQQQQQ", launcher, header[5] + index * 56)
+                        for index in range(header[10])]
+            section_end = header[6] + header[12] * 64
+            executable_entry = any(kind == 1 and flags & 1 and address <= header[4] < address + size
+                                   for kind, flags, _offset, address, _physical, _file_size, size, _align in programs)
+            elf_type = header[1]
+        except struct.error:
+            return False
     return (digest(pinned) == hashlib.sha256(trusted_bytes).hexdigest()
-            and image.elf_type == 3 and section_end == len(launcher) and executable_entry
+            and elf_type == (3 if ARCH == "x86_64" else 2) and section_end == len(launcher) and executable_entry
             and trusted_bytes.count(launcher) == 1)
 
 
@@ -2346,7 +2367,7 @@ def compile_source_built_mode(
         "CRABC_OWNED_RUST_CARGO_TARGET_ROOT": str(target),
         "CARGO_TERM_COLOR": "never",
         "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(SOURCE_BUILD_RUSTFLAGS),
-        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": str(ROOT / "owned_rust_link.py"),
+        ARCHITECTURE["linker_variable"]: str(ROOT / "owned_rust_link.py"),
         "CRABC_OWNED_RUST_LINK_MODE": mode,
         "CRABC_OWNED_RUST_PRODUCT": str(root),
         "CRABC_OWNED_RUST_SOURCE_BUILT_LIBDIR": str(source_library_root),
@@ -2528,9 +2549,124 @@ def compile_source_built_mode(
     return consumer
 
 
+class Aarch64Elf(cleanup.Elf):
+    def _load(self, data: bytes) -> None:
+        self.data = data
+        if self.data[:7] != b"\x7fELF\x02\x01\x01" or self.unpack("<H", 18)[0] != 183:
+            raise ValueError("expected native aarch64 ELF")
+        self.elf_type = self.unpack("<H", 16)[0]
+        self.entry = self.unpack("<Q", 24)[0]
+        phoff = self.unpack("<Q", 32)[0]
+        phsize, phcount = self.unpack("<HH", 54)
+        if phcount and phsize != 56:
+            raise ValueError("malformed ELF program table")
+        self.programs = [self.unpack("<IIQQQQQQ", phoff + index * phsize) for index in range(phcount)]
+        offset = self.unpack("<Q", 40)[0]
+        size, count = self.unpack("<HH", 58)
+        if size != 64 or not count:
+            raise ValueError("missing ELF section table")
+        self.sections = [self.unpack("<IIQQQQIIQQ", offset + index * size) for index in range(count)]
+
+
+def unwind_symbols(binary: Path, defined: str, provider_symbols: set[str]) -> list[str]:
+    if ARCH == "x86_64":
+        return cleanup._unwind_symbols(binary, defined, provider_symbols)
+    names = {line.split()[-1] for line in defined.splitlines()
+             if len(line.split()) >= 3 and line.split()[-1].startswith("_Unwind_")}
+    labels = {name for name in names if name.endswith("$got") and name[:-4] in provider_symbols}
+    if not labels:
+        return sorted(names)
+    image = Aarch64Elf(binary)
+    relocations = []
+    unsupported = any(section[1] in (9, 19) and section[2] & 2 and section[5] for section in image.sections)
+    for section in image.sections:
+        if section[1] != 4 or not section[2] & 2:
+            continue
+        if section[9] != 24 or section[5] % 24:
+            raise ValueError("invalid unwind GOT relocations")
+        relocations.extend((*image.unpack("<QQq", section[4] + offset), section[6])
+                           for offset in range(0, section[5], 24))
+    for name in labels:
+        label = image.symbol(name, dynamic=False, required=False)
+        target = image.symbol(name[:-4], dynamic=False, required=False)
+        if (label is None or target is None or unsupported or not 0 < label["section"] < len(image.sections)
+                or not 0 < target["section"] < len(image.sections)):
+            continue
+        section, target_section = image.sections[label["section"]], image.sections[target["section"]]
+        address = label["value"]
+        nearby = [row for row in relocations if address - 7 <= row[0] < address + 8]
+        slot = image.unpack("<Q", section[4] + address - section[3])[0] if (
+            section[3] <= address and address + 8 <= section[3] + section[5]) else None
+        matches = image.elf_type == 2 and not nearby and slot == target["value"]
+        if image.elf_type == 3 and len(nearby) == 1:
+            destination, info, addend, symbols = nearby[0]
+            if (destination, info, addend, slot) == (address, 1027, target["value"], target["value"]):
+                matches = True
+            elif (destination == address and info & 0xffffffff == 1025 and info >> 32 and addend == 0
+                  and slot == 0 and 0 <= symbols < len(image.sections) and image.sections[symbols][1] == 11):
+                dynamic_target = image.symbol_row(symbols, info >> 32)
+                matches = (dynamic_target["name"] == name[:-4] and dynamic_target["type"] == "FUNC"
+                           and dynamic_target["binding"] == "GLOBAL" and dynamic_target["visibility"] == "DEFAULT"
+                           and all(dynamic_target[key] == target[key] for key in ("section", "value", "size")))
+        if (label["type"] == "OBJECT" and label["binding"] == "LOCAL" and label["visibility"] == "DEFAULT"
+                and label["size"] == 0 and cleanup.section_name(image, section) == ".got"
+                and section[1] == 1 and section[2] & 3 == 3 and address % 8 == 0
+                and section[3] <= address and address + 8 <= section[3] + section[5]
+                and target["type"] == "FUNC" and target["size"] > 0 and target_section[2] & 6 == 6
+                and target_section[3] <= target["value"]
+                and target["value"] + target["size"] <= target_section[3] + target_section[5] and matches):
+            names.remove(name)
+    stubs = {name for name in names if (name.endswith("$plt") and name[:-4] in provider_symbols)
+             or (name.endswith("$pltgot") and name[:-7] in provider_symbols)}
+    for name in stubs:
+        got_stub = name.endswith("$pltgot")
+        base = name[:-7] if got_stub else name[:-4]
+        label = image.symbol(name, dynamic=False, required=False)
+        target = image.symbol(base, dynamic=False, required=False)
+        if (label is None or target is None or unsupported or not 0 < label["section"] < len(image.sections)
+                or label["type"] != "FUNC" or label["binding"] != "LOCAL" or label["size"] != 0):
+            continue
+        section = image.sections[label["section"]]
+        address = label["value"]
+        if (cleanup.section_name(image, section) != (".plt.got" if got_stub else ".plt")
+                or section[2] & 6 != 6 or not section[3] <= address or address + 16 > section[3] + section[5]):
+            continue
+        adrp, ldr, third, fourth = image.unpack("<IIII", section[4] + address - section[3])
+        if adrp & 0x9f00001f != 0x90000010 or ldr & 0xffc003ff != 0xf9400211:
+            continue
+        immediate = ((adrp >> 29) & 3) | (((adrp >> 5) & 0x7ffff) << 2)
+        if immediate & (1 << 20):
+            immediate -= 1 << 21
+        offset = ((ldr >> 10) & 0xfff) * 8
+        slot_address = (address & ~0xfff) + (immediate << 12) + offset
+        if ((third, fourth) != ((0xd61f0220, 0xd4207d00) if got_stub else
+                                (0x91000210 | (offset << 10), 0xd61f0220))):
+            continue
+        rows = [row for row in relocations if row[0] == slot_address]
+        slots = [item for item in image.sections if item[3] <= slot_address and slot_address + 8 <= item[3] + item[5]
+                 and cleanup.section_name(image, item) == (".got" if got_stub else ".got.plt")
+                 and item[1] == 1 and item[2] & 3 == 3 and slot_address % 8 == 0]
+        if (len(rows) != 1 or len(slots) != 1 or target["type"] != "FUNC" or target["size"] <= 0
+                or not 0 < target["section"] < len(image.sections)
+                or image.sections[target["section"]][2] & 6 != 6
+                or not image.sections[target["section"]][3] <= target["value"]
+                or target["value"] + target["size"] > image.sections[target["section"]][3] + image.sections[target["section"]][5]):
+            continue
+        destination, info, addend, symbol_table = rows[0]
+        if (info & 0xffffffff != (1025 if got_stub else 1026) or not info >> 32 or addend != 0
+                or not 0 <= symbol_table < len(image.sections) or image.sections[symbol_table][1] != 11):
+            continue
+        dynamic_target = image.symbol_row(symbol_table, info >> 32)
+        if (dynamic_target["name"] == base and dynamic_target["type"] == "FUNC"
+                and dynamic_target["binding"] == "GLOBAL" and dynamic_target["visibility"] == "DEFAULT"
+                and all(dynamic_target[key] == target[key] for key in ("section", "value", "size"))):
+            names.remove(name)
+    return sorted(names)
+
+
 def binary_unwind_symbols(binary: Path, environment: dict[str, str], log: Path, description: str) -> list[str]:
     symbols = run_logged(["nm", "--defined-only", binary], environment, log, description)
-    return cleanup._unwind_symbols(binary, symbols, build.UNWIND_ABI)
+    return unwind_symbols(binary, symbols, build.UNWIND_ABI)
 
 
 BACKTRACE_LINE = re.compile(
@@ -2597,7 +2733,7 @@ def execute_mode(mode: str, consumer: dict[str, Any], dynamic_root: Path, output
     if mode == "static":
         command: list[str | Path] = [binary]
     else:
-        loader = physical(dynamic_root / "lib/ld-crabc-x86_64.so.1", "owned dynamic loader", executable=True)
+        loader = physical(dynamic_root / f"lib/ld-crabc-{ARCH}.so.1", "owned dynamic loader", executable=True)
         command = [loader, "--library-path", dynamic_root / "usr/lib", binary]
     result = subprocess.run([str(item) for item in command], env=environment, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -2622,7 +2758,7 @@ def execute_dso_mode(consumer: dict[str, Any], dynamic_root: Path, output: Path)
 
     plugin = Path(consumer["plugin"]["binary"]["path"])
     binary = Path(consumer["binary"]["path"])
-    loader = physical(dynamic_root / "lib/ld-crabc-x86_64.so.1", "owned dynamic loader", executable=True)
+    loader = physical(dynamic_root / f"lib/ld-crabc-{ARCH}.so.1", "owned dynamic loader", executable=True)
     library_path = f"{plugin.parent}:{dynamic_root / 'usr/lib'}"
     command: list[str | Path] = [loader, "--library-path", library_path, binary]
     result = subprocess.run([str(item) for item in command], env=clean_environment(), text=True,
@@ -2648,6 +2784,11 @@ def source_snapshot() -> list[dict[str, str]]:
     ]
 
 
+def require_native_cleanup_host() -> None:
+    require((platform.system(), platform.machine()) == ("Linux", ARCH),
+            f"native Linux/{'x86-64' if ARCH == 'x86_64' else ARCH} required")
+
+
 def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None = None) -> Path:
     """Exercise the generated provider workspace through Cargo without compiling it.
 
@@ -2657,7 +2798,7 @@ def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None =
     linker, leaving the real source-built static round trip as the next judge.
     """
 
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require_native_cleanup_host()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     WORK.mkdir(parents=True, exist_ok=True)
@@ -2737,7 +2878,7 @@ def run_source_graph_preflight(provider_vendor_root: Path, output: Path | None =
 def run_source_built_static(static_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
     """Run the smallest real source-built Rust std/provider round trip."""
 
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require_native_cleanup_host()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     static = product_snapshot(static_root, "static")
@@ -2803,7 +2944,7 @@ def run_mixed_source_generated_compile_diagnostics(
     as mixed-source development diagnostics.
     """
 
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require_native_cleanup_host()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()
     static = product_snapshot(static_root, "static")
@@ -2883,7 +3024,9 @@ def run_debug(static_root: Path, dynamic_root: Path, provider: dict[str, Any], o
 
 
 def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
-    require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
+    require(platform.system() == "Linux" and platform.machine() in
+            ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}),
+            f"native Linux/{'x86-64' if ARCH == 'x86_64' else 'aarch64'} required")
     # Retain failed executions through their logs, never checkout-root cores.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     source_before = source_snapshot()

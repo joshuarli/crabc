@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_quick_exit_probe.c"
 readonly SCENARIOS='lifo capacity reentrant recursive worker concurrent contention fork fork-during-quick-exit atexit-chain atexit-contention'
 
@@ -168,14 +169,14 @@ for mode in pie non-pie; do
     cp "$work/consumer-$mode" "$root/consumer"
     cp "$work/libquick-exit-probe.so" "$root/usr/lib/"
     run_cases "dynamic-$mode-kernel" /consumer chroot "$root"
-    run_cases "dynamic-$mode-direct" /consumer chroot "$root" /lib/ld-crabc-x86_64.so.1
+    run_cases "dynamic-$mode-direct" /consumer chroot "$root" "/lib/ld-crabc-$arch.so.1"
     for entry in kernel direct; do
         if [ "$entry" = kernel ]; then
             assert_result 54 "$work/dynamic-$mode-kernel-dso.stdout" \
                 chroot "$root" /consumer dso /usr/lib/libquick-exit-probe.so
         else
             assert_result 54 "$work/dynamic-$mode-direct-dso.stdout" \
-                chroot "$root" /lib/ld-crabc-x86_64.so.1 /consumer \
+                chroot "$root" "/lib/ld-crabc-$arch.so.1" /consumer \
                 dso /usr/lib/libquick-exit-probe.so
         fi
         cmp "$work/oracle-dso.stdout" "$work/dynamic-$mode-$entry-dso.stdout"

@@ -7,6 +7,7 @@ use core::cmp::Ordering;
 use crabc_rs::collections::{CallbackSort, Search};
 use crabc_rs::numeric::{DecodeStatus, EncodedLong};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

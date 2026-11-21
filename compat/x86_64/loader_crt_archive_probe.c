@@ -13,6 +13,12 @@ int loader_crt_archive_probe(void)
 /* This isolated archive consumer intentionally contributes no CRT hooks.
  * The same PIC object exercises each selected archive through ordinary
  * extraction; none of the initialized runtime/TLS machinery is called. */
+#if defined(__aarch64__)
+__asm__(".text\n.global _start\n.type _start,%function\n_start:\n"
+        "bl loader_crt_archive_probe\nmov x8, #93\nsvc #0\nbrk #0\n");
+#else
 __asm__(".text\n.global _start\n.type _start,@function\n_start:\n"
         "and $-16,%rsp\ncall loader_crt_archive_probe\n"
         "mov %eax,%edi\nmov $60,%eax\nsyscall\nud2\n");
+
+#endif

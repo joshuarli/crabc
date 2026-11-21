@@ -145,6 +145,7 @@ class QualificationCaseTests(unittest.TestCase):
                              ({**good, "allocator_backend": "native-shadow"}, "different or invalid"),
                              ({**good, "build_profile": "debug"}, "release products")):
             with (self.subTest(message=message),
+                  mock.patch.object(QUALIFY.LUA, "ARCH", "x86_64"),
                   mock.patch.object(QUALIFY.LUA, "owned_static_sysroot", return_value=(None, None, None, good)),
                   mock.patch.object(QUALIFY.DYNAMIC, "owned_dynamic_sysroot", return_value=(None, None, None, bad)),
                   mock.patch.object(QUALIFY.PRODUCT, "product_identity"),

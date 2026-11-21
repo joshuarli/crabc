@@ -26,7 +26,10 @@ const NAME_MAX: usize = 255;
 static mut ENVIRONMENT_PATH: *const u8 = core::ptr::null();
 static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
+#[cfg(target_arch = "x86_64")]
 static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-x86_64.so.1\0".as_ptr();
+#[cfg(target_arch = "aarch64")]
+static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-aarch64.so.1\0".as_ptr();
 static mut APPLICATION_NAME: *const u8 = b"\0".as_ptr();
 static mut EXECUTABLE_NAME: *const u8 = core::ptr::null();
 static mut SELF_PATH: *const u8 = core::ptr::null();
@@ -170,7 +173,10 @@ unsafe fn load_system_path() -> SystemPath {
     // an absolute interpreter name. Relative names retain the root prefix.
     let prefix = unsafe { installation_prefix() };
     let prefix_len = prefix.len();
+    #[cfg(target_arch = "x86_64")]
     let suffix = b"/etc/ld-musl-x86_64.path\0";
+    #[cfg(target_arch = "aarch64")]
+    let suffix = b"/etc/ld-musl-aarch64.path\0";
     let mut path = [0u8; PATH_CAPACITY + 32];
     path[..prefix_len].copy_from_slice(prefix);
     path[prefix_len..prefix_len + suffix.len()].copy_from_slice(suffix);
@@ -185,7 +191,7 @@ unsafe fn load_system_path() -> SystemPath {
         let bytes = contents.as_mut_slice();
         let mut count = 0;
         while count + 1 < bytes.len() {
-            let read = unsafe { syscall3(0, fd, bytes.as_mut_ptr().add(count) as i64, (bytes.len() - count - 1) as i64) };
+            let read = unsafe { syscall3(SYS_READ, fd, bytes.as_mut_ptr().add(count) as i64, (bytes.len() - count - 1) as i64) };
             if read == -4 { continue; }
             if read < 0 { return None; }
             if read == 0 { break; }
@@ -341,7 +347,10 @@ unsafe fn object_paths(object: &Object) -> Result<ObjectPaths<'_>, i32> {
     let mut executable = [0; SEARCH_BUFFER];
     let name = if object.map_provenance == ObjectMapProvenance::KernelMain {
         if unsafe { SECURE } { return Ok(ObjectPaths::None); }
-        let size = unsafe { syscall3(89, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
+        #[cfg(target_arch = "x86_64")]
+        let size = unsafe { syscall3(SYS_READLINK, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
+        #[cfg(target_arch = "aarch64")]
+        let size = unsafe { syscall4(SYS_READLINKAT, AT_FDCWD, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, SEARCH_BUFFER as i64) };
         if size < 0 {
             return match -size { 2 | 20 | 13 => Ok(ObjectPaths::None), error => Err(error as i32) };
         }

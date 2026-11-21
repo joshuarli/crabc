@@ -39,15 +39,17 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import generate_qualification_manifest as manifest
+from native_arch import native_arch
 import source_seal
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TRUSTED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+_NATIVE = native_arch()
 MUSL_RUNTIME_PATHS = {
-    "compiler_wrapper": "/usr/local/bin/crabc-x86_64-musl-gcc",
+    "compiler_wrapper": _NATIVE["oracle"],
     "libc": "/opt/musl-1.2.6/lib/libc.so",
-    "loader": "/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1",
+    "loader": f"/opt/musl-1.2.6/lib/ld-musl-{_NATIVE['arch']}.so.1",
     "specs": "/opt/musl-1.2.6/lib/musl-gcc.specs",
     "source_manifest": "/opt/musl-1.2.6/.crabc-oracle",
     "specs_manifest": "/opt/musl-1.2.6/.crabc-musl-gcc-specs.sha256",
@@ -332,10 +334,11 @@ def controlled_environment() -> dict[str, str]:
     }
 
 
-def require_native_linux_x86_64() -> None:
+def require_native_linux() -> None:
     if platform.system() != "Linux":
         raise QualificationRunError("qualification requires native Linux")
-    if platform.machine().lower() not in {"x86_64", "amd64"}:
+    native_machines = {"x86_64": {"x86_64", "amd64"}, "aarch64": {"aarch64", "arm64"}}
+    if platform.machine().lower() not in native_machines[manifest.TARGET["machine"]]:
         raise QualificationRunError(f"qualification refuses emulation on {platform.machine()}")
 
 
@@ -351,7 +354,7 @@ def require_unconfigured_cargo_home(cargo_home: Path) -> None:
 
 def require_pinned_native_execution() -> None:
     """Refuse to execute cases outside the pinned dispatcher environment."""
-    require_native_linux_x86_64()
+    require_native_linux()
     expected_work = manifest.EXECUTION_CONTRACT["work_directory"]
     expected_temporary = manifest.EXECUTION_CONTRACT["temporary_directory"]
     expected_rust_bin = manifest.EXECUTION_CONTRACT["rust_bin_directory"]
@@ -855,7 +858,7 @@ def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
             "source_before": source,
             "source_after": source,
         }
-        if any(record.get(name) != value for name, value in expected.items()):
+        if any(not source_seal.same_evidence(record.get(name), value) for name, value in expected.items()):
             raise QualificationRunError(f"private case receipt drifted: {case.identifier}")
         if set(record) != set(expected) | {
             "started_at_unix_ns",

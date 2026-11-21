@@ -12,8 +12,11 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 readonly MOLD_PATH="$(python3 -B "$ROOT/compat/x86_64/native_rustc.py" mold)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly ORACLE_CC="$oracle"
+build_arch=()
+[ "$arch" = x86_64 ] || build_arch=(--architecture "$arch")
 readonly PROBE="$ROOT/compat/x86_64/owned_process_control_probe.c"
 readonly CHROOT="$(command -v chroot)"
 readonly PROCESS_CONTROL_SYMBOLS='clone daemon fork vfork posix_spawn posix_spawnp posix_spawn_file_actions_init posix_spawn_file_actions_destroy posix_spawn_file_actions_addopen posix_spawn_file_actions_addclose posix_spawn_file_actions_adddup2 posix_spawn_file_actions_addchdir_np posix_spawn_file_actions_addfchdir_np execl execle execlp execv execve execvp execvpe fexecve nice setpgid setpgrp setsid wait wait3 wait4 waitid waitpid posix_spawnattr_destroy posix_spawnattr_getflags posix_spawnattr_getpgroup posix_spawnattr_getschedparam posix_spawnattr_getschedpolicy posix_spawnattr_getsigdefault posix_spawnattr_getsigmask posix_spawnattr_init posix_spawnattr_setflags posix_spawnattr_setpgroup posix_spawnattr_setschedparam posix_spawnattr_setschedpolicy posix_spawnattr_setsigdefault posix_spawnattr_setsigmask'
@@ -120,7 +123,7 @@ assert_static_receipt_and_elf() {
     readelf -hW "$consumer" >"${consumer}.header"
     readelf -lW "$consumer" >"${consumer}.segments"
     readelf -dW "$consumer" >"${consumer}.dynamic"
-    python3 -B - "$product" "$consumer" "$mode" "$object" "$receipt" "$MOLD_PATH" "$ROOT" <<'PY_STATIC'
+    python3 -B - "$product" "$consumer" "$mode" "$object" "$receipt" "$MOLD_PATH" "$ROOT" "$arch" <<'PY_STATIC'
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -142,6 +145,7 @@ object_path = Path(sys.argv[4]).resolve()
 receipt_path = Path(sys.argv[5]).resolve()
 mold_path = Path(sys.argv[6])
 source_root = Path(sys.argv[7]).resolve()
+arch = sys.argv[8] if len(sys.argv) > 8 else "x86_64"
 sys.path.insert(0, str(source_root))
 sys.path.insert(0, str(source_root / "compat/x86_64"))
 import owned_posix_product_evidence as product_evidence
@@ -157,8 +161,9 @@ except (OSError, json.JSONDecodeError) as error:
     fail(f"is unreadable: {error}")
 if manifest_path.is_symlink() or not isinstance(manifest, dict):
     fail("manifest identity drifted")
-if (manifest.get("format") != "crabc-x86-64-owned-static-sysroot-v1" or
-        manifest.get("target") != "x86_64-unknown-linux-musl"):
+format_name = "x86-64" if arch == "x86_64" else "aarch64"
+if (manifest.get("format") != f"crabc-{format_name}-owned-static-sysroot-v1" or
+        manifest.get("target") != f"{arch}-unknown-linux-musl"):
     fail("manifest identity drifted")
 installed = manifest.get("installed")
 payload = installed.get("files") if isinstance(installed, dict) else None
@@ -167,8 +172,8 @@ if not isinstance(payload, dict):
 if not isinstance(receipt, dict):
     fail("is not an object")
 if (receipt.get("schema") != 1 or
-        receipt.get("format") != "crabc-x86-64-sealed-static-driver-v1" or
-        receipt.get("target") != "x86_64-unknown-linux-musl"):
+        receipt.get("format") != f"crabc-{format_name}-sealed-static-driver-v1" or
+        receipt.get("target") != f"{arch}-unknown-linux-musl"):
     fail("schema or format drifted")
 selected = receipt.get("mode")
 if not isinstance(selected, dict) or (
@@ -209,8 +214,8 @@ expected_contract = [
     mold_path.name, "-static", *(["-pie"] if expected[4] else []),
     "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro",
     "-z", "now", "-e", "_start", str(library / expected[3]),
-    str(library / "crti.o"), "<application-objects>", str(library / "libc.a"),
-    str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", "<output>",
+    str(library / "crti.o"), "<application-objects>", *(["--start-group"] if arch == "aarch64" else []), str(library / "libc.a"),
+    str(library / "libcrabc-builtins.a"), *(["--end-group"] if arch == "aarch64" else []), str(library / "crtn.o"), "-o", "<output>",
 ]
 if receipt.get("owned_link_contract") != expected_contract:
     fail("owned link contract drifted")
@@ -249,7 +254,7 @@ header = Path(str(consumer) + ".header").read_text(encoding="utf-8")
 segments = Path(str(consumer) + ".segments").read_text(encoding="utf-8")
 dynamic = Path(str(consumer) + ".dynamic").read_text(encoding="utf-8")
 if (not re.search(r"Type:\s+" + expected[2] + r"\s", header) or
-        "Advanced Micro Devices X86-64" not in header):
+        ("AArch64" if arch == "aarch64" else "Advanced Micro Devices X86-64") not in header):
     fail("consumer ELF type or machine drifted")
 if "INTERP" in segments or "Shared library:" in dynamic:
     fail("consumer acquired a dynamic runtime")
@@ -366,14 +371,15 @@ PY_REBIND
     # boundary. The later failure then isolates the manifest mutation itself.
     assert_static_receipt_and_elf "$forged_product" "$consumer" "$mode" "$object" \
         "$forged_receipt"
-    python3 -B - "$forged_product/share/crabc/manifest.json" <<'PY_MANIFEST'
+    python3 -B - "$forged_product/share/crabc/manifest.json" "$arch" <<'PY_MANIFEST'
 import json
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 manifest = json.loads(path.read_text(encoding="utf-8"))
-manifest["installed"]["files"]["usr/lib/libc.a"] = "0" * 64
+files = manifest["installed"]["files"]
+files["usr/lib/libc.a"] = "0" * 64
 path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY_MANIFEST
     if assert_static_receipt_and_elf "$forged_product" "$consumer" "$mode" "$object" "$forged_receipt" \
@@ -405,7 +411,7 @@ assert_dynamic_receipt_and_elf() {
     readelf -hW "$consumer" >"${consumer}.header"
     readelf -lW "$consumer" >"${consumer}.segments"
     readelf -dW "$consumer" >"${consumer}.dynamic"
-    python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" <<'PY'
+    python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" "$arch" <<'PY'
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -420,12 +426,13 @@ consumer = Path(sys.argv[3]).resolve()
 mode = sys.argv[4]
 object_path = Path(sys.argv[5]).resolve()
 receipt_path = Path(sys.argv[6]).resolve()
+arch = sys.argv[7]
 digest = lambda path: sha256(path.read_bytes()).hexdigest()
 receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
 manifest = root / "share/crabc/manifest.json"
 expected_runtime = sorted("usr/lib/" + entry for entry in (
     "Scrt1.o" if mode == "pie" else "crt1.o",
-    "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o",
+    *(["crabc-dynamic-attach.o"] if arch == "x86_64" or mode == "non-pie" else []), "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o",
 ))
 if not isinstance(receipt, dict):
     raise SystemExit("process-control dynamic receipt is not an object")
@@ -433,7 +440,7 @@ def require(condition, message):
     if not condition:
         raise SystemExit("process-control dynamic receipt " + message)
 search = receipt_contract.validate(
-    receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="process-control dynamic receipt",
+    receipt, format=f"crabc-{'x86-64' if arch == 'x86_64' else 'aarch64'}-owned-dynamic-sysroot-v1", label="process-control dynamic receipt",
     fail=lambda message: require(False, message),
 )
 receipt_contract.require_runpath(
@@ -461,9 +468,9 @@ for record in records:
 header = Path(str(consumer) + ".header").read_text(encoding="utf-8")
 segments = Path(str(consumer) + ".segments").read_text(encoding="utf-8")
 dynamic = Path(str(consumer) + ".dynamic").read_text(encoding="utf-8")
-if ("DYN" if mode == "pie" else "EXEC") not in header or "Advanced Micro Devices X86-64" not in header:
+if ("DYN" if mode == "pie" else "EXEC") not in header or ("AArch64" if arch == "aarch64" else "Advanced Micro Devices X86-64") not in header:
     raise SystemExit("process-control consumer ELF type or machine drifted")
-if "Requesting program interpreter: /lib/ld-crabc-x86_64.so.1" not in segments:
+if f"Requesting program interpreter: /lib/ld-crabc-{arch}.so.1" not in segments:
     raise SystemExit("process-control consumer interpreter drifted")
 if "Shared library: [libc.so]" not in dynamic or "/opt/musl-" in dynamic or "libc.so.6" in dynamic:
     raise SystemExit("process-control consumer dynamic dependency drifted")
@@ -472,7 +479,7 @@ PY
 
 if [ -z "$provided_dynamic" ]; then
     provided_dynamic="$work/dynamic-sysroot"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${build_arch[@]}" \
         --output "$provided_dynamic" >"$work/dynamic-build.json"
 fi
 readonly installed="$provided_dynamic"
@@ -495,7 +502,7 @@ static_product=''
 if [ -n "$provided_static" ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${build_arch[@]}" \
         --output "$work/static-sysroot" >"$work/static-build.json"
     static_product="$work/static-sysroot"
 fi
@@ -537,7 +544,7 @@ for mode in pie non-pie; do
         cp "$consumer" "$root/consumer"
         if [ "$entry" = direct ]; then
             run_in_root "$root" "$work/$mode-$entry.stdout" \
-                /lib/ld-crabc-x86_64.so.1 /consumer
+                "/lib/ld-crabc-$arch.so.1" /consumer
         else
             run_in_root "$root" "$work/$mode-$entry.stdout" /consumer
         fi

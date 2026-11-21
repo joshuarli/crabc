@@ -6,6 +6,7 @@ use crabc_rs::mm::{mincore, mmap_anonymous, munmap, MapFlags, ProtFlags};
 
 const PAGE_SIZE: usize = 4096;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

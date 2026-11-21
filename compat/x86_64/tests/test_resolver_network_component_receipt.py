@@ -52,6 +52,17 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.reader = load_reader()
 
+    def test_aarch64_pinned_image_manifest_has_native_tool_roster(self) -> None:
+        import native_arch
+        from scripts import native_build_tools
+        with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("aarch64")), \
+                mock.patch.object(native_build_tools, "CARGO_LINKER", Path("/usr/local/bin/crabc-aarch64-mold-gcc")):
+            reader = load_reader()
+        manifest = reader.trusted_image_manifest(ROOT)
+        self.assertEqual(manifest["schema"], "crabc.aarch64-owned-resolver-network-image-inputs/v1")
+        self.assertIn("/usr/local/bin/crabc-aarch64-musl-gcc", manifest["files"])
+        self.assertNotIn("/usr/local/bin/crabc-x86_64-musl-gcc", manifest["files"])
+
     def test_legacy_summary_only_report_cannot_establish_a_physical_receipt(self) -> None:
         with self.assertRaisesRegex(self.reader.ReceiptError, "physical receipt"):
             self.reader.validate_report_document({"schema_version": 1})
@@ -119,11 +130,41 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
     def test_current_image_manifest_tracks_the_repository_toolchain_and_exact_roster(self) -> None:
         manifest = self.reader.trusted_image_manifest(ROOT)
         self.assertEqual(set(manifest['files']), {
-            '/usr/local/bin/crabc-x86_64-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
+            f'/usr/local/bin/crabc-{self.reader.ARCH}-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
             *(str(path) for path in self.reader.COMPILER_ORACLE_INPUTS.values()),
             str(self.reader.RUSTC),
         })
-        self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-x86_64-", str(self.reader.RUSTC))
+        self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-{self.reader.ARCH}-", str(self.reader.RUSTC))
+
+    def test_arm_dynamic_product_requires_both_native_aliases(self) -> None:
+        import hashlib
+        runner = self.reader.load_runner(ROOT)
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            root = Path(directory)
+            names = ("bin/crabc-cc-dynamic", "lib/ld-crabc-aarch64.so.1", "usr/lib/libc.so",
+                     "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
+                     "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o")
+            files = {}
+            for name in names:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(name.encode())
+                path.chmod(0o755)
+                files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            aliases = {"lib/ld-musl-aarch64.so.1": "ld-crabc-aarch64.so.1",
+                       "lib/libc.musl-aarch64.so.1": "../usr/lib/libc.so"}
+            for name, target in aliases.items():
+                (root / name).symlink_to(target)
+            manifest = root / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"schema": 1, "format": "crabc-aarch64-owned-dynamic-sysroot-v1",
+                                            "target": "aarch64-unknown-linux-musl", "symlinks": aliases, "files": files}))
+            with mock.patch.object(runner, "ARCH", "aarch64"), \
+                    mock.patch.object(runner, "DYNAMIC_FORMAT", "crabc-aarch64-owned-dynamic-sysroot-v1"):
+                self.assertEqual(runner.dynamic_manifest(root)["symlinks"], aliases)
+                (root / "lib/libc.musl-aarch64.so.1").unlink()
+                with self.assertRaises(runner.RunnerError):
+                    runner.dynamic_manifest(root)
 
     def test_image_input_authentication_rejects_content_mode_alias_and_search_path_drift(self) -> None:
         (ROOT / ".work").mkdir(exist_ok=True)

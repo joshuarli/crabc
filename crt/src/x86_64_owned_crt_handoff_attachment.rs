@@ -15,6 +15,7 @@
 //! `GLOB_DAT`; the crt1.o caller tests the value for null before any use. The
 //! reader is hidden, so no executable exports it.
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     ".att_syntax prefix",
     ".weak __crabc_x86_64_owned_crt_handoff",
@@ -29,4 +30,18 @@ core::arch::global_asm!(
     "ret",
     ".size __crabc_x86_64_attached_owned_crt_handoff, .-__crabc_x86_64_attached_owned_crt_handoff",
     ".intel_syntax noprefix",
+);
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".section .text.__crabc_x86_64_attached_owned_crt_handoff,\"ax\",%progbits",
+    ".weak __crabc_x86_64_owned_crt_handoff",
+    ".type __crabc_x86_64_owned_crt_handoff,%object",
+    ".global __crabc_x86_64_attached_owned_crt_handoff",
+    ".hidden __crabc_x86_64_attached_owned_crt_handoff",
+    ".type __crabc_x86_64_attached_owned_crt_handoff,%function",
+    "__crabc_x86_64_attached_owned_crt_handoff:",
+    "adrp x0, :got:__crabc_x86_64_owned_crt_handoff",
+    "ldr x0, [x0, :got_lo12:__crabc_x86_64_owned_crt_handoff]",
+    "ret",
 );

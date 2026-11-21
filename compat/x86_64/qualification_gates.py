@@ -44,7 +44,7 @@ import generate_qualification_manifest as manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
-PUBLICATION_DIRECTORY = ROOT / ".work" / "x86_64" / "qualification-evidence"
+PUBLICATION_DIRECTORY = ROOT / Path(manifest.EXECUTION_CONTRACT["work_directory"]).relative_to("/workspace") / "qualification-evidence"
 CONDITIONS_SCHEMA = "crabc.x86_64-qualification-gate-conditions/v1"
 PUBLICATION_SCHEMA = "crabc.x86_64-qualification-evidence-publication/v1"
 COMPLETED_STATUS = "foundation-verified"

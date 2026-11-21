@@ -26,10 +26,8 @@
 #define M_SQRT1_2  0.707106781186547524401
 #endif
 
-/* The staged x86 header retains musl's literal spellings. The non-x86 arm
- * intentionally keeps the frozen AArch64 forms above byte-for-byte. */
-#if defined(__x86_64__) && \
-    (defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #undef M_E
 #undef M_LOG2E
 #undef M_LOG10E
@@ -58,10 +56,8 @@
 #define M_SQRT1_2       0.70710678118654752440
 #endif
 
-/* POSIX.1-2024 removes this legacy XSI macro. Keep AArch64's historic X/Open
- * namespace and BSD extension boundary; selected x86 retains musl's source
- * visibility, including the XSI-800 form. */
-#if defined(__x86_64__) && (defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE))
+
+#if defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE)
 #undef  MAXFLOAT
 #define MAXFLOAT        3.40282346638528859812e+38F
 #elif defined(_BSD_SOURCE) || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)
@@ -88,19 +84,13 @@
 #define FP_NORMAL    4
 #define MATH_ERRNO 1
 #define MATH_ERREXCEPT 2
-#if defined(__x86_64__)
-/* Pinned musl's x86 math contract reports floating-point exceptions rather
- * than advertising errno-only handling. The selected x87 classifiers below
- * are a prerequisite, not a claim that all x86 scalar math is implemented. */
+#if 1
+
 #define math_errhandling 2
-#else
-#define math_errhandling MATH_ERRNO
 #endif
 
-/* AArch64 provides fused multiply-add for binary32 and binary64. On x86,
- * match the pinned compiler's advertised fast-math indicators rather than
- * promising FMA where the selected target has not enabled it. */
-#if defined(__x86_64__)
+
+#if 1
 #ifdef __FP_FAST_FMA
 #define FP_FAST_FMA 1
 #endif
@@ -110,9 +100,6 @@
 #ifdef __FP_FAST_FMAL
 #define FP_FAST_FMAL 1
 #endif
-#else
-#define FP_FAST_FMA 1
-#define FP_FAST_FMAF 1
 #endif
 
 #ifdef __cplusplus
@@ -174,10 +161,8 @@ int __signbitl(long double);
     sizeof(x) == sizeof(double) ? (__DOUBLE_BITS(x) & (-1ULL>>1)) < (0x7ffULL<<52) : \
     __fpclassifyl(x) > FP_INFINITE)
 
-/* Keep the exact pinned x86 macro spellings without changing the frozen
- * AArch64 forms immediately above. Parenthesization is semantically neutral,
- * but it is still observable to macro consumers. */
-#if defined(__x86_64__)
+
+#if 1
 #undef isinf
 #undef isnan
 #undef isnormal
@@ -255,7 +240,7 @@ float dremf(float, float);
  * existing non-x86 spelling while keeping a BSD feature request from leaking
  * GNU-only declarations into the staged x86 public surface.
  */
-#if !defined(__x86_64__) || defined(_GNU_SOURCE)
+#if defined(_GNU_SOURCE)
 double exp10(double);
 float exp10f(float);
 long double exp10l(long double);
@@ -265,7 +250,7 @@ long double pow10l(long double);
 #endif
 double scalb(double, double);
 float scalbf(float, float);
-#if !defined(__x86_64__) || defined(_GNU_SOURCE)
+#if defined(_GNU_SOURCE)
 void sincos(double, double *, double *);
 void sincosf(float, float *, float *);
 void sincosl(long double, long double *, long double *);
@@ -359,7 +344,7 @@ long double lgammal(long double);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 double      lgamma_r(double, int *);
 float       lgammaf_r(float, int *);
-#if !defined(__x86_64__) || defined(_GNU_SOURCE)
+#if defined(_GNU_SOURCE)
 long double lgammal_r(long double, int *);
 #endif
 #endif

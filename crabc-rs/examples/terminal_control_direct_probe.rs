@@ -9,11 +9,13 @@
 #![no_main]
 #![crate_type = "staticlib"]
 
-use crabc_rs::process::{self, ForkResult};
+use crabc_rs::process;
 use crabc_rs::pty::{self, OpenptFlags};
 use crabc_rs::termios;
+use crabc_rs::fs;
 use crabc_rs::OwnedFd;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -21,10 +23,15 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 fn child_probe(master: &OwnedFd) -> ! {
     let pid = process::getpid();
-    if process::setsid().is_err() {
+    if crabc_core::process::setsid().is_err() {
         process::exit_immediately(10);
     }
-    let slave = match pty::ioctl_tiocgptpeer(master, OpenptFlags::RDWR | OpenptFlags::CLOEXEC) {
+    let mut name_buffer = [core::mem::MaybeUninit::uninit(); 128];
+    let name = match pty::ptsname_into(master, &mut name_buffer) {
+        Ok(name) => name,
+        Err(_) => process::exit_immediately(11),
+    };
+    let slave = match fs::open(name, fs::OFlags::RDWR | fs::OFlags::CLOEXEC, fs::Mode::empty()) {
         Ok(slave) => slave,
         Err(_) => process::exit_immediately(11),
     };
@@ -63,14 +70,16 @@ pub extern "C" fn crabc_rs_terminal_control_direct_probe() -> i32 {
         return -error.raw();
     }
 
-    let child = match unsafe { process::fork_raw() } {
-        Ok(ForkResult::Parent { child }) => child,
-        Ok(ForkResult::Child) => child_probe(&master),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw) {
+        Ok(Some(child)) => child,
+        Ok(None) => child_probe(&master),
         Err(error) => return -error.raw(),
     };
-    match process::waitpid(Some(child), process::WaitOptions::empty()) {
-        Ok(Some((_, status))) => status.exit_status().unwrap_or(18),
-        Ok(None) => 19,
+    let mut status = 0;
+    // SAFETY: status is writable and the child was created by this probe.
+    match unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) } {
+        Ok(_) if status & 0x7f == 0 => (status >> 8) & 0xff,
+        Ok(_) => 18,
         Err(error) => -error.raw(),
     }
 }

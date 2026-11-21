@@ -82,6 +82,26 @@ class NativeManifestTests(unittest.TestCase):
             self.assertIsNotNone(process.communicate.call_args.kwargs.get("timeout"))
             self.assertEqual(reap.call_count, 2)
 
+    def test_aarch64_input_requires_signed_index_and_pinned_digests(self) -> None:
+        with mock.patch.object(RUNNER, "ARCH", "aarch64"):
+            manifest = RUNNER.load_manifest(RUNNER.ROOT / "compat/corpus/manifest-aarch64.toml")
+        self.assertEqual(len(manifest.cases), 34)
+        self.assertEqual(len(manifest.archive_roster), 58)
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            name = next(iter(manifest.archive_roster))
+            (directory / name).write_bytes(b"wrong bytes")
+            subset = dataclasses.replace(manifest, archive_roster={name: manifest.archive_roster[name]})
+            with self.assertRaisesRegex(RUNNER.CorpusError, "signed APK index"):
+                RUNNER.input_identity(subset, directory, directory / "absent-index")
+            index = directory.parent / "index"
+            index.write_bytes(b"index")
+            try:
+                with self.assertRaisesRegex(RUNNER.CorpusError, "digest differs"):
+                    RUNNER.input_identity(subset, directory, index)
+            finally:
+                index.unlink()
+
     def test_native_manifest_seals_the_unchanged_34_case_workload(self) -> None:
         with self.manifest.source_manifest.open("rb") as stream:
             source = tomllib.load(stream)
@@ -107,7 +127,7 @@ class NativeManifestTests(unittest.TestCase):
         changed = {name for name, version in self.manifest.direct_packages.items() if version != source_versions[name]}
         deltas = tomllib.loads(RUNNER.MANIFEST.read_text())["native_version_deltas"]
         self.assertEqual(len(self.manifest.archive_roster), 59)
-        self.assertEqual(self.manifest.excluded_archives, {"musl-1.2.6-r2.apk"})
+        self.assertEqual(self.manifest.excluded_archives, {"musl-1.2.6-r3.apk"})
         self.assertEqual(set(deltas), changed)
         for name in changed:
             self.assertEqual(deltas[name], {"aarch64": source_versions[name], "x86_64": self.manifest.direct_packages[name]})
@@ -117,9 +137,9 @@ class NativeManifestTests(unittest.TestCase):
             package["name"]: package["version"]
             for package in tomllib.loads(self.manifest.source_manifest.read_text())["packages"]
         }
-        package_name = "git"
+        package_name = "zstd"
         current = self.manifest.direct_packages[package_name]
-        updated = "2.54.1-r0"
+        updated = "1.5.7-r3"
         manifest_text = RUNNER.MANIFEST.read_text()
         self.assertIn(f'{package_name} = "{current}"', manifest_text)
         manifest_text = manifest_text.replace(f'{package_name} = "{current}"', f'{package_name} = "{updated}"', 1)
@@ -325,6 +345,34 @@ class ProductIdentityTests(unittest.TestCase):
 
 
 class PrivatePayloadTests(unittest.TestCase):
+    def test_concurrently_created_parent_is_admitted_and_link_is_still_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            boundary = Path(temporary).resolve() / ".work"
+            boundary.mkdir()
+            real_mkdir = Path.mkdir
+
+            def racing_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+                if path.name == "shared":
+                    real_mkdir(path, mode=0o755)
+                real_mkdir(path, *args, **kwargs)
+
+            with mock.patch.object(RUNNER, "PRIVATE_WORK_ROOT", boundary), \
+                    mock.patch.object(Path, "mkdir", racing_mkdir):
+                work = RUNNER.private_campaign_parent(boundary / "shared")
+            self.assertTrue(work.is_dir())
+
+            (boundary / "elsewhere").mkdir()
+
+            def linking_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+                if path.name == "linked":
+                    path.symlink_to(boundary / "elsewhere", target_is_directory=True)
+                real_mkdir(path, *args, **kwargs)
+
+            with mock.patch.object(RUNNER, "PRIVATE_WORK_ROOT", boundary), \
+                    mock.patch.object(Path, "mkdir", linking_mkdir):
+                with self.assertRaises(RUNNER.CorpusError):
+                    RUNNER.private_campaign_parent(boundary / "linked")
+
     def test_created_evidence_parents_are_readable_without_changing_existing_private_parents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             boundary = Path(temporary) / ".work"

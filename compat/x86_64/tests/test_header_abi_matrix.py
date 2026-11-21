@@ -2272,28 +2272,18 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     f"{header_name} must preserve musl's unguarded source form",
                 )
 
-    def test_x86_macro_forms_preserve_the_paused_aarch64_spellings(self) -> None:
-        """Keep x86 source-form repair from changing the frozen AArch64 side."""
-
+    def test_converged_macro_forms_are_shared(self) -> None:
         mman = (ROOT / "include" / "sys" / "mman.h").read_text(encoding="utf-8")
-        self.assertIn(
-            "#if defined(__x86_64__)\n"
-            "#define MLOCK_ONFAULT 0x01\n"
-            "#else\n"
-            "#define MLOCK_ONFAULT 0x01U\n"
-            "#endif",
-            mman,
-        )
+        self.assertIn("#define MLOCK_ONFAULT 0x01\n", mman)
+        self.assertEqual(mman.count("#define MLOCK_ONFAULT"), 1)
+        self.assertNotIn("__x86_64__", mman)
+        self.assertNotIn("__aarch64__", mman)
 
         acct = (ROOT / "include" / "sys" / "acct.h").read_text(encoding="utf-8")
-        self.assertIn(
-            "#if defined(__x86_64__)\n"
-            "#define ACCT_BYTEORDER (128*(__BYTE_ORDER==__BIG_ENDIAN))\n"
-            "#else\n"
-            "#define ACCT_BYTEORDER (128 * (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))\n"
-            "#endif",
-            acct,
-        )
+        self.assertIn("#define ACCT_BYTEORDER (128*(__BYTE_ORDER==__BIG_ENDIAN))\n", acct)
+        self.assertEqual(acct.count("#define ACCT_BYTEORDER"), 1)
+        self.assertNotIn("__x86_64__", acct)
+        self.assertNotIn("__aarch64__", acct)
 
 
 if __name__ == "__main__":

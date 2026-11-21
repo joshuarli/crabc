@@ -48,7 +48,7 @@
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the x86 locale/multibyte leaf requires little-endian Linux/x86-64");
@@ -164,20 +164,20 @@ static mut POSIX_LCONV: Lconv = Lconv {
     mon_grouping: EMPTY_STRING.as_ptr() as *mut c_char,
     positive_sign: EMPTY_STRING.as_ptr() as *mut c_char,
     negative_sign: EMPTY_STRING.as_ptr() as *mut c_char,
-    int_frac_digits: 127,
-    frac_digits: 127,
-    p_cs_precedes: 127,
-    p_sep_by_space: 127,
-    n_cs_precedes: 127,
-    n_sep_by_space: 127,
-    p_sign_posn: 127,
-    n_sign_posn: 127,
-    int_p_cs_precedes: 127,
-    int_p_sep_by_space: 127,
-    int_n_cs_precedes: 127,
-    int_n_sep_by_space: 127,
-    int_p_sign_posn: 127,
-    int_n_sign_posn: 127,
+    int_frac_digits: c_char::MAX,
+    frac_digits: c_char::MAX,
+    p_cs_precedes: c_char::MAX,
+    p_sep_by_space: c_char::MAX,
+    n_cs_precedes: c_char::MAX,
+    n_sep_by_space: c_char::MAX,
+    p_sign_posn: c_char::MAX,
+    n_sign_posn: c_char::MAX,
+    int_p_cs_precedes: c_char::MAX,
+    int_p_sep_by_space: c_char::MAX,
+    int_n_cs_precedes: c_char::MAX,
+    int_n_sep_by_space: c_char::MAX,
+    int_p_sign_posn: c_char::MAX,
+    int_n_sign_posn: c_char::MAX,
 };
 
 #[derive(Clone, Copy)]

@@ -71,10 +71,19 @@ static void deny_open_path(char *path) {
     uintptr_t address = (uintptr_t)path;
     struct pty_filter instructions[] = {
         FILTER_LOAD(0),
+#if defined(__aarch64__)
+        FILTER_EQUAL(SYS_openat, 0, 5),
+        FILTER_LOAD(24),
+#else
         FILTER_EQUAL(SYS_open, 0, 5),
         FILTER_LOAD(16),
+#endif
         FILTER_EQUAL((unsigned)address, 0, 3),
+#if defined(__aarch64__)
+        FILTER_LOAD(24 + 4),
+#else
         FILTER_LOAD(16 + 4),
+#endif
         FILTER_EQUAL((unsigned)(address >> 32), 0, 1),
         FILTER_RETURN(0x00050000 | EACCES),
         FILTER_RETURN(0x7fff0000),
@@ -233,7 +242,10 @@ static void open_failure_case(const char *which) {
     char name[32]; memset(name, 'X', sizeof name);
     int expected;
     if (!strcmp(which, "master-failure")) {
-        deny_syscall(SYS_open, ENOSPC); deny_syscall(SYS_openat, ENOSPC);
+        #if defined(__x86_64__)
+        deny_syscall(SYS_open, ENOSPC);
+#endif
+        deny_syscall(SYS_openat, ENOSPC);
         CHECK(posix_openpt(O_RDWR | O_NOCTTY) == -1 && errno == EAGAIN);
         expected = ENOSPC;
     } else if (!strcmp(which, "unlock-failure")) {
@@ -286,7 +298,11 @@ static void login_failures_case(void) {
     if (!child) {
         CHECK(close(m) == 0);
         struct stat before, after; CHECK(fstat(1, &before) == 0);
+#if defined(__aarch64__)
+        deny_argument(SYS_dup3, 1, 1, EACCES);
+#else
         deny_argument(SYS_dup2, 1, 1, EACCES);
+#endif
         CHECK(login_tty(s) == 0 && errno == EACCES); /* dup2 errors do not replace success. */
         CHECK(same_descriptor(0, 2) && fstat(1, &after) == 0);
         CHECK(before.st_dev == after.st_dev && before.st_ino == after.st_ino);
@@ -356,7 +372,10 @@ static void forkpty_case(const char *which) {
     CHECK(close(setup_master) == 0 && close(setup_slave) == 0);
     int expected = 0, expected_prepare = 1, expected_name = 1;
     if (!strcmp(which, "forkpty-master-failure")) {
-        deny_syscall(SYS_open, ENOSPC); deny_syscall(SYS_openat, ENOSPC);
+        #if defined(__x86_64__)
+        deny_syscall(SYS_open, ENOSPC);
+#endif
+        deny_syscall(SYS_openat, ENOSPC);
         expected = ENOSPC; expected_prepare = 0; expected_name = 0;
     } else if (!strcmp(which, "forkpty-unlock-failure")) {
         deny_argument(SYS_ioctl, 1, TIOCSPTLCK, EACCES);
@@ -366,7 +385,12 @@ static void forkpty_case(const char *which) {
         expected = EIO; expected_prepare = 0; expected_name = 0;
     }
     if (!strcmp(which, "pipe-failure")) { deny_syscall(SYS_pipe2, ENFILE); expected = ENFILE; expected_prepare = 0; }
-    else if (!strcmp(which, "fork-failure")) { deny_syscall(SYS_fork, EAGAIN); deny_syscall(SYS_clone, EAGAIN); expected = EAGAIN; }
+    else if (!strcmp(which, "fork-failure")) {
+#if defined(__x86_64__)
+        deny_syscall(SYS_fork, EAGAIN);
+#endif
+        deny_syscall(SYS_clone, EAGAIN); expected = EAGAIN;
+    }
     else if (!strcmp(which, "child-login-failure")) { deny_argument(SYS_ioctl, 1, TIOCSCTTY, EACCES); expected = EACCES; }
     pid_t pid = forkpty(&m, name, &settings, &window);
     if (!pid) {

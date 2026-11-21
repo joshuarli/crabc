@@ -9,8 +9,9 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+readonly INTERPRETER="/lib/ld-crabc-${arch}.so.1"
 readonly CHROOT=/usr/sbin/chroot
 # Keep the initial locale and timezone identical in every entry mode. Use the
 # absolute host chroot tool so the consumer does not need an added PATH.
@@ -54,7 +55,7 @@ done
 [ -n "$provided_static" ] && [ -n "$provided_dynamic" ] || usage
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+case "$(uname -m)" in x86_64|amd64|aarch64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] || fail 'requires checkout-local TMPDIR'
 
 # Product inputs and every disposable path are physical checkout-local copies.

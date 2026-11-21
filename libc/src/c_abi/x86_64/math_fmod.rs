@@ -19,7 +19,7 @@
 //! `fmodf`; it excludes binary80 `fmodl`, `remainder*`, `remquo*`, `modf*`,
 //! fenv rounding/truncation, special and complex math, and general libm.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 math fmod leaf requires little-endian Linux/x86-64");
 
 const F64_INFINITY_BITS: u64 = 0x7ff0_0000_0000_0000;
@@ -27,6 +27,7 @@ const F32_INFINITY_BITS: u32 = 0x7f80_0000;
 
 /// Matches musl's non-signaling raw binary64 `isnan` classification.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn is_nan_f64(bits: u64) -> bool {
     let magnitude = bits & 0x7fff_ffff_ffff_ffff;
     let classified: u8;
@@ -47,6 +48,7 @@ fn is_nan_f64(bits: u64) -> bool {
 
 /// Matches musl's non-signaling raw binary32 `isnan` classification.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn is_nan_f32(bits: u32) -> bool {
     let magnitude = bits & 0x7fff_ffff;
     let classified: u8;
@@ -62,6 +64,18 @@ fn is_nan_f32(bits: u32) -> bool {
         );
     }
     classified != 0
+}
+
+#[inline]
+#[cfg(target_arch = "aarch64")]
+fn is_nan_f64(bits: u64) -> bool {
+    bits & 0x7fff_ffff_ffff_ffff > F64_INFINITY_BITS
+}
+
+#[inline]
+#[cfg(target_arch = "aarch64")]
+fn is_nan_f32(bits: u32) -> bool {
+    bits & 0x7fff_ffff > F32_INFINITY_BITS
 }
 
 // Musl's `src/math/fmod.c` object.

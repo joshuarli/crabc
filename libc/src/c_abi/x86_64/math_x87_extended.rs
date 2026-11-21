@@ -31,7 +31,7 @@
 //! gamma/Bessel/error, or complex transcendental families; it is not scalar
 //! math completion, `libc.so`, a CRT, loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x87 extended-math leaf requires little-endian Linux/x86-64");
 
 // Keep the fixed upstream spellings in AT&T syntax where practical. The eight
@@ -43,6 +43,7 @@ compile_error!("the x87 extended-math leaf requires little-endian Linux/x86-64")
 // Each musl object below has its own static archive member, as in musl's
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/acosl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { acosl_source {
     core::arch::global_asm!(
         r#"
@@ -70,6 +71,7 @@ acosl:
 }}
 
 // Musl's `src/math/asinl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { asinl_source {
     core::arch::global_asm!(
         r#"
@@ -95,6 +97,7 @@ asinl:
 }}
 
 // Musl's `src/math/atanl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { atanl_source {
     core::arch::global_asm!(
         r#"
@@ -115,6 +118,7 @@ atanl:
 }}
 
 // Musl's `src/math/atan2l.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { atan2l_source {
     core::arch::global_asm!(
         r#"
@@ -139,6 +143,7 @@ atan2l:
 }}
 
 // Musl's `src/math/floorl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { floorl_source {
     core::arch::global_asm!(
         r#"
@@ -189,6 +194,7 @@ truncl:
 }}
 
 // Musl's `src/math/exp2l.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { exp2l_source {
     core::arch::global_asm!(
         r#"
@@ -298,6 +304,7 @@ exp2l:
 }}
 
 // Musl's `src/math/expl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { expl_source {
     core::arch::global_asm!(
         r#"
@@ -383,6 +390,7 @@ expl:
 }}
 
 // Musl's `src/math/log10l.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { log10l_source {
     core::arch::global_asm!(
         r#"
@@ -403,6 +411,7 @@ log10l:
 }}
 
 // Musl's `src/math/log1pl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { log1pl_source {
     core::arch::global_asm!(
         r#"
@@ -432,6 +441,7 @@ log1pl:
 }}
 
 // Musl's `src/math/log2l.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { log2l_source {
     core::arch::global_asm!(
         r#"
@@ -452,6 +462,7 @@ log2l:
 }}
 
 // Musl's `src/math/logl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { logl_source {
     core::arch::global_asm!(
         r#"
@@ -474,6 +485,7 @@ logl:
 }}
 
 // Musl's `src/math/fabsl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { fabsl_source {
     core::arch::global_asm!(
         r#"
@@ -494,6 +506,7 @@ fabsl:
 }}
 
 // Musl's `src/math/fmodl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { fmodl_source {
     core::arch::global_asm!(
         r#"
@@ -518,6 +531,7 @@ fmodl:
 }}
 
 // Musl's `src/math/lrintl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { lrintl_source {
     core::arch::global_asm!(
         r#"
@@ -538,6 +552,7 @@ lrintl:
 }}
 
 // Musl's `src/math/llrintl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { llrintl_source {
     core::arch::global_asm!(
         r#"
@@ -558,6 +573,7 @@ llrintl:
 }}
 
 // Musl's `src/math/remainderl.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { remainderl_source {
     core::arch::global_asm!(
         r#"
@@ -583,6 +599,7 @@ remainderl:
 }}
 
 // Musl's `src/math/remquol.c` object.
+#[cfg(target_arch = "x86_64")]
 static_archive_member! { remquol_source {
     core::arch::global_asm!(
         r#"
@@ -626,3 +643,6 @@ remquol:
     options(att_syntax),
     );
 }}
+
+#[cfg(target_arch = "aarch64")]
+musl_object_assembly!("math_x87_extended_musl_aarch64");

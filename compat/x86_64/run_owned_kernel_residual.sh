@@ -10,9 +10,7 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_kernel_residual_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly OWNED_SYMBOLS='__sched_cpucount confstr fpathconf getdtablesize gethostid membarrier pathconf personality prctl sched_getparam sched_getscheduler sched_setparam sched_setscheduler setdomainname sethostname syscall sysconf ulimit'
 readonly CASES=(
     cpucount
@@ -63,6 +61,9 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(realpath "$provided_static")"
 fi

@@ -31,6 +31,9 @@ def load_module():
     return module
 
 
+NATIVE_ARCH = load_module().ARCH
+
+
 class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -98,11 +101,11 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         files = manifest["files"]
         self.assertEqual(
             files[str(self.receipt.TOOLCHAIN_ROOT / "bin/rustc")]["sha256"],
-            "228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b",
+            ("228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b" if self.receipt.ARCH == "x86_64" else "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b"),
         )
         self.assertEqual(
             files[str(self.receipt.LINKER_PATH)]["sha256"],
-            "3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f",
+            ("3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f" if self.receipt.ARCH == "x86_64" else "2f694c9ecbfe99aad11d0ef00a15708cf74b82a0a8dfc9760037fa2917263b28"),
         )
 
     def test_collection_admits_only_the_observed_current_image(self) -> None:
@@ -114,6 +117,17 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
                     self.receipt.require_collection_image()
         with mock.patch.dict(os.environ, {"CRABC_CLASSIC_NETDB_IMAGE_ID": self.receipt.PINNED_IMAGE}):
             self.assertEqual(self.receipt.require_collection_image(), self.receipt.PINNED_IMAGE)
+
+    def test_arm64_manifest_binds_native_pinned_tools(self) -> None:
+        native = self.receipt.native_arch("aarch64")
+        manifest = "compat/x86_64/owned_classic_netdb_image_inputs_aarch64.json"
+        toolchain = Path("/opt/rustup/toolchains") / f"{self.receipt.TOOLCHAIN}-{native['target_triple']}"
+        with mock.patch.object(self.receipt, "ARCH", "aarch64"), \
+             mock.patch.object(self.receipt, "IMAGE_MANIFEST", manifest), \
+             mock.patch.object(self.receipt, "TOOLCHAIN_ROOT", toolchain):
+            inputs = self.receipt.trusted_image_manifest(ROOT)["files"]
+        self.assertIn(native["oracle"], inputs)
+        self.assertIn(str(toolchain / "bin/rustc"), inputs)
 
     def test_producer_rejects_an_unbound_image_before_product_or_fixture_access(self) -> None:
         import owned_classic_netdb as producer
@@ -149,7 +163,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             self.receipt.validate_association_difference(value)
 
     def test_execution_evidence_binds_argv_and_file_positions(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"
+        scratch = ROOT / f".work/{self.receipt.ARCH}/tmp/classic-netdb-reader-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
@@ -157,7 +171,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             work.mkdir()
             label = "dynamic-pie-direct-host-numeric"
             data = {
-                "argv": b'["/lib/ld-crabc-x86_64.so.1","/consumer","host-numeric"]\n',
+                "argv": f'["/lib/ld-crabc-{self.receipt.ARCH}.so.1","/consumer","host-numeric"]\n'.encode(),
                 "stdout": b"classic netdb scenario passed\n",
                 "stderr": b"",
                 "status": b"0\n",
@@ -187,16 +201,16 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(self.receipt.ReceiptError, "path differs"):
                 self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record)
 
-    @unittest.skipUnless(os.getuid() == 0 and Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+    @unittest.skipUnless(os.getuid() == 0 and Path(f"/usr/local/bin/crabc-{NATIVE_ARCH}-musl-gcc").is_file(),
                          "requires the pinned compiler and an isolated unprivileged child")
     def test_source_recompile_uses_private_scratch_with_read_only_artifacts(self) -> None:
-        temporary = ROOT / ".work/x86_64/tmp"
+        temporary = ROOT / f".work/{NATIVE_ARCH}/tmp"
         temporary.mkdir(parents=True, exist_ok=True)
         original_mode = stat.S_IMODE(temporary.stat().st_mode)
         with tempfile.TemporaryDirectory(dir=temporary) as directory:
             work = Path(directory)
             workload = work / "workload.o"
-            compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+            compiler = f"/usr/local/bin/crabc-{NATIVE_ARCH}-musl-gcc"
             source = work / "probe.c"
             source.write_text("int retained_probe(void) { return 73; }\n", encoding="utf-8")
             argv = [compiler, "-std=c11", "-fno-builtin", "-c", str(source), "-o", str(workload)]
@@ -224,7 +238,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
                 temporary.chmod(original_mode)
 
     def test_self_consistent_workload_identity_requires_source_recompile(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"
+        scratch = ROOT / f".work/{self.receipt.ARCH}/tmp/classic-netdb-reader-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
@@ -238,6 +252,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_text("int probe(void) { return 1; }\n", encoding="utf-8")
             compiler = work / "compiler"
+            machine = b"\x3e" if self.receipt.ARCH == "x86_64" else b"\xb7"
             compiler.write_text(
                 '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
                 'shift\nprintf "\\177ELF\\002\\001\\001\\000\\000\\000\\000\\000\\000\\000\\000\\000\\001\\000>\\000source" > "$1"\n',
@@ -245,7 +260,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             )
             compiler.chmod(0o755)
             workload = work / "workload.o"
-            workload.write_bytes(b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x01\0>\0transplanted")
+            workload.write_bytes(b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x01\0" + machine + b"\0transplanted")
             manifest = root / ".work/image.json"
             manifest.write_text("{}\n", encoding="utf-8")
             seal = {"sources": {"probe": "selected"}}

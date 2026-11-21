@@ -66,7 +66,7 @@ PROOF_SOURCES = (
     'libc/src/c_abi/x86_64/math_special_musl_x86_64.S',
 )
 
-ORACLE_DEFECTS = {
+BINARY80_ORACLE_DEFECTS = {
     'math/fmal': {
         'source': 'src/math/fmal.c',
         'source_sha256': 'd061e49f12822c9adba55a05dcc14bae235258f6584d9251c0f673b719c96a7d',
@@ -77,6 +77,10 @@ ORACLE_DEFECTS = {
              'bad fp exception: RN fmal(-0x1p-10000,0x1.0000000000001p-6445,0x1p-16382)=0x1.fffffffffffffffcp-16383, want INEXACT|UNDERFLOW got INEXACT'),
         ),
     },
+}
+
+ORACLE_DEFECTS = {
+    **(BINARY80_ORACLE_DEFECTS if native.ARCH == 'x86_64' else {}),
     'math/powf': {
         'source': 'src/math/powf.c',
         'source_sha256': 'bc1d46abbe248da44373bba8d88e0f8075d722ac8ec2a4ce394712cbd7f61183',

@@ -6,11 +6,15 @@ readonly root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly installed="$1"
 readonly static="$2"
 readonly compatibility="$3"
+eval "$(python3 -B "$root/compat/x86_64/native_arch.py")"
+readonly hardened_loader="ld-crabc-${arch}-hardened.so.1"
+readonly compat_loader="ld-crabc-${arch}.so.1"
+export CRABC_HARDENED_ARCH="$arch"
 case "${TMPDIR:-}" in "$root"/.work/*) ;; *) exit 2;; esac
 readonly work="$(mktemp -d "$TMPDIR/hardened-entry.XXXXXX")"
 readonly image="$work/root"
 mkdir -p "$image/lib" "$image/usr/lib" "$image/plugins"
-cp "$installed/lib/ld-crabc-x86_64-hardened.so.1" "$image/lib/"
+cp "$installed/lib/${hardened_loader}" "$image/lib/"
 cp "$installed/usr/lib/libc.so" "$image/usr/lib/"
 conventional_offset="$(python3 -B -c '
 import sys
@@ -20,11 +24,17 @@ print("%x" % evidence.conventional_record_offset_from(sys.argv[2]))
 ' "$root" "$image/usr/lib/libc.so")"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/pie"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_secure_probe.c" -o "$image/secure"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_worker_guard_probe.c" -o "$image/worker-guard"
 chmod 4755 "$image/secure"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/alias"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/hardened-relro-fixture.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object -DCRABC_BAD_DSO "$root/compat/x86_64/hardened_relro_dso.c" -o "$image/usr/lib/rejected-source.so"
-"$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_mutable_dso.c" -o "$image/usr/lib/tls-mutable.so"
+if [ "$arch" = aarch64 ]; then
+    "$linker" -nostdinc -isystem "$installed/usr/include" -fPIC -fstack-protector-strong -mtls-dialect=trad -c "$root/compat/x86_64/hardened_tls_mutable_dso.c" -o "$work/tls-mutable.o"
+    "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$work/tls-mutable.o" -o "$image/usr/lib/tls-mutable.so"
+else
+    "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_mutable_dso.c" -o "$image/usr/lib/tls-mutable.so"
+fi
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_mutable_symbol_dso.c" -o "$image/usr/lib/symbol-mutable.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_tls_failure_dso.c" -o "$image/usr/lib/tls-fault.so"
 "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object "$root/compat/x86_64/hardened_import_provider.c" -o "$image/usr/lib/import-provider.so"
@@ -40,11 +50,11 @@ chmod 4755 "$image/secure"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_alias_probe.c" -o "$image/static-alias"
 "$static/bin/crabc-cc" "$root/compat/x86_64/hardened_relro_probe.c" -o "$image/static-relro"
 "$static/bin/crabc-cc" -DCRABC_HARDENED_PROBE "$root/compat/x86_64/installed_crt_startup_probe.c" -o "$image/static-startup"
-/usr/local/bin/crabc-x86_64-musl-gcc -fno-pie -no-pie \
-    -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
+"$oracle" -fno-pie -no-pie \
+    -Wl,--dynamic-linker=/lib/${hardened_loader} \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/nonpie"
-/usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie -Wl,-z,relro,-z,now,-z,noexecstack \
-    -Wl,--dynamic-linker=/lib/ld-crabc-x86_64-hardened.so.1 \
+"$oracle" -fPIE -pie -Wl,-z,relro,-z,now,-z,noexecstack \
+    -Wl,--dynamic-linker=/lib/${hardened_loader} \
     "$root/compat/x86_64/hardened_entry_probe.c" -o "$image/foreign-pie"
 python3 -B - "$image" <<'PYTHON'
 from pathlib import Path
@@ -52,6 +62,10 @@ import struct
 import sys
 
 root = Path(sys.argv[1])
+import os
+arch = os.environ["CRABC_HARDENED_ARCH"]
+tls_offset, tls_module, tls_thread = (1029, 1028, 1030) if arch == "aarch64" else (17, 16, 18)
+symbol_abs, symbol_pc, symbol_glob, symbol_jump = (257, 261, 1025, 1026) if arch == "aarch64" else (1, 2, 6, 7)
 static = bytearray((root / "static-alias").read_bytes())
 phoff = struct.unpack_from("<Q", static, 32)[0]
 phnum = struct.unpack_from("<H", static, 56)[0]
@@ -190,11 +204,11 @@ assert all(header[0] != 0x6474e552 or target < (header[3] & ~4095)
            or target + 8 > ((header[3] + header[6] + 4095) & ~4095) for header in headers)
 rela = file_offset(entries[7])
 matches = [offset for offset in range(rela, rela + entries[8], 24)
-           if struct.unpack_from("<Q", tls, offset + 8)[0] == (tls_symbol << 32) | 17]
+           if struct.unpack_from("<Q", tls, offset + 8)[0] == (tls_symbol << 32) | tls_offset]
 assert len(matches) == 1 and struct.unpack_from("<q", tls, matches[0] + 16)[0] == 0
 struct.pack_into("<Q", tls, matches[0], target)
 tls_path.write_bytes(tls)
-for name, kind in (("tls-module.so", 16), ("tls-thread.so", 18)):
+for name, kind in (("tls-module.so", tls_module), ("tls-thread.so", tls_thread)):
     variant = bytearray(tls)
     struct.pack_into("<Q", variant, matches[0] + 8, (tls_symbol << 32) | kind)
     (root / "usr/lib" / name).write_bytes(variant)
@@ -206,13 +220,13 @@ dynamic = next(header for header in headers if header[0] == 2)
 entries = dict(struct.unpack_from("<QQ", symbol, offset) for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16))
 rela = file_offset(entries[7])
 matches = [offset for offset in range(rela, rela + entries[8], 24)
-           if struct.unpack_from("<Q", symbol, offset + 8)[0] & 0xffffffff == 1
+           if struct.unpack_from("<Q", symbol, offset + 8)[0] & 0xffffffff == symbol_abs
            and struct.unpack_from("<Q", symbol, offset + 8)[0] >> 32 != 0
            and all(header[0] != 0x6474e552 or struct.unpack_from("<Q", symbol, offset)[0] < (header[3] & ~4095)
                    or struct.unpack_from("<Q", symbol, offset)[0] + 8 > ((header[3] + header[6] + 4095) & ~4095)
                    for header in headers)]
 assert len(matches) == 1
-for name, kind in (("symbol-pc32.so", 2), ("symbol-glob.so", 6), ("symbol-jump.so", 7)):
+for name, kind in (("symbol-pc32.so", symbol_pc), ("symbol-glob.so", symbol_glob), ("symbol-jump.so", symbol_jump)):
     variant = bytearray(symbol)
     info = struct.unpack_from("<Q", variant, matches[0] + 8)[0]
     struct.pack_into("<Q", variant, matches[0] + 8, (info & ~0xffffffff) | kind)
@@ -221,7 +235,7 @@ PYTHON
 timeout 20 chroot "$image" /foreign-pie
 test -f "$image/marker"
 rm "$image/marker"
-timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /foreign-pie
+timeout 20 chroot "$image" /lib/${hardened_loader} /foreign-pie
 test -f "$image/marker"
 rm "$image/marker"
 timeout 20 chroot "$image" /pie
@@ -273,13 +287,14 @@ timeout 20 chroot "$image" /import-control >"$work/import-control.stdout" 2>"$wo
 [ "$status" -eq 127 ]
 test ! -e "$image/import-marker"
 status=0
-timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /import-control >"$work/import-direct.stdout" 2>"$work/import-direct.stderr" || status=$?
+timeout 20 chroot "$image" /lib/${hardened_loader} /import-control >"$work/import-direct.stdout" 2>"$work/import-direct.stderr" || status=$?
 [ "$status" -eq 127 ]
 test ! -e "$image/import-marker"
+timeout 20 chroot "$image" /worker-guard
 timeout 20 chroot "$image" /relro
 timeout 20 chroot "$image" /static-relro
 CRABC_STARTUP=yes CRABC_CONVENTIONAL_RECORD_OFFSET="$conventional_offset" timeout 20 chroot "$image" /startup owned >"$work/startup.stdout"
-CRABC_STARTUP=yes CRABC_CONVENTIONAL_RECORD_OFFSET="$conventional_offset" timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 /startup owned >"$work/startup-direct.stdout"
+CRABC_STARTUP=yes CRABC_CONVENTIONAL_RECORD_OFFSET="$conventional_offset" timeout 20 chroot "$image" /lib/${hardened_loader} /startup owned >"$work/startup-direct.stdout"
 CRABC_STARTUP=yes timeout 20 chroot "$image" /static-startup static >"$work/static-startup.stdout"
 [ "$(cat "$work/startup.stdout")" = ICOMAFL ]
 [ "$(cat "$work/startup-direct.stdout")" = ICOMAFL ]
@@ -309,13 +324,13 @@ for case in nonpie bad-stack bad-wx bad-owned-note; do
     [ "$status" -eq 127 ]
     test ! -e "$image/marker"
     status=0
-    timeout 20 chroot "$image" /lib/ld-crabc-x86_64-hardened.so.1 "/$case" >"$work/$case-direct.stdout" 2>"$work/$case-direct.stderr" || status=$?
+    timeout 20 chroot "$image" /lib/${hardened_loader} "/$case" >"$work/$case-direct.stdout" 2>"$work/$case-direct.stderr" || status=$?
     [ "$status" -eq 1 ]
     test ! -e "$image/marker"
 done
 readonly compatible_root="$work/compatibility"
 mkdir -p "$compatible_root/lib" "$compatible_root/usr/lib" "$compatible_root/plugins"
-cp "$compatibility/lib/ld-crabc-x86_64.so.1" "$compatible_root/lib/"
+cp "$compatibility/lib/${compat_loader}" "$compatible_root/lib/"
 cp "$compatibility/usr/lib/libc.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-stack.so" "$compatible_root/usr/lib/"
 cp "$image/usr/lib/rejected-source.so" "$compatible_root/usr/lib/"
@@ -335,7 +350,14 @@ for variant in symbol-mutable.so symbol-glob.so symbol-jump.so; do
     rm "$compatible_root/symbol-mutable-marker"
 done
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_pc32_probe.c" -o "$compatible_root/symbol-pc32"
-timeout 20 chroot "$compatible_root" /symbol-pc32
+if [ "$arch" = aarch64 ]; then
+    status=0
+    timeout 20 chroot "$compatible_root" /symbol-pc32 || status=$?
+    [ "$status" -eq 1 ]
+    test ! -e "$compatible_root/symbol-mutable-marker"
+else
+    timeout 20 chroot "$compatible_root" /symbol-pc32
+fi
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/compat_lazy_import_probe.c" -o "$compatible_root/lazy-import"
 timeout 20 chroot "$compatible_root" /lazy-import
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/pie"
@@ -344,6 +366,9 @@ chmod 4755 "$compatible_root/secure"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-runpath plugins --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-relative"
 "$compatibility/bin/crabc-cc-dynamic" --dynamic-pie --application-dso "$compatible_root/plugins/relative-only.so" "$root/compat/x86_64/hardened_entry_probe.c" -o "$compatible_root/search-env"
 python3 -B - "$image" "$work" "$compatible_root" <<'PYTHON'
+import os
+_arch = os.environ["CRABC_HARDENED_ARCH"]
+
 from pathlib import Path
 import os
 import shutil
@@ -398,7 +423,7 @@ result = subprocess.run(["/secure-search"], env={"LD_LIBRARY_PATH": "/plugins"},
 assert result.returncode == 127, (result.returncode, result.stderr)
 assert not (root / "marker").exists()
 secure_loader = root / "lib/secure-loader"
-shutil.copyfile(root / "lib/ld-crabc-x86_64-hardened.so.1", secure_loader)
+shutil.copyfile(root / f"lib/ld-crabc-{_arch}-hardened.so.1", secure_loader)
 secure_loader.chmod(0o755)
 result = subprocess.run(["/lib/secure-loader", "--library-path", "/plugins", "/search-env"],
                         env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
@@ -435,7 +460,7 @@ result = subprocess.run(["/secure-search"], env={"LD_LIBRARY_PATH": "/plugins"},
 assert result.returncode == 127, (result.returncode, result.stderr)
 assert not (compatible / "marker").exists()
 secure_loader = compatible / "lib/secure-loader"
-shutil.copyfile(compatible / "lib/ld-crabc-x86_64.so.1", secure_loader)
+shutil.copyfile(compatible / f"lib/ld-crabc-{_arch}.so.1", secure_loader)
 secure_loader.chmod(0o755)
 result = subprocess.run(["/lib/secure-loader", "--library-path", "/plugins", "/search-env"], env={},
                         preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
@@ -460,12 +485,12 @@ assert result.returncode == 0 and (compatible / "marker").exists(), (result.retu
 assert not (compatible / "rejected-marker").exists()
 (compatible / "marker").unlink()
 
-for directory, interpreter in ((root, "ld-crabc-x86_64-hardened.so.1"),
-                               (compatible, "ld-crabc-x86_64.so.1")):
+for directory, interpreter in ((root, f"ld-crabc-{_arch}-hardened.so.1"),
+                               (compatible, f"ld-crabc-{_arch}.so.1")):
     prefix = directory / "plugins/fake"
     (prefix / "lib").mkdir(parents=True)
     (prefix / "etc").mkdir()
-    (prefix / "etc/ld-musl-x86_64.path").write_text("/plugins")
+    (prefix / f"etc/ld-musl-{_arch}.path").write_text("/plugins")
     loader = prefix / "lib/ld.so"
     shutil.copyfile(directory / "lib" / interpreter, loader)
     loader.chmod(0o755)
@@ -483,8 +508,8 @@ for directory, interpreter in ((root, "ld-crabc-x86_64-hardened.so.1"),
     assert not (directory / "marker").exists()
 
 for name, original, foreign, interpreter in (
-    ("cross-hardened", root, compatible, "ld-crabc-x86_64-hardened.so.1"),
-    ("cross-compatibility", compatible, root, "ld-crabc-x86_64.so.1"),
+    ("cross-hardened", root, compatible, f"ld-crabc-{_arch}-hardened.so.1"),
+    ("cross-compatibility", compatible, root, f"ld-crabc-{_arch}.so.1"),
 ):
     directory = work / name
     (directory / "lib").mkdir(parents=True)
@@ -495,7 +520,7 @@ for name, original, foreign, interpreter in (
     path = directory / "lib" / interpreter
     shutil.copyfile(original / "lib" / interpreter, path)
     path.chmod(0o755)
-    other = "ld-crabc-x86_64.so.1" if "hardened" in interpreter else "ld-crabc-x86_64-hardened.so.1"
+    other = f"ld-crabc-{_arch}.so.1" if "hardened" in interpreter else f"ld-crabc-{_arch}-hardened.so.1"
     for matched in (True, False):
         if not matched:
             shutil.copyfile(foreign / "lib" / other, path)
@@ -511,7 +536,7 @@ for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejec
              "rejected-pltgot-duplicate.so", "rejected-pltgot-outside.so",
              "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
              "symbol-glob.so", "symbol-jump.so", "import-probe.so"):
-    for arguments in (["/pie"], ["/lib/ld-crabc-x86_64-hardened.so.1", "/pie"]):
+    for arguments in (["/pie"], [f"/lib/ld-crabc-{_arch}-hardened.so.1", "/pie"]):
         result = subprocess.run(arguments, env={"LD_PRELOAD": "/usr/lib/" + name},
                                 preexec_fn=enter, capture_output=True, timeout=20, check=False)
         route = "kernel" if len(arguments) == 1 else "direct"
@@ -526,7 +551,7 @@ for name in ("rejected-source.so", "rejected-stack.so", "rejected-wx.so", "rejec
         (root / "marker").unlink(missing_ok=True)
         (root / "rejected-marker").unlink(missing_ok=True)
 for preload, status, marker in (("/usr/lib/missing.so", 0, True), ("usr/lib/rejected-source.so", 127, False)):
-    for arguments in (["/pie"], ["/lib/ld-crabc-x86_64-hardened.so.1", "/pie"]):
+    for arguments in (["/pie"], [f"/lib/ld-crabc-{_arch}-hardened.so.1", "/pie"]):
         result = subprocess.run(arguments, env={"LD_PRELOAD": preload},
                                 preexec_fn=enter, capture_output=True, timeout=20, check=False)
         assert (result.returncode == 0 if status == 0 else result.returncode in (1, 127)), (preload, arguments, result.stderr)
@@ -540,7 +565,7 @@ for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.s
                   "tls-mutable.so", "tls-module.so", "tls-thread.so", "symbol-mutable.so", "symbol-pc32.so",
                   "symbol-glob.so", "symbol-jump.so"):
     source.write_bytes(original if candidate is None else (root / "usr/lib" / candidate).read_bytes())
-    for arguments in (["/dependency"], ["/lib/ld-crabc-x86_64-hardened.so.1", "/dependency"]):
+    for arguments in (["/dependency"], [f"/lib/ld-crabc-{_arch}-hardened.so.1", "/dependency"]):
         result = subprocess.run(arguments, env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
         route = "kernel" if len(arguments) == 1 else "direct"
         (work / f"dependency-{candidate or 'valid'}-{route}.stderr").write_bytes(result.stderr)
@@ -553,7 +578,7 @@ for candidate in (None, "rejected-stack.so", "rejected-wx.so", "rejected-relro.s
         (root / "marker").unlink(missing_ok=True)
         (root / "rejected-marker").unlink(missing_ok=True)
 source.write_bytes(original)
-loader = "/lib/ld-crabc-x86_64-hardened.so.1"
+loader = f"/lib/ld-crabc-{_arch}-hardened.so.1"
 searches = (
     (["/search-env"], {"LD_LIBRARY_PATH": "plugins"}, 127),
     (["/search-env"], {"LD_LIBRARY_PATH": "/plugins"}, 0),
@@ -572,12 +597,12 @@ for arguments, environment, status in searches:
     (root / "marker").unlink(missing_ok=True)
 for paths, status in (("plugins", 127), ("/plugins", 0)):
     (root / "etc").mkdir(exist_ok=True)
-    (root / "etc/ld-musl-x86_64.path").write_text(paths)
+    (root / f"etc/ld-musl-{_arch}.path").write_text(paths)
     result = subprocess.run(["/search-env"], env={}, preexec_fn=enter, capture_output=True, timeout=20, check=False)
     assert result.returncode == status, (paths, result.returncode, result.stderr)
     assert (root / "marker").exists() == (status == 0)
     (root / "marker").unlink(missing_ok=True)
-(root / "etc/ld-musl-x86_64.path").unlink()
+(root / f"etc/ld-musl-{_arch}.path").unlink()
 for name in ("rejected-stack.so", "rejected-pltgot-outside.so"):
     result = subprocess.run(["/pie"], env={"LD_PRELOAD": "/usr/lib/" + name},
                             preexec_fn=lambda: enter(compatible), capture_output=True, timeout=20, check=False)
@@ -590,7 +615,7 @@ result = subprocess.run(["/search-relative"], env={}, preexec_fn=lambda: enter(c
 assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr
 (compatible / "marker").unlink()
 (compatible / "etc").mkdir(exist_ok=True)
-(compatible / "etc/ld-musl-x86_64.path").write_text("plugins")
+(compatible / f"etc/ld-musl-{_arch}.path").write_text("plugins")
 result = subprocess.run(["/search-env"], env={}, preexec_fn=lambda: enter(compatible),
                         capture_output=True, timeout=20, check=False)
 assert result.returncode == 0 and (compatible / "marker").exists(), result.stderr

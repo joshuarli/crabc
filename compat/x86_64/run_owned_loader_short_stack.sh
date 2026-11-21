@@ -5,6 +5,9 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+architecture_args=()
+if [ "$arch" = aarch64 ]; then architecture_args=(--architecture aarch64); fi
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys
@@ -22,14 +25,14 @@ readonly expected="$work/expected.stdout"
 
 printf 'owned loader short stack\n' >"$expected"
 
-python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$candidate_product"
+python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${architecture_args[@]}" --output "$candidate_product"
 
 "$candidate_product/bin/crabc-cc-dynamic" --dynamic-pie \
     "$ROOT/compat/x86_64/owned_loader_short_stack.c" -o "$work/candidate"
-/usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie \
-    -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 \
+"$oracle" -fPIE -pie \
+    -Wl,--dynamic-linker,/lib/ld-musl-${arch}.so.1 \
     "$ROOT/compat/x86_64/owned_loader_short_stack.c" -o "$work/oracle"
-/usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie \
+"$oracle" -fPIE -pie \
     "$ROOT/compat/x86_64/owned_loader_short_stack_launcher.c" -o "$work/launcher"
 
 prepare_candidate_root() {
@@ -40,8 +43,8 @@ prepare_candidate_root() {
 prepare_oracle_root() {
     mkdir -p "$oracle_root/lib"
     cp "$work/oracle" "$oracle_root/short-stack"
-    cp /opt/musl-1.2.6/lib/libc.so "$oracle_root/lib/ld-musl-x86_64.so.1"
-    ln -s ld-musl-x86_64.so.1 "$oracle_root/lib/libc.so"
+    cp /opt/musl-1.2.6/lib/libc.so "$oracle_root/lib/ld-musl-${arch}.so.1"
+    ln -s ld-musl-${arch}.so.1 "$oracle_root/lib/libc.so"
 }
 
 run_root() {

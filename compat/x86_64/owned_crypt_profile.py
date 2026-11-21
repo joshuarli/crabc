@@ -25,6 +25,7 @@ import owned_posix_native_dispositions as dispositions
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as products
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-crypt-profile/v1'
@@ -41,8 +42,9 @@ SOURCES = (*dispositions.PROFILE_SOURCES, ABI_SOURCE,
 ENVIRONMENT = {'LC_ALL': 'C', 'PATH': '/usr/bin:/bin', 'SOURCE_DATE_EPOCH': '1', 'TZ': 'UTC'}
 RUNTIME_ENVIRONMENT = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C', 'TZ': 'UTC'}
 MODES = dispositions.DYNAMIC_MODES
-ORACLE_CC = '/usr/local/bin/crabc-x86_64-musl-gcc'
-INTERPRETER = '/lib/ld-crabc-x86_64.so.1'
+ARCH = native_arch()['arch'] if sys.platform.startswith('linux') else 'x86_64'
+ORACLE_CC = f'/usr/local/bin/crabc-{ARCH}-musl-gcc'
+INTERPRETER = f'/lib/ld-crabc-{ARCH}.so.1'
 ABI_FLAGS = ['-std=c11', '-D_GNU_SOURCE', '-DCRABC_X86_CRYPT_CANDIDATE', '-fno-builtin', '-fno-stack-protector']
 VECTOR_FLAGS = ['-std=c11', '-D_GNU_SOURCE', '-fno-builtin', '-fno-stack-protector']
 
@@ -111,7 +113,7 @@ def elf_facts(path):
     require(part(0, 7) == b'\x7fELF\x02\x01\x01', 'crypt artifact is not ELF64 little-endian')
     header = unpack('<HHIQQQIHHHHHH', 16)
     kind, machine, version, _, phoff, shoff, _, ehsize, phsize, phnum, shsize, shnum, _ = header
-    require(machine == 62 and version == 1 and ehsize == 64 and (phnum == 0 or phsize == 56)
+    require(machine == (62 if ARCH == 'x86_64' else 183) and version == 1 and ehsize == 64 and (phnum == 0 or phsize == 56)
             and (shnum == 0 or shsize == 64), 'crypt ELF architecture or header contract differs')
     require(phnum < 65536 and shnum < 65536, 'crypt ELF table count differs')
     def cstring(blob, offset):
@@ -158,7 +160,8 @@ def require_elf(path, linkage):
     require(not facts['textrel'], 'crypt ELF has text relocations')
     if linkage == 'object':
         same(facts['type'], 1, 'crypt installed source object type')
-        require(not any(kind in (10, 11) for kind in facts['relocations']), 'crypt object has absolute 32-bit relocations')
+        absolute_32 = (10, 11) if ARCH == 'x86_64' else (258,)
+        require(not any(kind in absolute_32 for kind in facts['relocations']), 'crypt object has absolute 32-bit relocations')
     elif linkage == 'oracle':
         same([facts['type'], facts['interpreters'], facts['needed']], [2, [], []], 'crypt pinned static oracle ELF')
     else:
@@ -169,12 +172,21 @@ def require_elf(path, linkage):
 
 
 def link_command(reader, obj, binary, mode, linker):
+    if ARCH == 'aarch64':
+        import owned_atomic_addressable_profile as atomic
+        return atomic._link_command(reader, [obj], binary, mode, linker)
     return products._dynamic_link_command(
         Path(reader.recorded(reader.product)), Path(reader.recorded(obj)), Path(reader.recorded(binary)), mode, linker,
     )
 
 
 def collect_link(reader, obj, binary, receipt_path, mode):
+    if ARCH == 'aarch64':
+        import owned_atomic_addressable_profile as atomic
+        tools = native.read_json(reader.leaf / 'profile-tools-before.json')
+        record = atomic._collect_link(reader, [obj], binary, mode, tools)
+        record['object'] = record.pop('objects')[0]
+        return record
     receipt = native.read_json(receipt_path)
     search = receipt_contract.validate(
         receipt, format=native.PRODUCT_FORMAT, label='crypt sealed link receipt', fail=lambda message: require(False, message)
@@ -318,7 +330,7 @@ def extend(root, work, product):
     vectors = work / 'vectors'
     vectors.mkdir()
     (vectors / 'observer.c').write_bytes(generated_observer(root))
-    reader = native.Reader(work, str(root), product, root)
+    reader = profile_reader(work, str(root), product, root)
     commands = vector_commands(reader, live_tools(product)['compiler']['path'])
     try:
         for label in ('dependencies', 'compile', 'oracle-link'):
@@ -332,7 +344,10 @@ def extend(root, work, product):
             binary = vectors / ('dynamic-'+mode+'-consumer')
             command = [str(product/'bin/crabc-cc-dynamic'),'--dynamic-'+mode,str(vectors/'workload.o'),'-o',str(binary)]
             run_command(root, work, 'vector-link-'+mode, command, ENVIRONMENT)
-            products.validate_link(product, vectors/'workload.o', binary, Path(str(binary)+'.crabc-link.json'), mode)
+            if ARCH == 'aarch64':
+                aarch64_link_identity(root, product, vectors/'workload.o', binary, Path(str(binary)+'.crabc-link.json'), mode)
+            else:
+                products.validate_link(product, vectors/'workload.o', binary, Path(str(binary)+'.crabc-link.json'), mode)
             execution = vectors / ('dynamic-'+mode+'-root')
             shutil.copytree(product, execution, symlinks=True)
             shutil.copyfile(binary, execution/'consumer')
@@ -369,7 +384,20 @@ def _reader(root, work, product=None):
     if product is not None:
         same(str(selected), str(family.physical(root, product)), 'crypt companion selected product')
     products._validate_dynamic_product(selected)
-    return native.Reader(work, request['source_mount'], selected, root)
+    return profile_reader(work, request['source_mount'], selected, root)
+
+
+def profile_reader(work, mount, product, root):
+    if ARCH == 'aarch64':
+        import owned_atomic_addressable_profile as atomic
+        return atomic.Aarch64Reader(work, mount, product, root)
+    return native.Reader(work, mount, product, root)
+
+
+def aarch64_link_identity(root, product, obj, binary, receipt_path, mode, *, relative_output=True):
+    # The shared reader reconstructs the input roster and link plan independently
+    # and enforces the selected product's static or dynamic profile.
+    return products.validate_link(Path(product), Path(obj), Path(binary), Path(receipt_path), mode)
 
 
 def collect_command(reader, label, command, *, raw_stdout=None, environment=ENVIRONMENT):
@@ -499,8 +527,8 @@ def collect(root, work, *, product=None):
         same(native.read_json(work/('profile-source-'+phase+'.json')), source, 'crypt source before/after seal')
         same(native.read_json(work/('profile-product-'+phase+'.json')), payload, 'crypt product before/after seal')
         same(native.read_json(work/('profile-tools-'+phase+'.json')), tools, 'crypt tools before/after seal')
-    oracle = native._libc_oracle(reader, {'oracle': {phase:native.read_json(work/('profile-oracle-'+phase+'.json'))
-                                                   for phase in ('before','after')}})
+    phases = {phase:native.read_json(work/('profile-oracle-'+phase+'.json')) for phase in ('before','after')}
+    oracle = native._libc_oracle(reader, {'oracle': phases})
     import run_qualification_manifest as qualification
     for name, item in oracle['files'].items():
         path = work/'profile-oracle'/name
@@ -532,7 +560,7 @@ def collect(root, work, *, product=None):
             linked = collect_link(reader,obj,binary,Path(str(binary)+'.crabc-link.json'),mode)
             same(linked['linker'], tools['linker'], 'crypt unchanged pinned linker')
             if role == 'abi':
-                expected_identity = {'linkage':mode,'product':reader.recorded(product),'product_format':native.PRODUCT_FORMAT,
+                expected_identity = {'linkage':mode,'product':reader.recorded(product),'product_format':('crabc-aarch64-owned-dynamic-sysroot-v1' if ARCH == 'aarch64' else native.PRODUCT_FORMAT),
                     'product_manifest_sha256':native.digest(reader.manifest),'workload_sha256':native.digest(obj),
                     'executable_sha256':native.digest(binary),'receipt_sha256':native.digest(Path(str(binary)+'.crabc-link.json'))}
                 same(native.read_json(work/('dynamic-'+mode+'-link-evidence.json')),expected_identity,'crypt independently recorded product link')

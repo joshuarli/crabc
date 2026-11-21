@@ -23,13 +23,24 @@
 //! This leaf selects no `exp10*`/`pow10*`, `fdim*`, integer-result rounding,
 //! general elementary math, libc.so, loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 fenv-sensitive rounding leaf requires little-endian Linux/x86-64");
 
 // Each musl object below has its own static archive member, as in musl's
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/rint.c` object.
 static_archive_member! { rint_source {
+    // musl 1.2.6 src/math/aarch64/rint.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn rint(x: f64) -> f64 {
+        let result: f64;
+        // SAFETY: FRINTX operates on scalar FP registers without memory access.
+        unsafe { core::arch::asm!("frintx {result:d}, {input:d}", result = out(vreg) result, input = in(vreg) x, options(nostack)); }
+        result
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.rint, "ax", @progbits
@@ -73,6 +84,17 @@ rint:
 
 // Musl's `src/math/rintf.c` object.
 static_archive_member! { rintf_source {
+    // musl 1.2.6 src/math/aarch64/rintf.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn rintf(x: f32) -> f32 {
+        let result: f32;
+        // SAFETY: FRINTX operates on scalar FP registers without memory access.
+        unsafe { core::arch::asm!("frintx {result:s}, {input:s}", result = out(vreg) result, input = in(vreg) x, options(nostack)); }
+        result
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.rintf, "ax", @progbits
@@ -119,6 +141,40 @@ rintf:
 
 // Musl's `src/math/rintl.c` object.
 static_archive_member! { rintl_source {
+    // musl 1.2.6 src/math/rintl.c, LDBL_MANT_DIG == 113; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn rintl(x: f128) -> f128 {
+        unsafe extern "C" { fn feraiseexcept(mask: i32) -> i32; fn fegetround() -> i32; }
+        let bits = x.to_bits();
+        let exponent = (bits >> 112) & 0x7fff;
+        if exponent >= 0x3fff + 112 {
+            return x;
+        }
+        let sign = bits & (1u128 << 127);
+        let magnitude = bits & !(1u128 << 127);
+        if magnitude == 0 { return x; }
+        let (truncated, remainder, half, unit) = if exponent < 0x3fff {
+            (0, magnitude, 0x3ffeu128 << 112, 0x3fffu128 << 112)
+        } else {
+            let shift = (0x3fff + 112 - exponent) as u32;
+            let mask = (1u128 << shift) - 1;
+            (magnitude & !mask, magnitude & mask, 1u128 << (shift - 1), 1u128 << shift)
+        };
+        if remainder == 0 { return x; }
+        unsafe { feraiseexcept(16); }
+
+        let increment = match unsafe { fegetround() } {
+            0 => remainder > half || (remainder == half && truncated & unit != 0),
+            0x400000 => sign == 0,
+            0x800000 => sign != 0,
+            0xc00000 => false,
+            _ => false,
+        };
+        f128::from_bits(sign | if increment { truncated + unit } else { truncated })
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.rintl, "ax", @progbits
@@ -141,6 +197,17 @@ rintl:
 
 // Musl's `src/math/nearbyint.c` object.
 static_archive_member! { nearbyint_source {
+    // musl 1.2.6 src/math/aarch64/nearbyint.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn nearbyint(x: f64) -> f64 {
+        let result: f64;
+        // SAFETY: FRINTI operates on scalar FP registers without memory access.
+        unsafe { core::arch::asm!("frinti {result:d}, {input:d}", result = out(vreg) result, input = in(vreg) x, options(nostack)); }
+        result
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.nearbyint, "ax", @progbits
@@ -177,6 +244,17 @@ nearbyint:
 
 // Musl's `src/math/nearbyintf.c` object.
 static_archive_member! { nearbyintf_source {
+    // musl 1.2.6 src/math/aarch64/nearbyintf.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn nearbyintf(x: f32) -> f32 {
+        let result: f32;
+        // SAFETY: FRINTI operates on scalar FP registers without memory access.
+        unsafe { core::arch::asm!("frinti {result:s}, {input:s}", result = out(vreg) result, input = in(vreg) x, options(nostack)); }
+        result
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.nearbyintf, "ax", @progbits
@@ -216,6 +294,20 @@ nearbyintf:
 
 // Musl's `src/math/nearbyintl.c` object.
 static_archive_member! { nearbyintl_source {
+    // musl 1.2.6 src/math/nearbyintl.c; MIT license.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn nearbyintl(x: f128) -> f128 {
+        unsafe extern "C" { fn fetestexcept(mask: i32) -> i32; fn feclearexcept(mask: i32) -> i32; }
+        let inexact = unsafe { fetestexcept(16) };
+        let result = rintl(x);
+        if inexact == 0 {
+            unsafe { feclearexcept(16); }
+        }
+        result
+    }
+
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .section .text.nearbyintl, "ax", @progbits

@@ -11,7 +11,8 @@ ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$#" -eq 1 ] || { printf 'usage: %s DYNAMIC_SYSROOT\n' "$0" >&2; exit 2; }
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly library="$ROOT/compat/x86_64/general_dynamic_fork_library.c"
 readonly consumer="$ROOT/compat/x86_64/general_dynamic_fork_consumer.c"
 readonly constructor_fork="$ROOT/compat/x86_64/general_dynamic_constructor_fork.c"
@@ -148,7 +149,7 @@ python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" record-execution
 # ordinary musl differential.
 run_interactive() {
     local mode="$1" scenario="$2"
-    python3 -B - "$work" "$mode" "$scenario" <<'PY'
+    python3 -B - "$work" "$mode" "$scenario" "$arch" <<'PY'
 from pathlib import Path
 import os
 import selectors
@@ -173,7 +174,7 @@ for role, entry, consumer in targets:
     elif entry == 'kernel':
         command = ['chroot', str(work / 'execution-root'), consumer, scenario]
     else:
-        command = ['chroot', str(work / 'execution-root'), '/lib/ld-crabc-x86_64.so.1', consumer, scenario]
+        command = ['chroot', str(work / 'execution-root'), f'/lib/ld-crabc-{sys.argv[4]}.so.1', consumer, scenario]
     output, errors, status_path = (work / f'{label}.stdout', work / f'{label}.stderr', work / f'{label}.status')
     raw_output = work / f'{label}.raw.stdout'
     process = None
@@ -276,13 +277,17 @@ for mode in pie non-pie; do
         for entry in kernel direct; do
             command=("/consumer-$mode" "$scenario")
             if [ "$entry" = direct ]; then
-                command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario")
+                if [ "$arch" = x86_64 ]; then
+                    command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario")
+                else
+                    command=(/lib/ld-crabc-${arch}.so.1 "/consumer-$mode" "$scenario")
+                fi
             fi
             run_in_root "$execution_root" "$work/semantic-$mode-$entry-$scenario.stdout" "${command[@]}"
             compare_observation "oracle-$mode-$scenario" "semantic-$mode-$entry-$scenario"
             layout_command=("/consumer-owned-layout-$mode" "$scenario")
             if [ "$entry" = direct ]; then
-                layout_command=(/lib/ld-crabc-x86_64.so.1 "/consumer-owned-layout-$mode" "$scenario")
+                layout_command=(/lib/ld-crabc-${arch}.so.1 "/consumer-owned-layout-$mode" "$scenario")
             fi
             run_in_root "$execution_root" "$work/owned-layout-$mode-$entry-$scenario.stdout" "${layout_command[@]}"
         done
@@ -343,7 +348,7 @@ for mode in pie non-pie; do
     for entry in kernel direct; do
         command=("/constructor-fork-$mode")
         if [ "$entry" = direct ]; then
-            command=(/lib/ld-crabc-x86_64.so.1 "/constructor-fork-$mode")
+            command=(/lib/ld-crabc-${arch}.so.1 "/constructor-fork-$mode")
         fi
         run_in_root "$execution_root" "$work/constructor-fork-$mode-$entry.stdout" "${command[@]}"
         compare_observation "oracle-$mode-constructor-fork" "constructor-fork-$mode-$entry"

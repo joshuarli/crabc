@@ -9,7 +9,7 @@
  * System V AMD64 ABI by value; the Rust source owns its corresponding
  * low-word/high-word `Uint128` representation.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
 #error "this private compiler-helper fixture requires Linux x86-64 LP64"
 #endif
 

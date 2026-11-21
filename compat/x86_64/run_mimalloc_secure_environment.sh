@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ulimit -c 0
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+work="$(mktemp -d "$TMPDIR/mimalloc-secure-environment.XXXXXX")"
+printf 'mimalloc secure environment evidence: %s\n' "$work"
+run_backend() {
+local backend="$1"
+local build_args=()
+[ "$arch" != aarch64 ] || build_args+=(--architecture aarch64)
+[ "$backend" != native-shadow ] || build_args+=(--allocator-backend native-shadow)
+work="$base_work/$backend"
+mkdir -p "$work"
+printf 'backend: %s\n' "$backend"
+python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${build_args[@]}" --output "$work/static-product" >"$work/static-build.json"
+python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${build_args[@]}" --output "$work/dynamic-product" >"$work/dynamic-build.json"
+if readelf --dyn-syms -W "$work/dynamic-product/usr/lib/libc.so" | awk '$8 == "__crabc_allocator_environ" { found=1 } END { exit !found }'; then
+    echo 'allocator environment accessor is exported' >&2
+    result=1
+fi
+cc -O2 "$ROOT/compat/x86_64/mimalloc_secure_environment_start.c" -o "$work/start"
+"$oracle" -static -fno-pie -no-pie -fno-builtin "$ROOT/compat/x86_64/mimalloc_secure_environment_probe.c" -o "$work/oracle"
+"$work/dynamic-product/bin/crabc-cc-dynamic" --dynamic-pie -fno-builtin -c "$ROOT/compat/x86_64/mimalloc_secure_environment_probe.c" -o "$work/probe.o"
+(cd "$work" && "$work/static-product/bin/crabc-cc" -static --link-receipt static-link.json probe.o -o static)
+"$work/dynamic-product/bin/crabc-cc-dynamic" --dynamic-pie "$work/probe.o" -o "$work/dynamic"
+for mode in oracle static dynamic; do
+    root="$work/$mode-root"
+    mkdir -p "$root/work" "$root/lib" "$root/usr/lib"
+    cp "$work/$mode" "$root/work/probe"
+    if [ "$mode" = dynamic ]; then
+        cp "$work/dynamic-product/lib/ld-crabc-${arch}.so.1" "$root/lib/"
+        cp "$work/dynamic-product/usr/lib/libc.so" "$root/usr/lib/"
+    fi
+    for security in secure normal mixed; do
+        if [ "$security" = mixed ] && [ "$backend" = native-shadow ]; then continue; fi
+        status=0
+        if [ "$security" = secure ]; then
+            env -i MIMALLOC_VERBOSE=1 MIMALLOC_SHOW_STATS=1 MIMALLOC_SHOW_ERRORS=1 "$work/start" "$root" secure >"$work/$mode-$security.stdout" 2>"$work/$mode-$security.stderr" || status=$?
+        elif [ "$security" = normal ]; then
+            env -i MIMALLOC_VERBOSE=1 MIMALLOC_SHOW_STATS=1 MIMALLOC_SHOW_ERRORS=1 /usr/sbin/chroot "$root" /work/probe >"$work/$mode-$security.stdout" 2>"$work/$mode-$security.stderr" || status=$?
+        else
+            env -i MiMaLlOc_VeRbOsE=1 MiMaLlOc_ShOw_StAtS=1 MiMaLlOc_ShOw_ErRoRs=1 /usr/sbin/chroot "$root" /work/probe >"$work/$mode-$security.stdout" 2>"$work/$mode-$security.stderr" || status=$?
+        fi
+        bytes=$(wc -c <"$work/$mode-$security.stderr")
+        printf '%s %s: exit=%s stderr_bytes=%s\n' "$mode" "$security" "$status" "$bytes"
+        if [ "$status" -ne 0 ] || [ -s "$work/$mode-$security.stdout" ]; then result=1; fi
+        if [ "$security" = secure ] || [ "$mode" = oracle ]; then
+            if [ "$bytes" -ne 0 ]; then result=1; fi
+        elif [ "$bytes" -eq 0 ] || ! awk '/mimalloc:/ { found=1 } END { exit !found }' "$work/$mode-$security.stderr"; then
+            result=1
+        fi
+    done
+done
+}
+base_work="$work"
+result=0
+run_backend default
+if [ "$arch" = x86_64 ]; then run_backend native-shadow; fi
+if [ "$result" -eq 0 ]; then echo 'mimalloc secure environment: PASS'; else echo 'mimalloc secure environment: FAIL' >&2; fi
+exit "$result"

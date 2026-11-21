@@ -12,11 +12,9 @@
 use core::arch::asm;
 use core::ffi::{c_char, c_int};
 
-use super::errno;
+use super::{errno, raw_syscall};
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
-const SYS_WRITE: usize = 1;
-const SYS_EXIT_GROUP: usize = 231;
 
 type MainFunction = unsafe extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int;
 type LifecycleFunction = unsafe extern "C" fn();
@@ -109,7 +107,7 @@ fn raw_write(bytes: &[u8]) -> isize {
     unsafe {
         asm!(
             "syscall",
-            inlateout("rax") SYS_WRITE => result,
+            inlateout("rax") raw_syscall::SYS_WRITE as usize => result,
             in("rdi") 1usize,
             in("rsi") bytes.as_ptr(),
             in("rdx") bytes.len(),
@@ -126,7 +124,7 @@ fn exit_group(status: c_int) -> ! {
     unsafe {
         asm!(
             "syscall",
-            in("rax") SYS_EXIT_GROUP,
+            in("rax") raw_syscall::SYS_EXIT_GROUP as usize,
             in("rdi") status as usize,
             options(noreturn, nostack),
         );

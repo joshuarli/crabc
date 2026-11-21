@@ -11,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -77,6 +78,56 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         output = self.root / name
         combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
         return output
+
+    def test_arm64_composition_binds_sources_and_restores_loader_hard_link(self):
+        loader = self.dynamic / "lib/ld-crabc-aarch64.so.1"
+        (self.dynamic / "lib/ld-musl-x86_64.so.1").unlink()
+        (self.dynamic / "lib/ld-crabc-x86_64.so.1").unlink()
+        loader.write_bytes((self.dynamic / "usr/lib/libc.so").read_bytes())
+        loader.chmod(0o755)
+        (self.dynamic / "lib/ld-musl-aarch64.so.1").symlink_to("ld-crabc-aarch64.so.1")
+        (self.dynamic / "lib/libc.musl-aarch64.so.1").symlink_to("../usr/lib/libc.so")
+        state_path = self.dynamic / "share/crabc/dynamic-product-state.json"
+        state = json.loads(state_path.read_text())
+        state.update(allocator_backend="accepted-c", allocator_lifecycle_test_audit=False)
+        state_path.write_text(json.dumps(state))
+        formats = {"static": "crabc-aarch64-owned-static-sysroot-v1",
+                   "dynamic": "crabc-aarch64-owned-dynamic-sysroot-v1"}
+        for name, root in (("static", self.static), ("dynamic", self.dynamic)):
+            manifest_path = root / "share/crabc/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            files = {path: value[0] for path, value in combined.tree(root)[0].items()
+                     if path != "share/crabc/manifest.json"}
+            manifest.update(format=formats[name], target="aarch64-unknown-linux-musl", build_profile="release")
+            if name == "static":
+                manifest["installed"] = {"files": files, "sealed_static_driver": "bin/crabc-cc"}
+                manifest["sealed_static_driver"] = {"format": "crabc-aarch64-sealed-static-driver-v1",
+                    "path": "bin/crabc-cc", "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
+                    "modes": combined.NativeRuntimeProfile.COMPATIBILITY.static_modes}
+                manifest["allocator_backend"] = "accepted-c"
+                manifest["allocator_lifecycle_test_audit"] = False
+            else:
+                manifest["files"] = files
+                manifest["symlinks"] = combined.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture("aarch64")
+            manifest_path.write_text(json.dumps(manifest))
+        with mock.patch.object(combined, "ARCH", {"arch": "aarch64"}), \
+                mock.patch.object(combined, "FORMAT", "crabc-aarch64-owned-sysroot-v1"), \
+                mock.patch.object(combined, "TARGET", "aarch64-unknown-linux-musl"), \
+                mock.patch.object(combined, "PRODUCT_FORMATS", formats):
+            output = self.root / "combined-arm"
+            record = combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
+            self.assertTrue(os.path.samefile(output / "lib/ld-crabc-aarch64.so.1", output / "usr/lib/libc.so"))
+            combined.validate(output)
+            import crabc_cc_static
+            files, links = crabc_cc_static.combined_manifest_payload(output, record, architecture="aarch64")
+            self.assertEqual(files, record["files"])
+            self.assertEqual(links, combined.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture("aarch64"))
+            state = output / record["products"]["dynamic"]["placements"]["share/crabc/dynamic-product-state.json"]
+            changed = json.loads(state.read_text())
+            changed["source_sha256"] = "f" * 64
+            state.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(crabc_cc_static.DriverError, "product state differs"):
+                crabc_cc_static.combined_manifest_payload(output, record, architecture="aarch64")
 
     def test_one_tree_owns_every_mode_input_once(self):
         output = self.compose()

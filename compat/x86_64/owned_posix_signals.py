@@ -16,7 +16,9 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "compat/x86_64"
 CONTRACT = HERE / "owned-posix-signals.toml"
-ORACLE = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+from native_arch import native_arch
+ARCHITECTURE = native_arch()
+ORACLE = Path(ARCHITECTURE["oracle"])
 REQUIRED_SCENARIOS = ("sets", "initial-handler-mask", "threaded-handler-mask", "actions-masks", "queue-delivery", "suspend-delivery",
                       "sigpause-cancellation", "sigsuspend-cancellation", "interrupt-bookkeeping",
                       "alternate-stack", "alternate-minimum", "signalfd", "waits")
@@ -87,6 +89,11 @@ def same_observation(reference, candidate):
 
 
 def compile_workload(product, work):
+    if ARCHITECTURE["arch"] == "aarch64":
+        compiler = compiler_contract.compiler()
+        expected = product_evidence.source_native_image_tool_record("/usr/bin/gcc")
+        if {"path": compiler, "sha256": digest(compiler)} != expected:
+            raise ValueError("signal compiler differs from source image manifest")
     source = HERE / "owned_posix_signals_probe.c"
     output = work / "workload.o"
     dependencies = work / "workload.d"
@@ -217,7 +224,7 @@ def run(arguments):
             links.append(audit_link(executable, Path(str(executable) + ".crabc-link.json"), workload, product, mode))
             shutil.copy2(executable, execution_root / executable.name)
             candidates.append((f"{mode}-kernel", ["/" + executable.name]))
-            candidates.append((f"{mode}-direct", ["/lib/ld-crabc-x86_64.so.1", "/" + executable.name]))
+            candidates.append((f"{mode}-direct", [f"/lib/ld-crabc-{ARCHITECTURE['arch']}.so.1", "/" + executable.name]))
         for mode, invocation in candidates:
             for scenario in scenarios:
                 output = work / f"{mode}-{scenario}"

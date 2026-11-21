@@ -25,6 +25,7 @@ RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_libc_owned_inverse_trig.sh"
 
 
 def load_generator():
+    sys.path.insert(0, str(GENERATOR_PATH.parent))
     spec = importlib.util.spec_from_file_location("owned_inverse_trig_generator", GENERATOR_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

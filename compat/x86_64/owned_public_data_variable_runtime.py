@@ -32,7 +32,7 @@ import public_data_ordinary_link_evidence as ordinary_link
 import header_declaration_inventory
 import owned_errno_storage_lifecycle
 import owned_calendar_component_receipt as calendar_receipt
-import core_image
+from native_arch import native_arch
 CONTRACT_PATH = MODULE_DIR / 'owned_public_data_variable_runtime.toml'
 SCHEMA = 'crabc.x86_64-owned-public-data-variable-runtime/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-owned-public-data-variable-runtime-contract/v1'
@@ -41,7 +41,8 @@ TARGET = 'x86_64-unknown-linux-musl'
 PINNED_MUSL_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
 STATUS = 'component-verified'
 IMAGE_ENV = 'CRABC_PUBLIC_DATA_VARIABLE_RUNTIME_IMAGE_ID'
-IMAGE = core_image.CORE_IMAGE_REFERENCE
+NATIVE = native_arch()
+IMAGE = 'crabc-core-evidence@' + NATIVE['image']
 COMMAND_TIMEOUT_SECONDS = 45
 GROUPS = (
     ('immutable-network-data', ('_ns_flagdata', 'in6addr_any', 'in6addr_loopback')),
@@ -592,11 +593,11 @@ def _validate_execution_root(*, receipt_root: Path, root: Path, scenario: Mappin
                                          'retained oracle runtime')
         expected.update({
             'lib': {'kind': 'directory', 'mode': 0o755},
-            'lib/ld-musl-x86_64.so.1': {
+            ordinary_link.ORACLE_EXECUTION_INTERPRETER: {
                 'kind': 'file', 'mode': ordinary_link.ORACLE_EXECUTION_INTERPRETER_MODE,
                 'size': runtime['size'], 'sha256': runtime['sha256'],
             },
-            'lib/libc.so': {'kind': 'symlink', 'mode': 0o777, 'target': 'ld-musl-x86_64.so.1'},
+            'lib/libc.so': {'kind': 'symlink', 'mode': 0o777, 'target': Path(ordinary_link.ORACLE_LOADER).name},
         })
     else:
         require(mode in {'static', 'static-pie'} and dynamic_product is None,
@@ -803,7 +804,7 @@ class Collector:
                 _dynamic_root_setup(root, self.dynamic_product, consumer, scenario['fixture_directories'])
             self.executions[identifier + '/' + cell['id']] = self._run_one_root(
                 identifier + '-' + cell['id'] + '-run', root,
-                ([ '/lib/ld-crabc-x86_64.so.1', *scenario['candidate_argv'] ]
+                ([ ordinary_link.CANDIDATE_LOADER, *scenario['candidate_argv'] ]
                  if cell['route'] == 'direct-interpreter' else scenario['candidate_argv']), expected,
             )
 
@@ -959,7 +960,7 @@ def _validate_commands(receipt_root: Path, records: object, *, origin_output: Pa
                 cell_name = label[len(identifier) + 1:-len('-run')]
                 cell = next(cell for cell in scenario['candidate_cells'] if cell['id'] == cell_name)
                 root = origin_output / 'roots' / identifier / cell_name
-                argv = ((['/lib/ld-crabc-x86_64.so.1', *scenario['candidate_argv']])
+                argv = (([ordinary_link.CANDIDATE_LOADER, *scenario['candidate_argv']])
                         if cell['route'] == 'direct-interpreter' else scenario['candidate_argv'])
                 expected = scenario['expected_stdout']
             require(row['argv'] == [expected_paths['env'], '-i', 'LC_ALL=C', 'TZ=UTC', 'PATH=/usr/bin:/bin',

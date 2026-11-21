@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "x86_64", feature = "alloc"))]
+#![cfg(feature = "alloc")]
 
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +16,8 @@ fn x86_64_consuming_child_wait_keeps_ownership_across_interruption() {
     let selected = signal::Signal::USR2;
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(interruption_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The static handler only writes a lock-free atomic and is valid
@@ -43,7 +45,7 @@ fn x86_64_consuming_child_wait_keeps_ownership_across_interruption() {
         let deadline = Instant::now() + Duration::from_secs(5);
         // Observe the actual wait4 syscall before delivering the signal,
         // rather than relying on a sleep to place the interruption.
-        while !std::fs::read_to_string(&syscall_path).unwrap().starts_with("61 ") {
+        while !std::fs::read_to_string(&syscall_path).unwrap().starts_with(if cfg!(target_arch = "aarch64") { "260 " } else { "61 " }) {
             assert!(Instant::now() < deadline, "waiter did not enter wait4");
             std::thread::yield_now();
         }

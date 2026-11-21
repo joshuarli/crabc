@@ -4,6 +4,7 @@
 
 use crabc_rs::param;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -22,6 +23,7 @@ pub extern "C" fn crabc_rs_param_auxv_direct_probe() -> i32 {
     if param::linux_minsigstksz() == 0 {
         return 3;
     }
+    #[cfg(target_arch = "aarch64")]
     if param::linux_execfn().to_bytes().is_empty() {
         return 4;
     }

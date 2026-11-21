@@ -45,7 +45,10 @@
 //! the fenv-sensitive functions, special or complex math, general libm/libc.so,
 //! CRT/TLS lifecycle, loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 static cosh leaf requires little-endian Linux/x86-64");
 
+#[cfg(target_arch = "x86_64")]
 musl_object_assembly!("math_cosh_musl_x86_64");
+#[cfg(target_arch = "aarch64")]
+musl_object_assembly!("math_cosh_musl_aarch64");

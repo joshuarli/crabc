@@ -1,10 +1,6 @@
 #![no_std]
 #![cfg_attr(not(test), no_main)]
 #![cfg_attr(feature = "x86_64-owned-dynamic-runtime", feature(linkage))]
-#![cfg_attr(
-    all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
-    feature(linkage)
-)]
 
 //! Linux dynamic linker for AArch64 and x86-64.
 
@@ -13,27 +9,21 @@
 // graph or one initial TLS generation retained by the loader.
 #[cfg(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little",
     feature = "x86_64-owned-dynamic-runtime"
 ))]
 #[path = "x86_64_initial_graph.rs"]
 mod x86_64_initial_graph;
 
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-mod aarch64;
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))]
-mod loader;
-
 #[cfg(not(any(
-    all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
     all(
         target_os = "linux",
-        target_arch = "x86_64",
+        any(target_arch = "x86_64", target_arch = "aarch64"),
         target_endian = "little",
         feature = "x86_64-owned-dynamic-runtime"
     )
 )))]
 compile_error!(
-    "crabc-ldso supports Linux/AArch64 little-endian; the x86-64 root requires --features x86_64-owned-dynamic-runtime"
+    "crabc-ldso requires Linux little-endian x86-64 or AArch64 and --features x86_64-owned-dynamic-runtime"
 );

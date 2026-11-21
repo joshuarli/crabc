@@ -16,6 +16,14 @@ crabc_x86_64_signal_legacy_aliases_thread_pointer:
     .globl _start
     .type _start,@function
 _start:
+#if defined(__aarch64__)
+    adrp x0, crabc_x86_64_signal_legacy_aliases_initial_tls
+    add x0, x0, :lo12:crabc_x86_64_signal_legacy_aliases_initial_tls
+    msr tpidr_el0, x0
+    bl crabc_x86_64_signal_legacy_aliases_probe
+    mov x8, #93
+    svc #0
+#else
     xor %ebp, %ebp
 
     /* arch_prctl(ARCH_SET_FS, thread_pointer) = syscall 158. */
@@ -38,6 +46,7 @@ _start:
     mov $127, %edi
     mov $60, %eax
     syscall
+#endif
     .size _start, .-_start
 
     .section .note.GNU-stack,"",@progbits

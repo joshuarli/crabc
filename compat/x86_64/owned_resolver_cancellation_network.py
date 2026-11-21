@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
+NATIVE = native_arch()
 APIS = ("query", "send", "classic")
 SCENARIOS = ("network-udp-wait", "network-tcp-wait",
              "network-retry-timeout", "network-failover")
@@ -42,7 +44,7 @@ def main() -> None:
     if options.dynamic:
         for mode in ("dynamic-pie", "dynamic-non-pie"):
             entries += [(mode + "-kernel", ["/" + mode]),
-                        (mode + "-direct", ["/lib/ld-crabc-x86_64.so.1", "/" + mode])]
+                        (mode + "-direct", [f"/lib/ld-crabc-{NATIVE['arch']}.so.1", "/" + mode])]
     oracle = {}
     observations = []
     differences = []

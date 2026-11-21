@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::MaybeUninit;
 use std::process::Command;
@@ -93,6 +92,7 @@ fn set_child_groups(groups: &[u32]) {
     // SAFETY: Linux x86-64 setgroups reads exactly this live u32 slice. This
     // fixture runs only in the isolated child, so credential changes cannot
     // affect the test runner or its other tests.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -101,6 +101,17 @@ fn set_child_groups(groups: &[u32]) {
             in("rsi") groups.as_ptr(),
             lateout("rcx") _,
             lateout("r11") _,
+            options(nostack),
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: The isolated child passes a live group slice to Linux setgroups.
+    unsafe {
+        core::arch::asm!(
+            "svc 0",
+            in("x8") 159usize,
+            inlateout("x0") groups.len() => result,
+            in("x1") groups.as_ptr(),
             options(nostack),
         );
     }

@@ -34,10 +34,14 @@ from typing import Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import native_build_tools
 from compat.x86_64 import owned_dynamic_receipt
+from compat.x86_64.native_arch import native_arch
 
 
-TARGET = "x86_64-unknown-linux-musl"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+ARCH = native_arch()["arch"]
+TARGET = native_arch()["target_triple"]
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+ELF_MACHINE = b"\x3e\x00" if ARCH == "x86_64" else b"\xb7\x00"
+ELF_DESCRIPTION = "x86-64" if ARCH == "x86_64" else "aarch64"
 STOCK_RUST_UNWIND_ARCHIVE = re.compile(r"libunwind-[0-9a-f]+\.rlib\Z")
 COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-[0-9a-f]+\.rlib\Z")
 SOURCE_BUILT_COMPILER_BUILTINS_ARCHIVE = re.compile(r"libcompiler_builtins-([0-9a-f]{16})\.rlib\Z")
@@ -48,6 +52,8 @@ CANONICAL_FLAGS = frozenset({
     "-Wl,--eh-frame-hdr", "-Wl,-z,noexecstack", "-Wl,--gc-sections",
     "-Wl,-z,relro,-z,now", "-Wl,-O1", "-Wl,--strip-debug",
 })
+if ARCH == "aarch64":
+    CANONICAL_FLAGS = CANONICAL_FLAGS | {"-Wl,--fix-cortex-a53-843419"}
 METADATA_MEMBERS = frozenset({"lib.rmeta", "lib.rmeta-link"})
 RUST_CDYLIB_EXPORTS = (
     "crabc_owned_cleanup_dso",
@@ -468,7 +474,7 @@ def parse_arguments(
                 output = confined_output(value, application_root)
             else:
                 search_paths.append(confined(value, search_roots, "Rust search path", directory=True))
-        elif argument in {"-pie", "-no-pie", "-shared"}:
+        elif argument in {"-pie", "-no-pie", "-shared"} or (ARCH == "aarch64" and argument == "-static-pie"):
             if rust_mode is not None:
                 raise LinkError("duplicate or conflicting Rust executable mode")
             rust_mode = argument.removeprefix("-")
@@ -531,7 +537,7 @@ def parse_arguments(
     if compiler_builtins is None:
         raise LinkError("missing exact source-built Rust compiler-builtins archive" if source_built else
                         "missing exact Rust compiler-builtins archive")
-    if "-lc" not in native_requests or not set(native_requests) & {"-lgcc", "-lgcc_s"}:
+    if "-lc" not in native_requests or not set(native_requests) & ({"-lgcc", "-lgcc_s", "-lunwind"} if ARCH == "aarch64" else {"-lgcc", "-lgcc_s"}):
         raise LinkError("missing Rust libc or libgcc request")
     if (shared_soname is not None or version_script is not None) and rust_mode != "shared":
         raise LinkError("Rust shared-object option used for a non-shared link")
@@ -746,10 +752,9 @@ def _product_inputs(root: Path, mode: str, *, static_pie: bool = False) -> list[
             library / ("rcrt1.o" if static_pie else "crt1.o"), library / "crti.o", library / "libc.a",
             library / "libcrabc-builtins.a", library / "crtn.o",
         ]
-    return [
-        library / "Scrt1.o", library / "crti.o", library / "crabc-dynamic-attach.o",
-        library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o",
-    ]
+    return [library / "Scrt1.o", library / "crti.o",
+            *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" else []),
+            library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o"]
 
 
 def link_command(
@@ -781,7 +786,7 @@ def link_command(
             "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
             *( ["--version-script", str(version_script)] if version_script is not None else [] ),
             "--trace", "-o", str(output), str(runtime[1]), *map(str, objects), *rust_inputs,
-            str(runtime[3]), str(runtime[4]), str(runtime[5]),
+            *map(str, runtime[-3:]),
         ]
     if rust_mode not in {"executable", "pie", "no-pie"}:
         raise LinkError(f"unsupported Rust link mode: {rust_mode}")
@@ -797,8 +802,8 @@ def link_command(
         "--allow-shlib-undefined", "-z", "text", "-z", "noexecstack", "-z", "relro", "-z", "now",
         *owned_dynamic_receipt.EXECUTABLE_WEAK_IMPORT_FLAGS,
         "--dynamic-linker", INTERPRETER, *( ["--export-dynamic"] if export_dynamic else [] ),
-        "--trace", "-o", str(output), str(runtime[0]), str(runtime[1]), str(runtime[2]),
-        *map(str, objects), *rust_inputs, str(runtime[3]), str(runtime[4]), str(runtime[5]),
+        "--trace", "-o", str(output), *map(str, runtime[:-3]),
+        *map(str, objects), *rust_inputs, *map(str, runtime[-3:]),
     ]
 
 
@@ -893,6 +898,7 @@ def parse_cargo_arguments(
     compiler_builtins: Path | None = None
     output: Path | None = None
     rust_mode: str | None = None
+    rustc_static: str | None = None
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -909,8 +915,15 @@ def parse_cargo_arguments(
                 output = confined_output(value, cargo_profile_root / "build")
             else:
                 search_paths.append(confined(value, [cargo_profile_root, stock_root], "Rust search path", directory=True))
+        elif (ARCH == "aarch64" and argument == "-static" and rust_mode is None and rustc_static is None
+              and index < len(arguments) and arguments[index] == "-no-pie"):
+            # The pinned aarch64-unknown-linux-musl target spells crt-static
+            # executables `-static -no-pie`; the consumer gate requests the
+            # owned static-PIE link with an explicit trailing `-static-pie`.
+            index += 1
+            rustc_static = "static"
         elif argument in {"-pie", "-static-pie"}:
-            if rust_mode is not None:
+            if rust_mode is not None or (rustc_static is not None and argument != "-static-pie"):
                 raise LinkError("duplicate or conflicting Rust executable mode")
             rust_mode = argument.removeprefix("-")
         elif argument.startswith("-Wl,-plugin-opt="):
@@ -942,6 +955,8 @@ def parse_cargo_arguments(
             objects.append(path)
         else:
             raise LinkError(f"unrecognized Rust link argument: {argument}")
+    if rustc_static is not None and rust_mode != "static-pie":
+        raise LinkError("rustc static executable spelling lacks the requested static-PIE link")
     if output is None or rust_mode is None or not objects:
         raise LinkError("expected output, Rust executable mode, and Rust objects")
     # A no-std consumer may request no native library at all; the product's
@@ -968,9 +983,10 @@ def _cargo_input_kind(path: Path) -> str:
     header = path.read_bytes()[:20]
     if header[:4] == BITCODE_MAGIC:
         return "llvm-bitcode"
-    if header[:4] == b"\x7fELF" and header[18:20] == b"\x3e\x00":
-        return "elf-x86_64"
-    raise LinkError(f"Cargo Rust object is neither x86-64 ELF nor LLVM bitcode: {path}")
+    if (header[:4] == b"\x7fELF" and header[18:20] == ELF_MACHINE
+            and (ARCH != "aarch64" or header[16:18] == b"\x01\x00")):
+        return f"elf-{ARCH}"
+    raise LinkError(f"Cargo Rust object is neither {ELF_DESCRIPTION} ELF nor LLVM bitcode: {path}")
 
 
 def lto_materialization_command(materializer: Path, objects: list[Path], archives: list[Path],
@@ -988,8 +1004,8 @@ def materialize_lto(rust_sysroot: Path, objects: list[Path], archives: list[Path
     command = lto_materialization_command(materializer, objects, archives, materialized, plugin_options)
     trace = run(command)
     validate_trace(trace, {*objects, *archives}, frozenset(archives))
-    if _cargo_input_kind(physical_regular(materialized, "materialized Rust LTO object")) != "elf-x86_64":
-        raise LinkError("LTO materializer did not emit native x86-64 ELF")
+    if _cargo_input_kind(physical_regular(materialized, "materialized Rust LTO object")) != f"elf-{ARCH}":
+        raise LinkError(f"LTO materializer did not emit native {ELF_DESCRIPTION} ELF")
     return materialized, {"resolved_materializer": _record_input(materializer), "command": command,
                           "resolved_input_trace": trace, "output": _record_input(materialized)}
 
@@ -1059,6 +1075,8 @@ def link_cargo(arguments: list[str]) -> None:
         linker=linker, root=root, mode=mode, provider=selected_provider, objects=link_objects,
         archives=[*link_archives, *dsos], output=output, export_dynamic=False, rust_mode=str(rust_mode),
     )
+    if ARCH == "aarch64" and "-Wl,--fix-cortex-a53-843419" in arguments:
+        command.insert(1, "--fix-cortex-a53-843419")
     trace = run(command)
     runtime = _product_inputs(root, mode, static_pie=rust_mode == "static-pie")
     validate_trace(trace, {*link_objects, *link_archives, *dsos, *runtime, *([selected_provider] if selected_provider else [])},
@@ -1185,8 +1203,9 @@ def link(arguments: list[str]) -> None:
     assert version_script is None or isinstance(version_script, Path)
     input_records: list[dict[str, object]] = []
     for object_path in objects:
-        if object_path.read_bytes()[:20][18:20] != b"\x3e\x00":
-            raise LinkError(f"Rust application object is not x86-64 ELF: {object_path}")
+        header = object_path.read_bytes()[:20]
+        if header[18:20] != ELF_MACHINE or (ARCH == "aarch64" and header[16:18] != b"\x01\x00"):
+            raise LinkError(f"Rust application object is not {ELF_DESCRIPTION} ELF: {object_path}")
         input_records.append(_record_input(object_path))
     for archive in archives:
         input_records.append(_record_input(archive, members=audit_rust_archive(archive, ar)))
@@ -1217,8 +1236,10 @@ def link(arguments: list[str]) -> None:
         output=output, export_dynamic=bool(parsed["export_dynamic"]), rust_mode=rust_mode,
         version_script=version_script, no_undefined_version=bool(parsed["no_undefined_version"]),
     )
+    if ARCH == "aarch64" and "-Wl,--fix-cortex-a53-843419" in arguments:
+        command.insert(1, "--fix-cortex-a53-843419")
     trace = run(command)
-    runtime = _product_inputs(root, mode)
+    runtime = _product_inputs(root, mode, static_pie=rust_mode == "static-pie")
     validate_trace(trace, {*objects, *archives, *runtime, *( [provider] if provider is not None else [] )})
     dynamic, segments = _elf_facts(output, mode, rust_mode)
     if rust_cdylib_export_script is not None:

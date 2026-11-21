@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::ffi::CStr;
 
@@ -479,7 +478,7 @@ fn x86_64_read_and_readv_expose_eintr_without_retry_or_initializing_storage() {
     use core::sync::atomic::Ordering;
     use crabc_rs::signal::{self, SigAction, SigActionFlags, SigHandler, Signal};
 
-    let action = SigAction::new(SigHandler::Simple(io_signal_handler), SigActionFlags::empty());
+    let action = SigAction::new(SigHandler::Simple(io_signal_handler), #[cfg(target_arch = "aarch64")] signal::SignalSet::EMPTY, SigActionFlags::empty());
     let mut original_mask = 0_u64;
     // SAFETY: The static handler only stores a lock-free atomic flag. It
     // remains installed through both blocking calls and their helper joins.
@@ -502,7 +501,10 @@ fn x86_64_read_and_readv_expose_eintr_without_retry_or_initializing_storage() {
     for vectored in [false, true] {
         let (reader, writer) = pipe::pipe().expect("blocking interruption pipe");
         let descriptor = reader.as_raw_fd();
+        #[cfg(target_arch = "x86_64")]
         let expected_syscall = if vectored { 19 } else { 0 };
+        #[cfg(target_arch = "aarch64")]
+        let expected_syscall = if vectored { 65 } else { 63 };
         IO_SIGNAL_SEEN.store(false, Ordering::Relaxed);
         let returned = std::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
         let observer_returned = returned.clone();
@@ -518,10 +520,16 @@ fn x86_64_read_and_readv_expose_eintr_without_retry_or_initializing_storage() {
                     let result: isize;
                     // SAFETY: Linux/x86-64 tgkill=234 targets the still-live
                     // blocked test thread; no user pointers cross this syscall.
+                    #[cfg(target_arch = "x86_64")]
                     unsafe {
                         core::arch::asm!("syscall", inlateout("rax") 234_isize => result,
                             in("rdi") pid, in("rsi") tid, in("rdx") Signal::USR1.as_raw(),
                             lateout("rcx") _, lateout("r11") _, options(nostack));
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    unsafe {
+                        core::arch::asm!("svc 0", in("x8") 131usize, inlateout("x0") pid as isize => result,
+                            in("x1") tid, in("x2") Signal::USR1.as_raw(), options(nostack));
                     }
                     if result != 0 {
                         return Err(format!("targeted signal syscall returned {result}"));

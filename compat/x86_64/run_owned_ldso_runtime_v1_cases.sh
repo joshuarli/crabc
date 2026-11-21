@@ -3,6 +3,7 @@
 set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
 readonly PRODUCT="${1:?usage: $0 DYNAMIC-SYSROOT}"
 readonly CONSUMER_SOURCE_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/loader_tls_runtime_v1_source_root.rs"
 readonly MAIN="$ROOT_DIR/compat/x86_64/loader_libc_general_tls_runtime_v1_main.c"
@@ -15,7 +16,7 @@ readonly STRONG_MAIN_RECORD="$ROOT_DIR/compat/x86_64/loader_libc_general_tls_run
 readonly WEAK_DSO_RECORD="$ROOT_DIR/compat/x86_64/loader_libc_general_tls_runtime_v1_weak_dso_record.c"
 
 fail() { printf 'ERROR: RuntimeV1 product: %s\n' "$*" >&2; exit 1; }
-if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != "$arch" ]; then
     printf '%s\n' 'ERROR: RuntimeV1 evidence requires native Linux/x86-64' >&2
     exit 2
 fi
@@ -29,7 +30,7 @@ root="$work/root"
 fixtures="$root/fixtures"
 cp -a "$PRODUCT" "$root"
 mkdir -p "$fixtures"
-loader="$root/lib/ld-crabc-x86_64.so.1"
+loader="$root/lib/ld-crabc-${arch}.so.1"
 record_name="__crabc_x86_64_loader_tls_runtime_v1"
 
 python3 - "$loader" "$record_name" <<'PY'
@@ -128,17 +129,20 @@ PY
 
 left_dir="$fixtures/left"; right_dir="$fixtures/right"; shared_dir="$fixtures/shared"
 mkdir "$left_dir" "$right_dir" "$shared_dir"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+tls_dialect=(-mtls-dialect=gnu)
+attachment=("$PRODUCT/usr/lib/crabc-dynamic-attach.o")
+if [ "$arch" = aarch64 ]; then tls_dialect=(-mtls-dialect=trad); attachment=(); fi
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libshared.so "$SHARED" -o "$shared_dir/libshared.so"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libleft.so -Wl,-rpath,/fixtures/shared \
     "$LEFT" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so -o "$left_dir/libleft.so"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libright.so -Wl,-rpath,/fixtures/shared \
     "$RIGHT" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so -o "$right_dir/libright.so"
 cc -fPIC -fno-stack-protector -ffreestanding -fno-asynchronous-unwind-tables \
     -c "$STRONG_MAIN_RECORD" -o "$work/strong-main-record.o"
-cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic "${tls_dialect[@]}" \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libleft.so -Wl,-rpath,/fixtures/shared \
     "$LEFT" "$WEAK_DSO_RECORD" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so \
     -o "$work/libleft-weak-record.so"
@@ -160,14 +164,14 @@ build_main_crt() {
     [ "$mode" = reject ] && defines+=(-DCRABC_GENERAL_RUNTIME_V1_REJECT)
     [ -n "$extra" ] && extra_args=("$extra")
     cc -nostdlib -fPIE -pie -fno-stack-protector -ffreestanding \
-        -fno-asynchronous-unwind-tables -ftls-model=global-dynamic -mtls-dialect=gnu \
+        -fno-asynchronous-unwind-tables -ftls-model=global-dynamic "${tls_dialect[@]}" \
         -Wl,--hash-style=sysv -Wl,-z,now -Wl,--allow-shlib-undefined \
         -Wl,--unresolved-symbols=ignore-all -Wl,--export-dynamic \
-        -Wl,--dynamic-linker,/lib/ld-crabc-x86_64.so.1 \
+        -Wl,--dynamic-linker,/lib/ld-crabc-${arch}.so.1 \
         -Wl,-rpath,/fixtures/left:/fixtures/right:/fixtures/shared \
         -Wl,-rpath-link,"$left_dir" -Wl,-rpath-link,"$right_dir" -Wl,-rpath-link,"$shared_dir" \
         "${defines[@]}" "$PRODUCT/usr/lib/Scrt1.o" "$PRODUCT/usr/lib/crti.o" \
-        "$MAIN" "${extra_args[@]}" "$PRODUCT/usr/lib/crabc-dynamic-attach.o" \
+        "$MAIN" "${extra_args[@]}" "${attachment[@]}" \
         -L"$PRODUCT/usr/lib" -lc "$PRODUCT/usr/lib/libcrabc-builtins.a" "$PRODUCT/usr/lib/crtn.o" \
         -L"$left_dir" -L"$right_dir" -L"$shared_dir" \
         -Wl,--no-as-needed -l:libleft.so -l:libright.so -l:libshared.so -o "$output"
@@ -181,7 +185,7 @@ if ! readelf -Ws "$fixtures/main-valid" | awk \
     '$5 == "WEAK" && $7 == "UND" && $8 == "__crabc_x86_64_loader_tls_runtime_v1" { found = 1 } END { exit found ? 0 : 1 }'; then
     fail 'consumer lost its exact weak loader record import'
 fi
-if ! readelf -rW "$fixtures/main-valid" | grep -E 'R_X86_64_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1' >/dev/null; then
+if ! readelf -rW "$fixtures/main-valid" | grep -E "R_${arch^^}_GLOB_DAT.*__crabc_x86_64_loader_tls_runtime_v1" >/dev/null; then
     fail 'consumer lacks the checked RuntimeV1 record GOT relocation'
 fi
 for binary in "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so"; do

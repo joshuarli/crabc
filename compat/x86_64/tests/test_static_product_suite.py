@@ -31,7 +31,8 @@ def load_module(name: str, path: Path):
 PRODUCT = load_module("static_product_suite_test", VALIDATOR_PATH)
 PACKAGE = load_module("static_product_suite_package_test", ROOT / "compat/x86_64/owned_static_sysroot_package.py")
 FIXTURES = load_module("static_product_suite_package_fixtures", Path(__file__).with_name("test_owned_static_sysroot_package.py"))
-WORK = "/workspace/.work/x86_64/tmp/crabc-x86-64-owned-static-sysroot.Ab12Cd"
+ARCH = PRODUCT.ARCH["arch"]
+WORK = f"/workspace/.work/{ARCH}/tmp/crabc-x86-64-owned-static-sysroot.Ab12Cd"
 
 
 def sha(data: bytes) -> str:
@@ -120,11 +121,12 @@ class StaticProductSuiteTests(unittest.TestCase):
             PRODUCT.require_product_source(manifests, source)
 
     def test_tree_digest_rows_must_match_every_installed_manifest_byte_claim(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / PRODUCT.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             report = Path(temporary)
-            manifest = {"installed": {"files": {"usr/lib/libc.a": "a" * 64}}}
+            files = {"usr/lib/libc.a": "a" * 64}
+            manifest = {"installed": {"files": files}}
             manifest_path = report / "products/primary/manifest.json"
             manifest_path.parent.mkdir(parents=True)
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -140,7 +142,7 @@ class StaticProductSuiteTests(unittest.TestCase):
                 PRODUCT.validate_tree_manifest(report, "primary", manifest)
 
     def test_reader_replays_retained_archive_against_the_primary_installed_tree(self) -> None:
-        scratch = ROOT / ".work/x86_64/tmp"
+        scratch = ROOT / ".work" / PRODUCT.ARCH["work_name"] / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             report = Path(temporary)
@@ -174,7 +176,8 @@ class StaticProductSuiteTests(unittest.TestCase):
             libc.write_bytes(libc.read_bytes() + b"changed")
             changed_manifest_path = changed / PACKAGE.MANIFEST_RELATIVE_PATH
             changed_manifest = json.loads(changed_manifest_path.read_text())
-            changed_manifest["installed"]["files"]["usr/lib/libc.a"] = sha(libc.read_bytes())
+            changed_files = changed_manifest["installed"]["files"]
+            changed_files["usr/lib/libc.a"] = sha(libc.read_bytes())
             changed_manifest_path.write_text(json.dumps(changed_manifest, sort_keys=True) + "\n")
             foreign = archive_dir / "foreign.tar.xz"
             PACKAGE.create_archive(changed, foreign)
@@ -190,7 +193,7 @@ class StaticProductSuiteTests(unittest.TestCase):
         """Write one well-formed retained case; overrides model defects."""
         entry = "crt1.o" if mode == "static-et-exec" else "rcrt1.o"
         pie = mode == "static-pie"
-        tree = "primary" if product == "primary" else "extracted-tree/crabc-x86_64-owned-static-sysroot"
+        tree = "primary" if product == "primary" else f"extracted-tree/crabc-{ARCH}-owned-static-sysroot"
         lib = f"{WORK}/{tree}/usr/lib"
         consumer = f"{WORK}/{product}-consumer/{case_path}"
         files = {f"usr/lib/{name}": sha(name.encode()) for name in
@@ -207,8 +210,8 @@ class StaticProductSuiteTests(unittest.TestCase):
             trace = ["trace: " + line for line in trace]
         (base / "link.receipt.trace").write_text("\n".join(trace) + "\n", encoding="utf-8")
         link = {
-            "format": "crabc-x86-64-sealed-static-driver-v1",
-            "target": "x86_64-unknown-linux-musl",
+            "format": "crabc-aarch64-sealed-static-driver-v1" if ARCH == "aarch64" else "crabc-x86-64-sealed-static-driver-v1",
+            "target": f"{ARCH}-unknown-linux-musl",
             "output": {"path": "candidate", "sha256": candidate},
             "map": {"path": "link.receipt.map", "sha256": sha(b"map")},
             "trace": {"path": "link.receipt.trace",
@@ -227,7 +230,7 @@ class StaticProductSuiteTests(unittest.TestCase):
         (base / "file-header").write_text(
             "  Type:                              " + ("DYN (Position-Independent Executable file)" if pie
                                                     else "EXEC (Executable file)")
-            + "\n  Machine:                           Advanced Micro Devices X86-64\n", encoding="utf-8")
+            + "\n  Machine:                           " + ("AArch64" if ARCH == "aarch64" else "Advanced Micro Devices X86-64") + "\n", encoding="utf-8")
         (base / "program-headers").write_text(program_headers if program_headers is not None else (
             ("  PHDR           0x000040 0x0000000000000040 0x0000000000000040 0x000230 0x000230 R   0x8\n"
              if pie else "")
@@ -240,7 +243,7 @@ class StaticProductSuiteTests(unittest.TestCase):
             " 0x000000006ffffffb (FLAGS_1)            Flags: PIE\n" if pie
             else "There is no dynamic section in this file.\n", encoding="utf-8")
         (base / "relocations").write_text(relocations if relocations is not None else (
-            "0000000000203ff8  0000000000000008 R_X86_64_RELATIVE                         2011d0\n" if pie
+            ("0000000000203ff8  0000000000000008 " + ("R_AARCH64_RELATIVE" if ARCH == "aarch64" else "R_X86_64_RELATIVE") + " 2011d0\n") if pie
             else "There are no relocations in this file.\n"), encoding="utf-8")
         observed = {"candidate": candidate, "link.receipt.map": sha(b"map"), "symbols": sha(b"symbols")}
         return observed, {"installed": {"files": files}}

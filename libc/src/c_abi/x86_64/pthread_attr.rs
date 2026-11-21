@@ -37,7 +37,7 @@
 //! default attributes from `pthread_setattr_default_np.c`; frozen private
 //! builds retain their explicit-scheduler rejection and fixed defaults.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 pthread attribute leaf requires little-endian Linux/x86-64");
 
 use core::ffi::{c_int, c_void};

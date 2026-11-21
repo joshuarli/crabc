@@ -551,7 +551,12 @@ static void io_errors(const char *scenario) {
     struct hostent h,*hr;struct servent s,*sr;char b[1024];int error=97;
     int code=!strcmp(scenario,"open-errors")?EIO:EACCES;
     if(!strcmp(scenario,"read-errors"))deny(SYS_read,EIO);
-    else {deny(SYS_open,code);deny(SYS_openat,code);}
+    else {
+#ifdef SYS_open
+        deny(SYS_open,code);
+#endif
+        deny(SYS_openat,code);
+    }
     if(!strcmp(scenario,"open-errors")) {
         errno=EDOM;CHECK(gethostbyname_r("alias.test",&h,b,sizeof b,&hr,&error)==EIO&&!hr&&error==NO_RECOVERY&&errno==EIO);
         CHECK(getservbyname_r("alt","tcp",&s,b,sizeof b,&sr)==ENOMEM&&!sr&&errno==EIO);

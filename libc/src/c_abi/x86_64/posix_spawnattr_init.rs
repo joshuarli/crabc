@@ -26,7 +26,7 @@ use core::{
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the x86 POSIX spawn-attribute initializer requires little-endian Linux/x86-64");
@@ -70,6 +70,7 @@ pub unsafe extern "C" fn posix_spawnattr_init(attributes: *mut c_void) -> c_int 
     //
     // SAFETY: the entry contract supplies all 42 aligned u64 words. The inline
     // assembly modifies only those words and declares its scratch registers.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "xor eax, eax",
@@ -84,5 +85,8 @@ pub unsafe extern "C" fn posix_spawnattr_init(attributes: *mut c_void) -> c_int 
             options(nostack),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the caller provides a writable complete attribute record.
+    unsafe { core::ptr::write_bytes(attributes.cast::<u8>(), 0, size_of::<PosixSpawnAttr>()) };
     0
 }

@@ -24,6 +24,10 @@ TAG = "crabc-core-evidence:x86_64"
 STALE = "sha256:" + "2" * 64
 
 
+HOST_MACHINE = subprocess.check_output(["uname", "-m"], text=True).strip()
+
+
+@unittest.skipUnless(HOST_MACHINE in ("x86_64", "amd64"), "x86 image contract")
 class CoreImageDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
@@ -220,6 +224,7 @@ class CoreImageDispatchTests(unittest.TestCase):
                                  "/workspace/.work/x86_64/" + kind + "-output")
 
 
+@unittest.skipUnless(HOST_MACHINE in ("x86_64", "amd64"), "x86 image contract")
 class InstalledRustCheckWorktreeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -265,6 +270,70 @@ class InstalledRustCheckWorktreeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "branch-only.txt\n")
             self.assertEqual(metadata(), before)
+
+
+@unittest.skipUnless(HOST_MACHINE in ("aarch64", "arm64"), "aarch64 image contract")
+class ArmCoreImageDispatchTests(unittest.TestCase):
+    def test_pinned_image_and_help(self) -> None:
+        scratch = ROOT / ".work/aarch64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            directory = Path(temporary)
+            log = directory / "docker.log"
+            docker = directory / "docker"
+            docker.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "a = sys.argv[1:]\n"
+                "with open(os.environ['ARM_DOCKER_LOG'], 'a') as f: f.write(json.dumps(a) + '\\n')\n"
+                "if a[:2] == ['image', 'inspect']:\n"
+                " if os.environ.get('ARM_PIN_MISSING'): print('missing arm pin', file=sys.stderr); sys.exit(1)\n"
+                " if os.environ.get('ARM_INSPECT_ERROR'): print(os.environ['ARM_INSPECT_ERROR'], file=sys.stderr); sys.exit(1)\n"
+                f" print(os.environ.get('ARM_IDENTITY', {'linux/arm64'!r}) if '--format' in a and a[a.index('--format')+1] == '{{{{.Os}}}}/{{{{.Architecture}}}}' else {core_image.AARCH64_CORE_IMAGE_ID!r})\n",
+                encoding="utf-8",
+            )
+            docker.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update(PATH=str(directory) + os.pathsep + environment["PATH"], ARM_DOCKER_LOG=str(log))
+            help_result = subprocess.run([str(ROOT / "scripts/dev-x86_64.sh"), "--help"], cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(help_result.returncode, 0, help_result.stderr)
+            self.assertIn("Usage:", help_result.stdout)
+            self.assertFalse(log.exists())
+            missing_environment = {**environment, "ARM_PIN_MISSING": "1"}
+            for script, args in (("scripts/dev-x86_64.sh", ("core",)), ("scripts/lanes/rust-check.sh", ())):
+                log.unlink(missing_ok=True)
+                missing = subprocess.run([str(ROOT / script), *args], cwd=ROOT, env=missing_environment, capture_output=True, text=True)
+                self.assertNotEqual(missing.returncode, 0)
+                self.assertIn("unavailable" if args else "could not inspect", missing.stderr)
+                self.assertFalse(any(call[0] in ("run", "build") for call in (json.loads(line) for line in log.read_text().splitlines())))
+            for failure in ("permission denied", "daemon unavailable"):
+                log.unlink(missing_ok=True)
+                bad = subprocess.run([str(ROOT / "scripts/lanes/rust-check.sh")], cwd=ROOT, env={**environment, "ARM_INSPECT_ERROR": failure}, capture_output=True, text=True)
+                self.assertEqual(bad.returncode, 1)
+                self.assertIn(failure, bad.stderr)
+                self.assertFalse(any(call[0] in ("run", "build") for call in (json.loads(line) for line in log.read_text().splitlines())))
+            log.unlink(missing_ok=True)
+            bad = subprocess.run([str(ROOT / "scripts/lanes/rust-check.sh")], cwd=ROOT, env={**environment, "ARM_IDENTITY": "linux/amd64"}, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("expected linux/arm64", bad.stderr)
+            self.assertFalse(any(call[0] in ("run", "build") for call in (json.loads(line) for line in log.read_text().splitlines())))
+            log.unlink()
+            result = subprocess.run([str(ROOT / "scripts/dev-x86_64.sh"), "core"], cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            run = next(call for call in calls if call[0] == "run")
+            self.assertIn(core_image.AARCH64_CORE_IMAGE_ID, run)
+            self.assertEqual(run[run.index("--platform") + 1], "linux/arm64")
+            self.assertIn("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-aarch64-mold-gcc", run)
+            log.unlink()
+            result = subprocess.run([str(ROOT / "scripts/dev-x86_64.sh"), "image"], cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "build")
+            self.assertEqual(calls[0][calls[0].index("--platform") + 1], "linux/arm64")
+            self.assertEqual(calls[0][calls[0].index("--tag") + 1], "crabc-core-evidence:aarch64")
+            self.assertEqual(calls[0][calls[0].index("--file") + 1], str(ROOT / "docker/Dockerfile.aarch64"))
 
 
 if __name__ == "__main__":

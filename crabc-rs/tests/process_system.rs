@@ -30,10 +30,6 @@ fn terminal_and_pty_operations_have_typed_linux_contracts() {
     let name = pty::ptsname(&master, Vec::new()).expect("derive slave device name");
     assert!(name.as_bytes().starts_with(b"/dev/pts/"));
 
-    #[cfg(not(target_arch = "x86_64"))]
-    let slave = pty::ioctl_tiocgptpeer(&master, pty::OpenptFlags::RDWR | pty::OpenptFlags::CLOEXEC)
-        .expect("open unlocked PTY slave through the direct ioctl");
-    #[cfg(target_arch = "x86_64")]
     let slave = fs::open(
         name.as_bytes(),
         fs::OFlags::RDWR | fs::OFlags::NOCTTY | fs::OFlags::CLOEXEC,

@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import shlex
@@ -28,6 +29,7 @@ import uuid
 from typing import Any, Iterable, Sequence
 
 import owned_os_test_aio_suspend_source as aio_suspend_source
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "compat/x86_64"
@@ -36,7 +38,8 @@ OS_TEST_TREE = "68fd4eef88d0e52b55c7cc2a73659b1e439d33fe"
 DEFAULT_SUITES = (
     "include", "namespace", "basic", "io", "limits", "malloc", "process", "pty", "signal", "stdio",
 )
-MUSL_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+ARCH = native_arch()["arch"]
+MUSL_COMPILER = native_arch()["oracle"]
 COMPILE_ONLY_SUITES = frozenset({"include", "namespace"})
 # One whole-suite Make bound, used only as a hang guard: os-test's run.sh has no
 # per-case limit. The owned side compiles each case twice, scans dependencies
@@ -734,8 +737,8 @@ def install_execution_wrapper(output: Path, source_root: Path, runtime_root: Pat
     # The frozen helper invokes a nested path from the suite directory, e.g.
     # ``basic/dirent/readdir`` from ``basic``. Do not turn that nested pathname
     # into the process cwd: several tests open suite-relative fixtures.
-    inside = "cd " + shlex.quote("/work/" + suite_directory) + " && exec " + shlex.quote("/lib/ld-crabc-x86_64.so.1") + " " + shlex.quote("/work/" + str(relative))
-    wrapper = "#!/bin/sh\nexec /usr/sbin/chroot " + shlex.quote(str(runtime_root)) + " /control/ld-musl-x86_64.so.1 /control/busybox sh -c " + shlex.quote(inside) + "\n"
+    inside = "cd " + shlex.quote("/work/" + suite_directory) + " && exec " + shlex.quote(f"/lib/ld-crabc-{ARCH}.so.1") + " " + shlex.quote("/work/" + str(relative))
+    wrapper = "#!/bin/sh\nexec /usr/sbin/chroot " + shlex.quote(str(runtime_root)) + f" /control/ld-musl-{ARCH}.so.1 /control/busybox sh -c " + shlex.quote(inside) + "\n"
     output.write_text(wrapper)
     os.chmod(output, 0o755)
     return {"runtime_path": str(mirrored), "runtime_sha256": sha256(mirrored), "host_wrapper": str(output),
@@ -812,6 +815,14 @@ def copied_tree(source: Path, destination: Path, *, discard_git: bool = False, b
     shutil.copytree(source, destination, symlinks=True, ignore=ignored)
     if buildable:
         thaw_tree(destination)
+
+
+def copied_product(source: Path, destination: Path) -> None:
+    if platform.system() == "Linux" and platform.machine() == "aarch64":
+        from run_owned_calendar_component import copy_product
+        copy_product(source, destination)
+    else:
+        copied_tree(source, destination)
 
 
 def make_phases(suite: str, compile_jobs: int) -> tuple[tuple[str, str, int], ...]:
@@ -1027,7 +1038,7 @@ def mount_private_proc(destination: Path, private: dict[str, Any]) -> None:
                            {"private_proc": private})
 
     outside = container_pid_namespace()
-    witness_command = [PRIVATE_PROC_WITNESS_CHROOT, str(destination), "/control/ld-musl-x86_64.so.1",
+    witness_command = [PRIVATE_PROC_WITNESS_CHROOT, str(destination), f"/control/ld-musl-{ARCH}.so.1",
                        "/control/busybox", "readlink", "/proc/self/ns/pid"]
     witness_status, witness_stdout, witness_stderr = run_capture(
         witness_command, {"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
@@ -1178,7 +1189,7 @@ extern char **environ;
 int main(int argc, char **argv)
 {
     char *command[argc + 3];
-    command[0] = \"/control/ld-musl-x86_64.so.1\";
+    command[0] = \"/control/ld-musl-""" + ARCH + """.so.1\";
     command[1] = \"/control/busybox\";
     command[2] = \"sh\";
     for (int index = 1; index < argc; index++)
@@ -1231,7 +1242,7 @@ def install_candidate_shell_launcher(product: Path, destination: Path) -> dict[s
     record["launcher"] = {"path": "/control/candidate-shell-launcher", "sha256": sha256(launcher),
                           "receipt_sha256": sha256(receipt), "candidate_path": "/bin/sh",
                           "candidate_sha256": sha256(installed),
-                          "argv": ["/control/ld-musl-x86_64.so.1", "/control/busybox", "sh", "<original argv[1..]>"]}
+                          "argv": [f"/control/ld-musl-{ARCH}.so.1", "/control/busybox", "sh", "<original argv[1..]>"]}
     return record
 
 
@@ -1264,7 +1275,7 @@ def prepare_compile_product(product: Path, destination: Path, product_roster: li
     for the collector's exact post-run comparison; do not relabel those roles
     merely to make this disposable copy read-only.
     """
-    copied_tree(product, destination)
+    copied_product(product, destination)
     copied_payload = tree_roster(destination)
     difference = roster_difference(product_roster, copied_payload)
     if not roster_matches(product_roster, copied_payload):
@@ -1278,7 +1289,7 @@ def prepare_compile_product(product: Path, destination: Path, product_roster: li
 def prepare_execution_root(product: Path, source: Path, destination: Path, suite: str, private_devpts: bool,
                            product_roster: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the candidate-only root plus an explicitly separate musl shell."""
-    copied_tree(product, destination)
+    copied_product(product, destination)
     restore_roster_modes(destination, product_roster)
     copied_payload = tree_roster(destination)
     copied_difference = roster_difference(product_roster, copied_payload)
@@ -1290,7 +1301,7 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
     # suite, and runtime controls live outside this payload.
     copied_identity = validate_dynamic_product(destination)
     busybox = Path("/bin/busybox")
-    loader = Path("/lib/ld-musl-x86_64.so.1")
+    loader = Path(f"/lib/ld-musl-{ARCH}.so.1")
     if not busybox.is_file() or not loader.is_file():
         raise RunnerError("pinned image lacks BusyBox or its musl control loader")
     control_paths = [destination / "control",
@@ -1306,7 +1317,7 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
     copied_tree(source, destination / "work", discard_git=True)
     (destination / "control").mkdir(exist_ok=True)
     retain_file(busybox, destination / "control/busybox")
-    retain_file(loader, destination / "control/ld-musl-x86_64.so.1")
+    retain_file(loader, destination / f"control/ld-musl-{ARCH}.so.1")
     shell_launcher = install_candidate_shell_launcher(product, destination) if suite == "basic" else None
     install_control_character_devices(destination)
     (destination / "tmp").mkdir(exist_ok=True)
@@ -1333,7 +1344,7 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
                 "shell_launcher": shell_launcher,
                 "busybox": {"path": str(busybox), "sha256": sha256(busybox)},
                 "musl_control_loader": {"path": str(loader), "sha256": sha256(loader)},
-                "candidate_loader_sha256": sha256(destination / "lib/ld-crabc-x86_64.so.1"), "private_devpts": devpts,
+                "candidate_loader_sha256": sha256(destination / f"lib/ld-crabc-{ARCH}.so.1"), "private_devpts": devpts,
                 "private_proc": private_proc}
     except BaseException as error:
         if devpts is not None:
@@ -1531,7 +1542,7 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument("--compile-jobs", type=int, default=8,
                         help="bounded parallel jobs for compile phases; tests always run serially (default: 8)")
     parser.add_argument("--os-test-root", type=Path,
-                        default=ROOT / ".work/x86_64/source-oracles" / f"os-test-{OS_TEST_REVISION}")
+                        default=ROOT / ".work" / ARCH / "source-oracles" / f"os-test-{OS_TEST_REVISION}")
     parser.add_argument("dynamic_sysroot", nargs="?")
     values, remainder = parser.parse_known_args(arguments)
     if values.adapter:

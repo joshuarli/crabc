@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_pthread_mutex_probe.c"
 readonly -a SCENARIOS=(recursive errorcheck timed robust robust-handoff recursive-condition c11 pi pi-condition-lifecycle attributes c11-condition)
 
@@ -21,7 +22,7 @@ fail() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in
-    x86_64|amd64) ;;
+    x86_64|amd64|aarch64|arm64) ;;
     *) fail "refuses emulation on $(uname -m)" ;;
 esac
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -52,7 +53,7 @@ run_case() {
 run_dynamic_direct_case() {
     local root="$1" mode="$2" scenario="$3" output="$4"
     timeout 30 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" \
-        "$root" /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario" >"$output"
+        "$root" "/lib/ld-crabc-$arch.so.1" "/consumer-$mode" "$scenario" >"$output"
 }
 
 "$ORACLE_CC" -std=c11 -pthread -I"$ROOT/include" "$PROBE" -o "$work/oracle"

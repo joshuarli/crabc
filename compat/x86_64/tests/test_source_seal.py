@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import copy
+import importlib.util
 import io
 from pathlib import Path
 import shutil
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -70,6 +73,22 @@ class FixtureCheckout:
 
 
 class ProductDigestTests(unittest.TestCase):
+    def test_native_arm_driver_is_sealed_and_x86_input_set_is_unchanged(self):
+        import native_arch
+        name = "arm_source_seal_fixture"
+        spec = importlib.util.spec_from_file_location(name, ROOT / "compat/x86_64/source_seal.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("aarch64")):
+                spec.loader.exec_module(module)
+            self.assertIn("compat/x86_64/crabc_cc_aarch64_dynamic.py", module.PRODUCT_FILES)
+            self.assertEqual(module.GUARD_SCRATCH, ".work/aarch64/tmp")
+            self.assertEqual("compat/x86_64/crabc_cc_aarch64_dynamic.py" in source_seal.PRODUCT_FILES,
+                             source_seal.ARCH["arch"] == "aarch64")
+        finally:
+            del sys.modules[name]
+
     def setUp(self) -> None:
         self.checkout = FixtureCheckout(self)
         self.root = self.checkout.root
@@ -121,6 +140,37 @@ class ProductDigestTests(unittest.TestCase):
                 with self.assertRaisesRegex(source_seal.SourceSealError, "clean committed source"):
                     source_seal.seal(self.root)
                 self.checkout.commit("clean again")
+
+
+class RetainedEvidenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.checkout = FixtureCheckout(self)
+        self.root = self.checkout.root
+
+    def record(self) -> dict:
+        seal = source_seal.seal(self.root)
+        return {"inputs": {"source": seal, "cohort": {**seal, "clean": True}}, "runs": [{"source": seal}],
+                "family_completion": False}
+
+    def test_a_recollection_after_a_harness_only_commit_matches_its_retained_record(self) -> None:
+        retained = self.record()
+        self.checkout.write("compat/x86_64/harness_only.py", "VALUE = 2\n")
+        self.checkout.commit("harness fix")
+        observed = self.record()
+        self.assertNotEqual(observed, retained)
+        self.assertTrue(source_seal.same_evidence(retained, observed))
+
+    def test_a_product_source_change_or_another_field_change_is_still_a_different_record(self) -> None:
+        retained = self.record()
+        moved = copy.deepcopy(retained)
+        moved["family_completion"] = 0
+        self.assertFalse(source_seal.same_evidence(retained, moved))
+        moved = copy.deepcopy(retained)
+        moved["inputs"]["cohort"]["clean"] = False
+        self.assertFalse(source_seal.same_evidence(retained, moved))
+        self.checkout.write("libc/src/lib.rs", "pub fn changed() {}\n")
+        self.checkout.commit("product change")
+        self.assertFalse(source_seal.same_evidence(retained, self.record()))
 
 
 class GuardTests(unittest.TestCase):

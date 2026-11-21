@@ -41,9 +41,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_static_sysroot_package as shared_package
 from native_runtime_profile import NativeRuntimeProfile
+from native_arch import native_arch
 
-FORMAT = "crabc-x86-64-owned-sysroot-v1"
-TARGET = "x86_64-unknown-linux-musl"
+ARCH = native_arch()
+FORMAT = "crabc-aarch64-owned-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-sysroot-v1"
+TARGET = ARCH["target_triple"]
 MANIFEST = "share/crabc/manifest.json"
 DYNAMIC_STATE = "share/crabc/dynamic-product-state.json"
 DYNAMIC_STATE_SCHEMA = "crabc.x86_64-owned-dynamic-materialization/v1"
@@ -54,8 +56,8 @@ PRODUCT_BUILDERS = {
     "dynamic": "scripts/build_x86_64_owned_dynamic_sysroot.py",
 }
 PRODUCT_FORMATS = {
-    "static": "crabc-x86-64-owned-static-sysroot-v1",
-    "dynamic": "crabc-x86-64-owned-dynamic-sysroot-v1",
+    "static": "crabc-aarch64-owned-static-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-static-sysroot-v1",
+    "dynamic": "crabc-aarch64-owned-dynamic-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-dynamic-sysroot-v1",
 }
 # Installed modules imported by an installed driver. They are runtime files,
 # not relocatable metadata, even though they live below share/crabc/.
@@ -264,6 +266,15 @@ def manifest_record(decision: Mapping) -> dict:
     }
 
 
+def restore_native_loader_link(root: Path, record: Mapping) -> None:
+    loader = root / ("lib/ld-crabc-aarch64-hardened.so.1" if record["hardening_profile"] == "hardened" else "lib/ld-crabc-aarch64.so.1")
+    libc = root / "usr/lib/libc.so"
+    require(loader.is_file() and libc.is_file() and sha256_file(loader) == sha256_file(libc),
+            "combined loader bytes differ from libc")
+    loader.unlink()
+    os.link(libc, loader)
+
+
 def compose(products: Mapping[str, Path], output: Path) -> dict:
     """Materialize one composed tree at a fresh private path."""
 
@@ -280,6 +291,8 @@ def compose(products: Mapping[str, Path], output: Path) -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to(target)
     record = manifest_record(decision)
+    if ARCH["arch"] == "aarch64":
+        restore_native_loader_link(output, record)
     (output / MANIFEST).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output / MANIFEST).chmod(0o644)
     validate(output)
@@ -377,13 +390,16 @@ def validate(root: Path) -> dict:
     require(links == record.get("symlinks"), "installed symlinks differ from the combined manifest")
     for path, target in links.items():
         resolved = PurePosixPath(path).parent / target
-        require("/" not in target and resolved.as_posix() in files, f"symlink escapes the payload: {path}")
+        resolved_name = os.path.normpath(resolved.as_posix())
+        require((ARCH["arch"] != "x86_64" or "/" not in target) and not resolved_name.startswith("../") and not resolved_name.startswith("/") and resolved_name in files, f"symlink escapes the payload: {path}")
+    embedded = {f"{METADATA_PREFIX}{name}/manifest.json":
+                (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes() for name in PRODUCTS}
     state_destination = dynamic_state_destination(record)
-    validate_component_claims(record, {
-        **{f"{METADATA_PREFIX}{name}/manifest.json":
-           (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes() for name in PRODUCTS},
-        state_destination: (root / state_destination).read_bytes(),
-    })
+    embedded[state_destination] = (root / state_destination).read_bytes()
+    if ARCH["arch"] == "aarch64":
+        loader = root / ("lib/ld-crabc-aarch64-hardened.so.1" if record["hardening_profile"] == "hardened" else "lib/ld-crabc-aarch64.so.1")
+        require(os.path.samefile(loader, root / "usr/lib/libc.so"), "combined loader is not the merged libc")
+    validate_component_claims(record, embedded)
     return record
 
 
@@ -439,8 +455,10 @@ def read_validated_package(package_path: Path) -> tuple[dict, dict[str, bytes]]:
         require(set(names) == {*record["files"], MANIFEST, *record["symlinks"]},
                 "combined package roster differs from its manifest")
         for path, target in record["symlinks"].items():
-            require(isinstance(target, str) and "/" not in target
-                    and (PurePosixPath(path).parent / target).as_posix() in record["files"],
+            require(isinstance(target, str) and not os.path.isabs(target)
+                    and (ARCH["arch"] != "x86_64" or "/" not in target)
+                    and not os.path.normpath(str(PurePosixPath(path).parent / target)).startswith("../")
+                    and os.path.normpath(str(PurePosixPath(path).parent / target)) in record["files"],
                     "unsafe package alias target")
         payloads: dict[str, bytes] = {}
         for member in members:
@@ -475,6 +493,8 @@ def extract(package_path: Path, output: Path) -> None:
         for relative, target in record["symlinks"].items():
             (staged / relative).parent.mkdir(parents=True, exist_ok=True)
             (staged / relative).symlink_to(target)
+        if ARCH["arch"] == "aarch64":
+            restore_native_loader_link(staged, record)
         validate(staged)
         shared_package.publish_noreplace(staged, output, "combined extraction output")
 
@@ -508,6 +528,7 @@ def build(output: Path, *, hardening_profile: NativeRuntimeProfile = NativeRunti
     for name, builder in PRODUCT_BUILDERS.items():
         with (stage / f"{name}.log").open("xb") as log:
             completed = subprocess.run([sys.executable, "-B", str(ROOT / builder), "--output", str(products[name]),
+                                        *(["--architecture", "aarch64"] if ARCH["arch"] == "aarch64" else []),
                                         "--hardening-profile", hardening_profile.value],
                                        cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
         require(completed.returncode == 0, f"{name} product build failed; log: {stage / (name + '.log')}")

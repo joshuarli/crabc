@@ -35,7 +35,8 @@ import owned_dynamic_elf as dynamic_elf
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
-PRODUCT_FORMAT = 'crabc-x86-64-owned-dynamic-sysroot-v1'
+PRODUCT_FORMAT = product_evidence.DYNAMIC_PRODUCT_FORMAT
+ARCH = product_evidence.ARCH
 COMPONENTS = ('differential', 'signal-process', 'pthread-stress', 'os-test', 'libc-test')
 LIBC_TEST_REVISION = '68edb8bd73dab8147ee54c8bec638f4d2b3cff37'
 LIBC_TEST_TREE = '4f7a5373652c6534b0fbafb58fe3fed1489f3b3b'
@@ -46,7 +47,7 @@ OS_TEST_COMPILE_JOBS = 8
 BOOTSTRAP_SOURCE = ROOT / 'compat/x86_64/libc_bootstrap_primitives_probe.c'
 BOOTSTRAP_JUMP_SOURCE = ROOT / 'libc/src/c_abi/x86_64/setjmp.rs'
 BOOTSTRAP_SOURCE_MOUNT = '/workspace'
-BOOTSTRAP_ORACLE_COMPILER = '/usr/local/bin/crabc-x86_64-musl-gcc'
+BOOTSTRAP_ORACLE_COMPILER = f'/usr/local/bin/crabc-{product_evidence.ARCH}-musl-gcc'
 BOOTSTRAP_HEADERS = (
     'errno.h', 'fenv.h', 'setjmp.h', 'bits/setjmp.h', 'features.h', 'signal.h',
     'bits/alltypes.h', 'bits/signal.h', 'string.h', 'strings.h', 'sys/mman.h',
@@ -142,7 +143,7 @@ class Reader:
         manifest = read_json(self.manifest)
         require(isinstance(manifest, dict), 'dynamic manifest is not an object')
         same({key: manifest.get(key) for key in ('schema', 'format', 'target')},
-             {'schema': 1, 'format': PRODUCT_FORMAT, 'target': 'x86_64-unknown-linux-musl'}, 'dynamic product identity')
+             {'schema': 1, 'format': PRODUCT_FORMAT, 'target': product_evidence.TARGET}, 'dynamic product identity')
 
     def recorded(self, path):
         path = Path(path).absolute()
@@ -272,7 +273,7 @@ def _bootstrap_expected_commands(reader, static_product, dynamic_product):
         for route in ('kernel', 'direct'):
             argv = [*runtime_env, '/usr/sbin/chroot', reader.recorded(execution_root)]
             if route == 'direct':
-                argv.extend(('/lib/ld-crabc-x86_64.so.1', '/consumer'))
+                argv.extend((product_evidence.INTERPRETER, '/consumer'))
             else:
                 argv.append('/consumer')
             commands['run-' + mode + '-' + route] = argv
@@ -383,11 +384,20 @@ def _bootstrap_elf_sidecars(reader, mode, executable):
     def reject(message):
         raise NativeObservationError('bootstrap ' + mode + ' ELF sidecar differs: ' + message)
 
-    dynamic_elf.validate_record(
+    facts = dynamic_elf.validate_record(
         read_json(inspection_path), executable,
         output_format=product_evidence.DYNAMIC_PRODUCT_FORMAT,
-        fail=reject, recorded_path=reader.recorded,
+        fail=reject, recorded_path=reader.recorded, architecture=product_evidence.ARCH,
     )
+    if product_evidence.ARCH == 'aarch64':
+        try:
+            dynamic_elf.require_expected(facts, dynamic_elf.Expectation(
+                mode='pie' if mode == 'dynamic-pie' else 'exec', interpreter=product_evidence.INTERPRETER,
+                needed=('libc.so',), soname=None, search_kind='runpath', search_path='/usr/lib',
+                binding='now', hash_style='sysv', runtime_imports=frozenset(), provided_symbols=None,
+            ))
+        except dynamic_elf.InspectionError as error:
+            raise NativeObservationError('bootstrap ' + mode + ' ELF inspection differs: ' + str(error)) from error
     return {
         'inspection': reader.identity(inspection_path),
         'link_map': reader.identity(link_map_path),
@@ -655,7 +665,7 @@ def _differential(reader):
         same([oracle_link['schema'], oracle_link['case']], [differential.ORACLE_LINK_SCHEMA, case], 'differential oracle role')
         reader.bind(oracle_link['canonical_object'], obj, 'differential oracle canonical object')
         reader.bind(oracle_link['executable'], leaf / 'oracle' / case, 'differential oracle executable')
-        same(oracle_link['command'], ['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie',
+        same(oracle_link['command'], [f'/usr/local/bin/crabc-{ARCH}-musl-gcc', '-static', '-fno-pie', '-no-pie',
              reader.recorded(obj), '-o', reader.recorded(leaf / 'oracle' / case)], 'differential oracle object command')
         for mode in ('pie', 'non-pie'):
             link = read_json(leaf / 'links' / f'{case}-dynamic-{mode}.json')
@@ -770,7 +780,7 @@ def _pthread_stress(reader):
     same(report['replacement_io_cancellation_source'],
          {'path': io.relative_to(reader.root).as_posix(), 'sha256': digest(io)}, 'replacement I/O source requirement')
     obj = leaf / 'workload.o'
-    same(report['oracle_link_command'], ['/usr/local/bin/crabc-x86_64-musl-gcc', '-static', '-fno-pie', '-no-pie',
+    same(report['oracle_link_command'], [f'/usr/local/bin/crabc-{ARCH}-musl-gcc', '-static', '-fno-pie', '-no-pie',
          '-pthread', reader.recorded(obj), '-o', reader.recorded(leaf / 'oracle')], 'stress oracle object command')
     for key, path in (('source_map_receipt_sha256', leaf / 'source-map.json'), ('source_sha256', original),
                       ('prepared_source_sha256', prepared_path), ('workload_object_sha256', obj),
@@ -805,7 +815,7 @@ def _pthread_stress(reader):
             same([status['status'], status['returncode'], status['process_group']], [0, 0, status['pid']], 'stress raw child termination')
             command = ['chroot', reader.recorded(leaf / 'execution-root')]
             command += ['/oracle'] if cell == 'oracle' else (
-                (['/lib/ld-crabc-x86_64.so.1'] if cell.endswith('-direct') else []) + ['/dynamic-' + cell.rsplit('-', 1)[0]])
+                ([f'/lib/ld-crabc-{ARCH}.so.1'] if cell.endswith('-direct') else []) + ['/dynamic-' + cell.rsplit('-', 1)[0]])
             same([status['command'], status['cwd'], status['timeout_seconds']], [command, str(reader.mount), timeout], 'stress execution invocation')
             require(raw['stdout'] == b'pthread stress ok\n' and raw['stderr'] == b'', 'stress observation is not exact clean success')
             for stream, suffix in (('stdout', '.stdout'), ('stderr', '.stderr'), ('status', '.status.json')):
@@ -899,7 +909,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         library = product / 'usr/lib'
         runtime = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]
         if not shared:
-            runtime += [library / 'Scrt1.o', library / 'crabc-dynamic-attach.o']
+            runtime += _pie_entry_objects(library)
         builtins = library / 'libcrabc-builtins.a'
         same(receipt['input_receipts'], [reader.binding(path) for path in [*runtime, *objects, *dsos, builtins]],
              'libc-test canonical object and product link graph')
@@ -920,8 +930,7 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         if shared:
             sealed += ['-soname', output.name]
         else:
-            sealed += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
-                       reader.recorded(library / 'crabc-dynamic-attach.o')]
+            sealed += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', f'/lib/ld-crabc-{ARCH}.so.1', *map(reader.recorded, _pie_entry_objects(library))]
         sealed += [reader.recorded(path) for path in [library / 'crti.o', *objects, builtins, *dsos,
                                                        library / 'libc.so', library / 'crtn.o']]
         sealed += ['-o', reader.recorded(output)]
@@ -1007,11 +1016,11 @@ def _libc_oracle(reader, report):
             same(record['resolved_path'], qualification.MUSL_RUNTIME_PATHS['libc'] if name == 'loader' else path,
                  'libc-test pinned physical oracle path')
     same(value['files']['loader']['sha256'], value['files']['libc']['sha256'], 'libc-test pinned loader and libc bytes')
-    same(value['files']['compiler_wrapper']['sha256'], digest(reader.root / 'docker/x86_64-musl-oracle-gcc'),
+    same(value['files']['compiler_wrapper']['sha256'], digest(reader.root / f'docker/{ARCH}-musl-oracle-gcc'),
          'libc-test pinned compiler wrapper source')
     pin = tomllib.loads(read_bytes(reader.root / 'compat/upstreams.toml').decode())['musl_native']
     source_manifest = ('format=crabc-pinned-musl-oracle-v1\nversion=' + pin['version'] + '\nsource_sha256=' + pin['sha256'] +
-                       '\nfallback_revision=' + pin['fallback_revision'] + '\narchitecture=x86_64\n').encode()
+                       '\nfallback_revision=' + pin['fallback_revision'] + f'\narchitecture={ARCH}\n').encode()
     specs_manifest = (value['files']['specs']['sha256'] + '  /opt/musl-1.2.6/lib/musl-gcc.specs\n').encode()
     for name, raw in (('source_manifest', source_manifest), ('specs_manifest', specs_manifest)):
         same(value['files'][name]['sha256'], hashlib.sha256(raw).hexdigest(), 'libc-test pinned oracle manifest semantics')
@@ -1156,7 +1165,7 @@ def _libc_root_phases(reader, run, *, name, side, payload, controls, topology, p
     else:
         runtime = {'oracle_runtime': {key: {'source': oracle['files'][key], 'destination': destination,
                     'copied_sha256': oracle['files'][key]['sha256'], 'observed_sha256': oracle['files'][key]['sha256']}
-                    for key, destination in (('loader', '/lib/ld-musl-x86_64.so.1'), ('libc', '/usr/lib/libc.so'))}}
+                    for key, destination in (('loader', f'/lib/ld-musl-{ARCH}.so.1'), ('libc', '/usr/lib/libc.so'))}}
         sources = {'oracle': oracle}
     copied = [{'destination': item['destination'], 'sha256': item['source']['sha256']} for item in [*payload, *controls]]
     for phase in ('before', 'after'):
@@ -1202,7 +1211,7 @@ def _libc_control_launcher(reader, fixture, *, contract, product, compiler, envi
     require(all(reader.local(path, within=reader.root).is_relative_to(product / 'usr/include') for path in paths),
             'libc-test control fixture has foreign headers')
     control = fixture['control']
-    same(control['layout'], {'busybox': '/control/busybox', 'loader': '/control/ld-musl-x86_64.so.1', 'launcher': destination},
+    same(control['layout'], {'busybox': '/control/busybox', 'loader': f'/control/ld-musl-{ARCH}.so.1', 'launcher': destination},
          'libc-test explicit launcher control layout')
     for name in ('busybox', 'loader'):
         value = control[name]
@@ -1236,7 +1245,7 @@ def _libc_test(reader):
     dispositions = []
     same({key: report[key] for key in ('schema', 'status', 'campaign_complete', 'public_support', 'target')},
          {'schema': 'crabc.x86_64-owned-libc-test/v1', 'status': 'incomplete' if profiled else 'passed', 'campaign_complete': False,
-          'public_support': False, 'target': 'x86_64-unknown-linux-musl'}, 'complete libc-test campaign')
+          'public_support': False, 'target': f'{ARCH}-unknown-linux-musl'}, 'complete libc-test campaign')
     require('fatal_error' not in report and report['candidate_link_blocker'] is None, 'libc-test campaign has a retained blocker')
     product = report['product']
     copied_product, product_identity = _libc_product(reader, report)
@@ -1428,6 +1437,10 @@ def _libc_test(reader):
                          limits={'runtime_case_seconds': 5, 'outer_timeout_seconds': 20})
 
 
+def _pie_entry_objects(library):
+    return [library / 'Scrt1.o', *([library / 'crabc-dynamic-attach.o'] if ARCH == 'x86_64' else [])]
+
+
 def _os_snapshot(value, data=None):
     keys(value, ('text', 'sha256', 'byte_length'), 'os-test stream snapshot')
     require(isinstance(value['text'], str), 'os-test stream text is malformed')
@@ -1454,7 +1467,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     library = product / 'usr/lib'
     runtime = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]
     if not shared:
-        runtime += [library / 'Scrt1.o', library / 'crabc-dynamic-attach.o']
+        runtime += _pie_entry_objects(library)
     builtins = library / 'libcrabc-builtins.a'
     workload = {'path': workload_path, 'sha256': digest(retained_object)}
     same(receipt['input_receipts'], [*(reader.binding(path) for path in runtime), workload, reader.binding(builtins)],
@@ -1471,8 +1484,7 @@ def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_pa
     if shared:
         command += ['-soname', Path(output).name]
     else:
-        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', '/lib/ld-crabc-x86_64.so.1', reader.recorded(library / 'Scrt1.o'),
-                    reader.recorded(library / 'crabc-dynamic-attach.o')]
+        command += [*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, '--dynamic-linker', f'/lib/ld-crabc-{ARCH}.so.1', *map(reader.recorded, _pie_entry_objects(library))]
     command += [reader.recorded(library / 'crti.o'), workload_path, reader.recorded(builtins),
                 reader.recorded(library / 'libc.so'), reader.recorded(library / 'crtn.o'), '-o', output]
     same(receipt['link_command'], command, 'os-test canonical sealed link command')
@@ -1852,12 +1864,12 @@ def _os_basic_fixtures(reader, control, product, runtime, contract):
                     workload_path=reader.recorded(obj), link_identity=shell['link_identity'], retained_object=obj, product=product)
     same(shell['launcher'], {'path': '/control/candidate-shell-launcher', 'sha256': digest(binary),
          'receipt_sha256': digest(receipt_path), 'candidate_path': '/bin/sh', 'candidate_sha256': digest(runtime / 'bin/sh'),
-         'argv': ['/control/ld-musl-x86_64.so.1', '/control/busybox', 'sh', '<original argv[1..]>']},
+         'argv': [f'/control/ld-musl-{ARCH}.so.1', '/control/busybox', 'sh', '<original argv[1..]>']},
          'os-test installed candidate shell fixture')
     same(digest(runtime / 'bin/sh'), digest(binary), 'os-test executed shell launcher bytes')
     require(binary.stat().st_mode & 0o111 != 0 and (runtime / 'bin/sh').stat().st_mode & 0o7777 == binary.stat().st_mode & 0o7777,
             'os-test shell launcher executable modes differ')
-    for field, path in (('busybox', 'control/busybox'), ('musl_control_loader', 'control/ld-musl-x86_64.so.1')):
+    for field, path in (('busybox', 'control/busybox'), ('musl_control_loader', f'control/ld-musl-{ARCH}.so.1')):
         same(control[field]['sha256'], digest(runtime / path), 'os-test actual external shell control bytes')
 
 
@@ -1898,7 +1910,7 @@ def _os_private_proc(reader, suite, private, runtime, controls, contract):
     keys(inside, ('command', 'status', 'stdout', 'stderr'), 'os-test private procfs inside PID namespace witness')
     same([inside['command'], inside['status'], namespace['matched']],
          [[contract.PRIVATE_PROC_WITNESS_CHROOT, reader.recorded(runtime),
-           '/control/ld-musl-x86_64.so.1', '/control/busybox', 'readlink', '/proc/self/ns/pid'], 0, True],
+           f'/control/ld-musl-{ARCH}.so.1', '/control/busybox', 'readlink', '/proc/self/ns/pid'], 0, True],
          'os-test private procfs same-container PID namespace witness')
     _os_snapshot(inside['stdout'], (outside + '\n').encode())
     _os_snapshot(inside['stderr'], b'')
@@ -1944,7 +1956,7 @@ def _os_product_copy(reader, suite, control, baseline, contract):
     same(control['root'], reader.recorded(runtime), 'os-test runtime root')
     same(control['product_copy_difference'], empty, 'os-test runtime product copy equality')
     same(control['product_manifest_sha256'], digest(reader.manifest), 'os-test runtime product manifest')
-    same(control['candidate_loader_sha256'], digest(reader.product / 'lib/ld-crabc-x86_64.so.1'), 'os-test runtime loader binding')
+    same(control['candidate_loader_sha256'], digest(reader.product / f'lib/ld-crabc-{ARCH}.so.1'), 'os-test runtime loader binding')
     controls = reader.leaf / 'records' / (suite + '.execution-control-additions.json')
     reader.relative_artifact(control['control_additions'], controls)
     _os_private_proc(reader, suite, control['private_proc'], runtime, controls, contract)
@@ -2084,7 +2096,7 @@ def _os_test(reader):
     for phase in ('before', 'after'):
         identity = oracle[phase]
         same(identity['root'], '/opt/musl-1.2.6', 'os-test pinned musl root')
-        for field, path in {'wrapper': '/usr/local/bin/crabc-x86_64-musl-gcc', 'marker': '/opt/musl-1.2.6/.crabc-oracle',
+        for field, path in {'wrapper': f'/usr/local/bin/crabc-{ARCH}-musl-gcc', 'marker': '/opt/musl-1.2.6/.crabc-oracle',
                             'specs_digest': '/opt/musl-1.2.6/.crabc-musl-gcc-specs.sha256', 'specs': '/opt/musl-1.2.6/lib/musl-gcc.specs',
                             'libc': '/opt/musl-1.2.6/lib/libc.so'}.items():
             keys(identity[field], ('path', 'sha256'), 'os-test pinned musl input')

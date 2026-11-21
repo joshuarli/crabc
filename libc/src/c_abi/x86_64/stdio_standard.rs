@@ -118,10 +118,15 @@
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the x86 standard-stream core requires little-endian Linux/x86-64");
+
+#[cfg(all(not(crabc_x86_owned_runtime), target_arch = "aarch64"))]
+unsafe fn unlink_tmpfile_path(path: *const u8) -> i64 {
+    unsafe { raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0) }
+}
 
 use core::{
     ffi::{c_char, c_int, c_void},
@@ -167,7 +172,7 @@ const O_RDWR: c_int = 2;
 const O_CREAT: c_int = 0o100;
 const O_EXCL: c_int = 0o200;
 const O_TRUNC: c_int = 0o1000;
-const O_LARGEFILE: c_int = 0o100000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 
 const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;
@@ -1597,6 +1602,7 @@ pub unsafe extern "C" fn fopen(
     // SAFETY: C's fopen path contract supplies a valid NUL-terminated pathname
     // for Linux's raw `open` syscall. The selected write route owns the fixed
     // `0666` creation mode and leaves umask policy to the kernel.
+    #[cfg(target_arch = "x86_64")]
     let descriptor = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_OPEN,
@@ -1605,6 +1611,8 @@ pub unsafe extern "C" fn fopen(
             0o666,
         )
     };
+    #[cfg(target_arch = "aarch64")]
+    let descriptor = unsafe { raw_syscall::syscall4(raw_syscall::SYS_OPENAT, -100, path as usize as i64, i64::from(open_mode.open_flags()), 0o666) };
     if descriptor < 0 {
         let _ = c_status(descriptor);
         return ptr::null_mut();
@@ -1700,6 +1708,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
 
         // SAFETY: `path` is a live NUL-terminated pathname; O_EXCL makes the
         // name acquisition atomic, and mode 0600 supplies the musl contract.
+        #[cfg(target_arch = "x86_64")]
         let descriptor = unsafe {
             raw_syscall::syscall3(
                 raw_syscall::SYS_OPEN,
@@ -1708,6 +1717,8 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
                 0o600,
             )
         };
+        #[cfg(target_arch = "aarch64")]
+        let descriptor = unsafe { raw_syscall::syscall4(raw_syscall::SYS_OPENAT, -100, path.as_ptr() as usize as i64, i64::from(O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE), 0o600) };
         if descriptor < 0 {
             // Pinned musl retries the entire fixed budget after every failed
             // open, not just collisions. Keep its final-open errno behavior
@@ -1722,7 +1733,10 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
             // the exclusive pathname. Retire that name before closing the
             // descriptor so no failure can leave a temporary-file entry.
             let _ = unsafe {
-                raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
+                #[cfg(target_arch = "x86_64")]
+                { raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64) }
+                #[cfg(target_arch = "aarch64")]
+                { unlink_tmpfile_path(path.as_ptr()) }
             };
             let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor) };
             // SAFETY: an unrepresentable descriptor cannot enter FILE state.
@@ -1733,7 +1747,10 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
         // SAFETY: the successful exclusive path is still live and owned by
         // this call. Do not expose a FILE until the directory entry is gone.
         let unlink_status = unsafe {
-            raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64)
+            #[cfg(target_arch = "x86_64")]
+            { raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path.as_ptr() as usize as i64) }
+            #[cfg(target_arch = "aarch64")]
+            { unlink_tmpfile_path(path.as_ptr()) }
         };
         if unlink_status < 0 {
             let unlink_error = (-unlink_status) as c_int;

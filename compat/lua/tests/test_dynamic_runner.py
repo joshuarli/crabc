@@ -29,6 +29,24 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 
+def setUpModule() -> None:
+    global x86_fixtures
+    x86_fixtures = [
+        mock.patch.object(RUNNER, "ARCH", "x86_64"),
+        mock.patch.object(RUNNER, "CANONICAL_INTERPRETER", "/lib/ld-crabc-x86_64.so.1"),
+        mock.patch.object(RUNNER, "FORMAT", "crabc-x86-64-owned-dynamic-sysroot-v1"),
+        mock.patch.object(RUNNER, "_SHELL_COMPAT_ALIAS", "lib/ld-musl-x86_64.so.1"),
+        mock.patch.object(RUNNER.LUA, "ARCHITECTURE", RUNNER.native_arch("x86_64")),
+    ]
+    for patch in x86_fixtures:
+        patch.start()
+
+
+def tearDownModule() -> None:
+    for patch in reversed(x86_fixtures):
+        patch.stop()
+
+
 class NativeDynamicDispatcherTests(unittest.TestCase):
     """Exercise publication and installed/extracted lane acceptance contracts."""
 
@@ -200,6 +218,21 @@ class NativeDynamicSysrootInputTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "payload roster drifted"):
             RUNNER.owned_dynamic_sysroot(self.temporary)
+
+    def test_arm64_dynamic_elf_requires_its_machine_and_loader(self) -> None:
+        def readelf(_path: Path, option: str) -> str:
+            return {"-h": "Machine: AArch64\nType: DYN", "-lW": "/lib/ld-crabc-aarch64.so.1",
+                    "-dW": "", "-rW": ""}[option]
+        artifact = self.temporary / "lua"
+        artifact.write_bytes(b"test")
+        with (mock.patch.object(RUNNER, "ARCH", "aarch64"),
+              mock.patch.object(RUNNER, "CANONICAL_INTERPRETER", "/lib/ld-crabc-aarch64.so.1"),
+              mock.patch.object(RUNNER.LUA, "readelf", side_effect=readelf)):
+            self.assertEqual(RUNNER.dynamic_elf(artifact, executable=True, label="lua")["header"],
+                             "Machine: AArch64\nType: DYN")
+            with mock.patch.object(RUNNER.LUA, "readelf", return_value="Machine: Advanced Micro Devices X86-64\nType: DYN"):
+                with self.assertRaises(RUNNER.LUA.RunnerError):
+                    RUNNER.dynamic_elf(artifact, executable=True, label="lua")
 
 
 class NativeDynamicHeaderSelectionTests(unittest.TestCase):
@@ -450,6 +483,16 @@ class NativeDynamicReceiptTests(unittest.TestCase):
         for schema in (1, 2):
             with self.subTest(schema=schema):
                 self.assertEqual(self.audit(self.record(schema))["status"], "passed")
+
+    def test_aarch64_receipt_binds_the_native_runtime_and_trace(self) -> None:
+        record = self.record(2)
+        record["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        with (mock.patch.object(RUNNER, "ARCH", "aarch64"),
+              mock.patch.object(RUNNER, "FORMAT", record["format"])):
+            self.assertEqual(self.audit(record)["status"], "passed")
+            record["input_receipts"][0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "input receipt drifted"):
+                self.audit(record)
 
     def test_audit_accepts_mold_trace_prefix_and_archive_member_without_rewriting_receipt(self) -> None:
         record = self.record(2)
@@ -863,12 +906,23 @@ class NativeDynamicDebugProfileTests(unittest.TestCase):
     def test_default_cli_preserves_the_release_dispatcher(self) -> None:
         result = {"passed": True, "result": "pass"}
         with (
+            mock.patch.object(RUNNER, "native_arch", return_value={"arch": "x86_64"}),
             mock.patch.object(RUNNER, "run_dynamic_dispatch", return_value=(result, Path("report.json"), Path("latest.json"))) as dispatch,
             mock.patch.object(RUNNER, "run_dynamic_lane") as lane,
         ):
             self.assertEqual(RUNNER.main([]), 0)
         dispatch.assert_called_once_with(jobs=RUNNER.LUA.DEFAULT_JOBS, timeout=180.0, offline=False)
         lane.assert_not_called()
+
+    def test_arm64_cli_selects_native_builder_and_never_publishes_x86_receipt(self) -> None:
+        result = {"passed": False, "result": "fail", "error": "arm64 gap"}
+        with (
+            mock.patch.object(RUNNER, "native_arch", return_value={"arch": "aarch64", "work_name": "aarch64"}),
+            mock.patch.object(RUNNER, "run_dynamic_dispatch", return_value=(result, Path("report.json"), None)) as dispatch,
+        ):
+            self.assertEqual(RUNNER.main([]), 1)
+        dispatch.assert_called_once_with(jobs=4, timeout=180.0, offline=False, architecture="aarch64",
+                                         state_parent=ROOT / ".work/aarch64/lua-dynamic-source-build", latest_report=None)
 
     def test_debug_requires_a_supplied_product_and_release_rejects_consumer_options(self) -> None:
         for arguments in (

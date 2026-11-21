@@ -1,5 +1,8 @@
 //! A denied self-memory read must fail the unwind phase after fork without a fault.
 use std::ffi::c_void;
+
+const SP: u8 = if cfg!(target_arch = "aarch64") { 31 } else { 7 };
+const RA: u8 = if cfg!(target_arch = "aarch64") { 30 } else { 16 };
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -36,7 +39,7 @@ const EH_FRAME: usize = 256;
 const TEXT_SPAN: usize = 65536;
 const END_OF_STACK: i32 = 5;
 const FATAL_PHASE1_ERROR: i32 = 3;
-const PROCESS_VM_READV: u32 = 310;
+const PROCESS_VM_READV: u32 = if cfg!(target_arch = "aarch64") { 270 } else { 310 };
 
 static MAPPING: AtomicUsize = AtomicUsize::new(0);
 static TEXT: AtomicUsize = AtomicUsize::new(0);
@@ -81,8 +84,7 @@ unsafe fn write_frame(base: *mut u8, text: usize, saved_ra: usize) {
         header.add(3).write(0xff);
         (header.add(4) as *mut u64).write_unaligned((base as usize + EH_FRAME) as u64);
     }
-    // CFA comes from RSP. RIP is read from a valid word on this child's stack.
-    let mut cie = vec![0, 0, 0, 0, 1, 0, 1, 0x78, 16, 0x0c, 7, 8, 0x10, 16, 9, 0x03];
+    let mut cie = vec![0, 0, 0, 0, 1, 0, 1, 0x78, RA, 0x0c, SP, 8, 0x10, RA, 9, 0x03];
     cie.extend_from_slice(&(saved_ra as u64).to_le_bytes());
     let mut frame = (cie.len() as u32).to_le_bytes().to_vec();
     frame.extend_from_slice(&cie);

@@ -56,9 +56,15 @@ __asm__(
     ".hidden override_signal_restorer\n"
     ".type override_signal_restorer,@function\n"
     "override_signal_restorer:\n"
+#if defined(__aarch64__)
+    "mov x8, #139\n"
+    "svc #0\n"
+    "udf #0\n"
+#else
     "mov $15, %rax\n"
     "syscall\n"
     "ud2\n"
+#endif
     ".size override_signal_restorer, .-override_signal_restorer\n"
 );
 

@@ -36,6 +36,8 @@ impl PendingRelocations {
 /// valid. Only initial modules have retained initial-exec TLS placement.
 pub(in super::super) unsafe fn relocate_new(objects: &[Object], indices: &[usize], first_new: usize,
     static_tls_count: usize, lazy: bool,
+    #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+    descriptors: &mut [*mut [usize; 2]],
 ) -> Option<PendingRelocations> {
     if first_new == 0 || first_new > objects.len() || indices.iter().any(|index| *index >= objects.len()) { return None; }
     let scope = SymbolScope { indices, module_count: objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0),
@@ -51,6 +53,8 @@ pub(in super::super) unsafe fn relocate_new(objects: &[Object], indices: &[usize
     // deferred spans in the same metadata/overlap proof as immediate writes.
     for owner in first_new..objects.len() {
         let object = &objects[owner];
+        #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+        let mut descriptor_index = 0usize;
         for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
             for index in 0..bytes / ELF64_RELA_SIZE {
                 let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
@@ -62,11 +66,26 @@ pub(in super::super) unsafe fn relocate_new(objects: &[Object], indices: &[usize
                 match unsafe { word_resolution(&scope, objects, owner, record.offset, kind, record.symbol, record.addend, lazy && !object.bind_now) }? {
                     Some(value) => {
                         let address = runtime_address(object.base, record.offset)?;
-                        if kind == R_X86_64_PC32 {
-                            unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
-                        } else {
-                            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+                        #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+                        if kind == R_X86_64_TLSDESC {
+                            // SAFETY: Preflight validated the relocation and symbol scope.
+                            if let Some(coordinates) = unsafe { dynamic_tlsdesc_coordinates(
+                                &scope, objects, owner, record.symbol, record.addend) }? {
+                                let records = *descriptors.get(owner)?;
+                                if records.is_null() { return None; }
+                                // SAFETY: The registry allocated one record per relocation and retains it with this object.
+                                unsafe {
+                                    let record = records.add(descriptor_index);
+                                    record.write(coordinates);
+                                    core::ptr::write_unaligned(address as *mut u64, tlsdesc_dynamic as *const () as u64);
+                                    core::ptr::write_unaligned((address + 8) as *mut u64, record as u64);
+                                }
+                                descriptor_index = descriptor_index.checked_add(1)?;
+                                continue;
+                            }
                         }
+                        // SAFETY: The graph-wide preflight admitted this target.
+                        unsafe { write_resolved_word(address, kind, value); }
                     }
                     None => pending.push(record)?,
                 }
@@ -113,6 +132,8 @@ pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: 
                 let mut definer = None;
                 if symbol != 0 {
                     let tls = matches!(kind, R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64);
+                    #[cfg(target_arch = "aarch64")]
+                    let tls = tls || kind == R_X86_64_TLSDESC;
                     match unsafe { lookup_result(&scope, objects, owner, symbol, tls, kind == R_COPY, kind == R_X86_64_JUMP_SLOT) } {
                         Some(SymbolLookup::MissingStrong) => {
                             if deferrable && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) { continue; }
@@ -128,8 +149,16 @@ pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: 
                         return Some(RelocationFailure::InitialExecTls { owner, symbol: name, definer: module });
                     }
                 }
+                #[cfg(target_arch = "x86_64")]
                 if !matches!(kind, R_64 | R_X86_64_PC32 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
                     | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
+                {
+                    return Some(RelocationFailure::UnsupportedType { owner, kind });
+                }
+                #[cfg(target_arch = "aarch64")]
+                if !matches!(kind, R_64 | R_X86_64_PC32 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
+                    | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
+                    && kind != R_X86_64_TLSDESC
                 {
                     return Some(RelocationFailure::UnsupportedType { owner, kind });
                 }
@@ -259,7 +288,9 @@ mod tests {
         plugin.rela(0x1008, R_X86_64_GLOB_DAT, 2, 0);
         provider.symbol(1, 2, 1, 0, 1, 0x1010, 1);
         let objects = [main.object(false), plugin.object(true), provider.object(true)];
-        let pending = unsafe { relocate_new(&objects[..2], &[0, 1], 1, 0, true) }.unwrap();
+        let pending = unsafe { relocate_new(&objects[..2], &[0, 1], 1, 0, true,
+            #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+            &mut [core::ptr::null_mut(); 2]) }.unwrap();
         assert_eq!(pending.count, 1);
         assert_eq!(plugin.data[0], 0xfeed);
         assert_eq!(plugin.data[1], 0);
@@ -291,7 +322,9 @@ mod tests {
             plugin.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
             plugin.rela(0x1008, kind, 1, 0);
             let objects = [main.object(false), Object { bind_now, ..plugin.object(true) }];
-            assert!(unsafe { relocate_new(&objects, &[0, 1], 1, 0, true) }.is_none());
+            assert!(unsafe { relocate_new(&objects, &[0, 1], 1, 0, true,
+                #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+                &mut [core::ptr::null_mut(); 2]) }.is_none());
             assert_eq!(plugin.data[0], 0xfeed);
         }
     }
@@ -299,16 +332,22 @@ mod tests {
     unsafe fn write_faults(address: *mut u64) -> bool {
         // Only a raw store and SYS_exit in the child; no inherited libc/TLS
         // owner is entered. Its parent retains the loader lock and mapping.
+        #[cfg(target_arch = "x86_64")]
         let child = unsafe { syscall1(57, 0) };
+        #[cfg(target_arch = "aarch64")]
+        let child = unsafe { syscall6(220, 17, 0, 0, 0, 0, 0) };
         if child == 0 {
             let no_core = [0u64; 2];
+            #[cfg(target_arch = "x86_64")]
             unsafe { syscall2(160, 4, no_core.as_ptr() as i64); }
-            unsafe { core::ptr::write_volatile(address, 0); syscall1(60, 90); core::hint::unreachable_unchecked(); }
+            #[cfg(target_arch = "aarch64")]
+            unsafe { syscall4(261, 0, 4, no_core.as_ptr() as i64, 0); }
+            unsafe { core::ptr::write_volatile(address, 0); syscall1(SYS_EXIT, 90); core::hint::unreachable_unchecked(); }
         }
         let mut status = 0i32;
         let waited = if child > 0 {
             loop {
-                let result = unsafe { syscall4(61, child, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
+                let result = unsafe { syscall4(if cfg!(target_arch = "aarch64") { 260 } else { 61 }, child, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
                 if result != -4 { break result; }
             }
         } else { child };
@@ -329,7 +368,9 @@ mod tests {
         let objects = [main.object(false), Object {
             relro_virtual_address: 0x1000, relro_byte_len: PAGE, ..plugin.object(true)
         }, provider.object(true)];
-        let pending = unsafe { relocate_new(&objects[..2], &[0, 1], 1, 0, true) }.unwrap();
+        let pending = unsafe { relocate_new(&objects[..2], &[0, 1], 1, 0, true,
+            #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+            &mut [core::ptr::null_mut(); 2]) }.unwrap();
         assert!(unsafe { apply_relro(&objects[1]) }.is_some());
         assert!(unsafe { write_faults(address) });
         let empty = PendingRelocations::new(0).unwrap();

@@ -21,15 +21,13 @@ use core::ptr;
 use bitflags::bitflags;
 
 #[cfg(target_arch = "aarch64")]
-use crate::process::{self, Pid};
+use crate::process;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::time::Timespec;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::{AsFd, Errno, OwnedFd};
 use crate::Result;
 
-#[cfg(target_arch = "aarch64")]
-pub use crate::process::Signal;
 
 /// A non-zero Linux process or thread identifier used by the x86-64
 /// signal facade.
@@ -37,12 +35,10 @@ pub use crate::process::Signal;
 /// This narrow type exists here rather than admitting `process` wholesale:
 /// that larger facade still contains AArch64-only kernel records. It is only
 /// the typed selector needed by direct signal observation and delivery.
-#[cfg(target_arch = "x86_64")]
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Pid(NonZeroI32);
 
-#[cfg(target_arch = "x86_64")]
 impl Pid {
     /// The Linux init process.
     pub const INIT: Self = Self(unsafe { NonZeroI32::new_unchecked(1) });
@@ -68,6 +64,17 @@ impl Pid {
         Self(unsafe { NonZeroI32::new_unchecked(raw) })
     }
 
+    /// Returns the nonzero identifier.
+    pub const fn as_raw_nonzero(self) -> NonZeroI32 { self.0 }
+
+    /// Encodes an optional identifier, using zero for the caller.
+    pub const fn as_raw(pid: Option<Self>) -> i32 {
+        match pid { Some(pid) => pid.as_raw_pid(), None => 0 }
+    }
+
+    /// Returns whether this identifies Linux init.
+    pub const fn is_init(self) -> bool { self.as_raw_pid() == 1 }
+
     /// Returns the raw Linux process or thread identifier.
     #[inline]
     pub const fn as_raw_pid(self) -> i32 {
@@ -75,7 +82,6 @@ impl Pid {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
 impl fmt::Display for Pid {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -86,12 +92,10 @@ impl fmt::Display for Pid {
 ///
 /// Musl 1.2.6 reserves 32, 33, and 34 for its runtime; safe construction
 /// covers the standard range 1–31 and the 35–64 realtime range only.
-#[cfg(target_arch = "x86_64")]
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Signal(NonZeroI32);
 
-#[cfg(target_arch = "x86_64")]
 impl Signal {
     /// `SIGHUP`.
     pub const HUP: Self = Self(unsafe { NonZeroI32::new_unchecked(1) });
@@ -605,7 +609,6 @@ pub struct SigAction {
     handler: Option<SigHandler>,
     mask: SignalSet,
     flags: SigActionFlags,
-    #[cfg(target_arch = "x86_64")]
     queried_kernel: Option<crabc_core::signal::KernelSigAction>,
 }
 
@@ -629,6 +632,7 @@ impl SigAction {
             handler,
             mask,
             flags,
+            queried_kernel: None,
         }
     }
 
@@ -710,6 +714,9 @@ impl SigAction {
     #[cfg(target_arch = "aarch64")]
     #[inline]
     fn kernel(self) -> crabc_core::signal::KernelSigAction {
+        if let Some(action) = self.queried_kernel {
+            return action;
+        }
         let (handler, siginfo) = match self.handler {
             SigHandler::Default => (SIG_DFL, false),
             SigHandler::Ignore => (SIG_IGN, false),
@@ -772,6 +779,7 @@ impl SigAction {
             handler,
             mask: SignalSet(action.mask & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33)),
             flags: SigActionFlags::from_bits_retain(action.flags & !SA_RESTORER),
+            queried_kernel: Some(action),
         }
     }
 
@@ -902,7 +910,6 @@ impl SigInfo {
         Self(info)
     }
 
-    #[cfg(target_arch = "aarch64")]
     #[inline]
     pub(crate) const fn from_core(info: crabc_core::signal::SigInfo) -> Self {
         Self(info)
@@ -1154,7 +1161,7 @@ pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
 /// after its thread exits. The metadata carries `SI_QUEUE` and the sender's
 /// process ID and user ID, rather than the sender's thread ID. Kernel errors
 /// are returned directly without reading or changing C `errno`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn queue_thread(tid: Pid, signal: Signal, value: i32) -> Result<()> {
     let tgid = calling_pid_raw();

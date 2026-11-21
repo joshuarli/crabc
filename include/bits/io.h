@@ -1,3 +1,4 @@
+#if defined(__x86_64__)
 /* Linux/x86-64 port-I/O inline contract from pinned musl 1.2.6
  * `arch/x86_64/bits/io.h` (MIT).  These are intentionally direct inline
  * instructions, not crabc-libc exports: callers need the relevant Linux I/O
@@ -82,4 +83,8 @@ static __inline void insl(unsigned short __port, void *__buf, unsigned long __n)
 		      : "+D" (__buf), "+c" (__n)
 		      : "d" (__port));
 }
+#endif
+#elif defined(__aarch64__)
+/* musl 1.2.6 generic/bits/io.h, MIT licensed. */
+
 #endif

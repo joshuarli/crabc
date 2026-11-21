@@ -146,7 +146,11 @@ class CampaignReportTests(unittest.TestCase):
             posix_runtime["routine_c_abi_matrix"]["aggregate_command"],
             "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime",
         )
-        self.assertEqual(posix_runtime["receipts"], {"state": "not-required", "declared": []})
+        self.assertEqual(posix_runtime["status"], "foundation-verified")
+        self.assertEqual(posix_runtime["receipts"], {
+            "state": "unchecked",
+            "declared": [".work/x86_64/feature-complete/out/posix-admission/family-admission.json"],
+        })
         self.assertEqual(
             value["next_dependency_ready_transitions"],
             [
@@ -341,12 +345,15 @@ class CampaignReportTests(unittest.TestCase):
         inputs[7]["status"] = "verified"
         inputs[7]["runtime_v1_published"] = True
         inputs[7]["qualification_source_sha256"] = "a" * 64
+        for family in inputs[1]["family"]:
+            if family["id"] == "ldso.dynamic-runtime":
+                family["status"] = "planned"
         with mock.patch.object(report, "load_validated_campaign_inputs", return_value=inputs):
             value = report.build_report()
             dynamic = value["gates"]["dynamic_product"]
             self.assertEqual(dynamic["contract_status"], report.COMPLETED_STATUS)
             self.assertFalse(dynamic["pass"])
-            self.assertTrue(dynamic["incomplete_families"])
+            self.assertEqual(dynamic["incomplete_families"], ["ldso.dynamic-runtime"])
             self.assertEqual(len(value["families"]), 26)
             self.assertFalse(value["campaign"]["promotion_ready"])
             self.assertFalse(value["campaign"]["public_support"])

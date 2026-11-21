@@ -11,6 +11,10 @@
 #error "the oracle probe requires its canonical pinned libc path"
 #endif
 
+#ifndef CRABC_MUSL_ORACLE_ARCH
+#define CRABC_MUSL_ORACLE_ARCH "x86_64"
+#endif
+
 int main(void)
 {
     char line[4096];
@@ -33,6 +37,6 @@ int main(void)
     if (!saw_pinned_libc || saw_glibc)
         return 12;
 
-    printf("pinned musl x86_64 runtime: %s\n", CRABC_MUSL_ORACLE_LIBC_PATH);
+    printf("pinned musl %s runtime: %s\n", CRABC_MUSL_ORACLE_ARCH, CRABC_MUSL_ORACLE_LIBC_PATH);
     return 0;
 }

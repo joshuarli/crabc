@@ -27,7 +27,9 @@ unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH \
     COMPILER_PATH GCC_EXEC_PREFIX LD_LIBRARY_PATH LD_PRELOAD || true
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+ARCH="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); from native_arch import native_arch; print(native_arch()["arch"])' "$ROOT_DIR/compat/x86_64")"
+export ARCH
+readonly ORACLE_CC=/usr/local/bin/crabc-${ARCH}-musl-gcc
 readonly LINK_EDITOR="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from scripts import native_build_tools; print(native_build_tools.MOLD)' "$ROOT_DIR")"
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PACKAGE="$ROOT_DIR/compat/x86_64/owned_static_sysroot_package.py"
@@ -53,7 +55,7 @@ require_tool() {
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
     case "$(uname -m)" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) fail "refuses emulation on $(uname -m)" ;;
     esac
 }
@@ -158,7 +160,7 @@ from pathlib import Path
 
 manifest = Path(sys.argv[1])
 record = json.loads(manifest.read_text(encoding="utf-8"))
-if record.get("format") == "crabc-x86-64-owned-sysroot-v1":
+if record.get("format") in ("crabc-x86-64-owned-sysroot-v1", "crabc-aarch64-owned-sysroot-v1"):
     manifest = manifest.parent / "static" / "manifest.json"
 print(manifest)
 PY
@@ -182,6 +184,16 @@ audit_installed_tree() {
         while IFS= read -r path; do
             fail "installed tree contains a symlink: ${path#"$root"/}"
         done < <(find "$root" -type l -print)
+    fi
+    if [ "$ARCH" = aarch64 ]; then
+        python3 -B - "$ROOT_DIR" "$root" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/compat/x86_64")
+import static_product_contract
+static_product_contract.validate_native_static_product(Path(sys.argv[2]))
+PY
+        return
     fi
     python3 - "$manifest" <<'PY'
 import json
@@ -289,20 +301,24 @@ audit_static_initial_tls_installation() {
     "$installed_root/bin/crabc-cc" "$mode" -std=c11 -O2 \
         "$ROOT_DIR/compat/x86_64/owned_static_startup_tls_probe.c" -o "$candidate"
     readelf --program-headers --wide "$candidate" >"$program_headers"
-    if output="$(env -i strace -f -qq -e trace=mmap,mremap,brk,arch_prctl \
+    local trace_calls=mmap,mremap,brk,arch_prctl
+    if [ "$ARCH" = aarch64 ]; then trace_calls=mmap,mremap,brk; fi
+    if output="$(env -i strace -f -qq -e "trace=$trace_calls" \
         -o "$trace" "$candidate")"; then
         :
     else
         status=$?
         fail "static initial TLS startup candidate (${mode}) exited ${status}"
     fi
-    [ "$output" = hi ] || fail "static initial TLS startup candidate (${mode}) output drifted: $output"
-    python3 - "$mode" "$program_headers" "$trace" <<'PY'
+    if [ "$ARCH" = x86_64 ]; then
+        [ "$output" = hi ] || fail "static initial TLS startup candidate (${mode}) output drifted: $output"
+    fi
+    python3 - "$mode" "$program_headers" "$trace" "$ARCH" "$output" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-mode, program_headers, trace_path = sys.argv[1:]
+mode, program_headers, trace_path, architecture, output = sys.argv[1:]
 load = re.compile(
     r"^\s*LOAD\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+"
     r"(0x[0-9a-f]+)\s+(0x[0-9a-f]+)\s+([RWE ]+?)\s+(0x[0-9a-f]+)$")
@@ -313,14 +329,21 @@ for line in Path(program_headers).read_text(encoding="utf-8", errors="replace").
         start = int(match.group(2), 16)
         writable.append((start, start + int(match.group(5), 16)))
 trace = Path(trace_path).read_text(encoding="utf-8", errors="replace").splitlines()
-installed = [index for index, line in enumerate(trace) if "arch_prctl(ARCH_SET_FS," in line]
-if len(installed) != 1:
-    raise SystemExit(f"{mode} static TLS install count is {len(installed)}, not 1")
-for line in trace[:installed[0]]:
+if architecture == "aarch64":
+    match = re.fullmatch(r"hi ([0-9a-f]{16})", output)
+    if match is None:
+        raise SystemExit(f"{mode} static TLS thread pointer observation differs: {output!r}")
+    thread_pointer = int(match.group(1), 16)
+    before_install = trace
+else:
+    installed = [index for index, line in enumerate(trace) if "arch_prctl(ARCH_SET_FS," in line]
+    if len(installed) != 1:
+        raise SystemExit(f"{mode} static TLS install count is {len(installed)}, not 1")
+    before_install = trace[:installed[0]]
+    thread_pointer = int(re.search(r"ARCH_SET_FS, (0x[0-9a-f]+)", trace[installed[0]]).group(1), 16)
+for line in before_install:
     if re.search(r"\b(mmap|mremap|brk)\(", line):
         raise SystemExit(f"{mode} static TLS install mapped memory first: {line.strip()}")
-thread_pointer = int(
-    re.search(r"ARCH_SET_FS, (0x[0-9a-f]+)", trace[installed[0]]).group(1), 16)
 if mode == "-static" and not any(start <= thread_pointer < end for start, end in writable):
     raise SystemExit(
         f"{mode} static TLS thread pointer {thread_pointer:#x} is outside a writable PT_LOAD")
@@ -403,9 +426,12 @@ except (OSError, json.JSONDecodeError) as error:
     fail(f"sealed driver receipt is unreadable: {error}")
 if not isinstance(receipt, dict):
     fail("sealed driver receipt is not an object")
-if receipt.get("schema") != 1 or receipt.get("format") != "crabc-x86-64-sealed-static-driver-v1":
+import os
+architecture = os.environ["ARCH"]
+expected_format = "crabc-aarch64-sealed-static-driver-v1" if architecture == "aarch64" else "crabc-x86-64-sealed-static-driver-v1"
+if receipt.get("schema") != 1 or receipt.get("format") != expected_format:
     fail("sealed driver receipt schema or format drifted")
-if receipt.get("target") != "x86_64-unknown-linux-musl":
+if receipt.get("target") != architecture + "-unknown-linux-musl":
     fail("sealed driver receipt target drifted")
 resolved_linker = receipt.get("resolved_linker")
 if not isinstance(resolved_linker, dict) or set(resolved_linker) != {"path", "sha256"}:
@@ -471,8 +497,10 @@ expected_contract = [
     str(library / expected[2]),
     str(library / "crti.o"),
     "<application-objects>",
+    *(["--start-group"] if architecture == "aarch64" else []),
     str(library / "libc.a"),
     str(library / "libcrabc-builtins.a"),
+    *(["--end-group"] if architecture == "aarch64" else []),
     str(library / "crtn.o"),
     "-o",
     "<output>",
@@ -594,8 +622,10 @@ assert_final_static_image() {
     local minimum_tls_alignment="${8:-4096}"
     local tls_count tls_filesz tls_memsz tls_alignment
 
-    grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' "$file_header" ||
-        fail "${mode} candidate is not EM_X86_64"
+    local machine='Advanced Micro Devices X86-64'
+    if [ "$ARCH" = aarch64 ]; then machine=AArch64; fi
+    grep -Eq "Machine:[[:space:]]+$machine" "$file_header" ||
+        fail "${mode} candidate has the wrong ELF machine"
     case "$mode" in
         -static)
             grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' "$file_header" ||
@@ -679,15 +709,21 @@ PY
     fi
     grep -Eq '[[:space:]]__udivti3$' "$symbols" ||
         fail "${mode} candidate lacks the owned __udivti3 helper"
-    if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
-        "$relocations" "$symbols"; then
+    local dynamic_relocations='R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)'
+    if [ "$ARCH" = aarch64 ]; then
+        dynamic_relocations='R_AARCH64_(GLOB_DAT|JUMP_SLOT|TLS|TLSDESC)'
+    fi
+    if grep -Eq "$dynamic_relocations" "$relocations" "$symbols"; then
         fail "${mode} candidate retains a dynamic relocation or dynamic TLS form"
     fi
     if [ "$mode" = -static-pie ]; then
         if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations"; then
             fail "static PIE candidate retained an unrelaxed initial-TLS access"
         fi
-        awk '$3 ~ /^R_X86_64_/ && $3 != "R_X86_64_RELATIVE" { exit 1 }' "$relocations" ||
+        local relocation_prefix=R_X86_64_ relative_relocation=R_X86_64_RELATIVE
+        if [ "$ARCH" = aarch64 ]; then relocation_prefix=R_AARCH64_ relative_relocation=R_AARCH64_RELATIVE; fi
+        awk -v prefix="$relocation_prefix" -v relative="$relative_relocation" \
+            'index($3, prefix) == 1 && $3 != relative { exit 1 }' "$relocations" ||
             fail "static PIE candidate retains a non-relative relocation"
     fi
     [ -x "$candidate" ] || chmod 755 "$candidate"
@@ -962,7 +998,9 @@ run_static_tbss() {
     audit_link_receipt "$installed_root" "$mode_root" "$mode" \
         "$mode_root/candidate" "$mode_root/link.receipt.json"
     candidate_output="$(env -i "$mode_root/candidate")" || fail "${label} TBSS candidate failed"
-    [ "$candidate_output" = 'initial-tbss=8192,worker=isolated' ] ||
+    local tbss_size=8192
+    [ "$ARCH" != aarch64 ] || tbss_size=131072
+    [ "$candidate_output" = "initial-tbss=${tbss_size},worker=isolated" ] ||
         fail "${label} TBSS candidate output drifted: $candidate_output"
 }
 
@@ -1676,13 +1714,20 @@ fi
 # Use the producer's checked checkout-state boundary for compiler scratch and
 # test fixtures too, even when called directly inside the pinned container.
 # The dispatcher still binds legacy /tmp spellings for older runners.
-TMPDIR="$(python3 -B - "$ROOT_DIR" <<'PY'
+TMPDIR="$(python3 -B - "$ROOT_DIR" "$ARCH" <<'PY'
 import sys
+from pathlib import Path
 
-sys.path.insert(0, sys.argv[1] + "/scripts")
-from build_x86_64_owned_sysroot import deterministic_environment
-
-print(deterministic_environment()["TMPDIR"])
+root = Path(sys.argv[1])
+if sys.argv[2] == "aarch64":
+    path = root / ".work/aarch64/tmp"
+    if path.resolve() != path or not path.is_dir():
+        raise SystemExit("native static scratch must be a physical directory")
+    print(path)
+else:
+    sys.path.insert(0, sys.argv[1] + "/scripts")
+    from build_x86_64_owned_sysroot import deterministic_environment
+    print(deterministic_environment()["TMPDIR"])
 PY
 )"
 export TMPDIR
@@ -1740,8 +1785,7 @@ link_editor="$LINK_EDITOR"
 [ "$link_editor" = /usr/bin/mold ] && [ -x "$link_editor" ] || fail "requires the pinned native mold linker"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-python3 -B -m unittest -v \
-    scripts.tests.test_build_x86_64_owned_sysroot \
+python3 -B -m unittest -v scripts.tests.test_build_x86_64_owned_sysroot \
     compat.x86_64.tests.test_owned_static_sysroot_package \
     compat.x86_64.tests.test_owned_static_consumer_matrix \
     compat.x86_64.tests.test_static_product_suite
@@ -1758,8 +1802,10 @@ if [ "$supplied" -eq 1 ]; then
 else
     primary="$work_dir/primary"
     reproduction="$work_dir/reproduction"
-    python3 "$BUILDER" --output "$primary" >"$work_dir/primary-build.json"
-    python3 "$BUILDER" --output "$reproduction" >"$work_dir/reproduction-build.json"
+    architecture_arguments=()
+    if [ "$ARCH" = aarch64 ]; then architecture_arguments=(--architecture aarch64); fi
+    python3 "$BUILDER" "${architecture_arguments[@]}" --output "$primary" >"$work_dir/primary-build.json"
+    python3 "$BUILDER" "${architecture_arguments[@]}" --output "$reproduction" >"$work_dir/reproduction-build.json"
 fi
 audit_installed_tree "$primary"
 audit_installed_tree "$reproduction"
@@ -1776,7 +1822,7 @@ if [ "$supplied" -eq 0 ]; then
         fail "two clean owned-static packages are not byte-identical"
     python3 "$PACKAGE" extract --archive "$work_dir/primary.tar.xz" \
         --destination "$work_dir/extracted-tree" >/dev/null
-    extracted="$work_dir/extracted-tree/crabc-x86_64-owned-static-sysroot"
+    extracted="$work_dir/extracted-tree/crabc-${ARCH}-owned-static-sysroot"
 fi
 write_tree_manifest "$extracted" "$work_dir/extracted-tree.sha256"
 cmp "$work_dir/primary-tree.sha256" "$work_dir/extracted-tree.sha256" ||

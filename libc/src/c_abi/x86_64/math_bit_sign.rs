@@ -18,13 +18,17 @@
 //! source in `xmm1`). Binary80 `fabsl`/`copysignl`, fdim, rounding, special,
 //! and general math remain outside this artifact.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 math bit-sign leaf requires little-endian Linux/x86-64");
 
 // Each musl object below has its own static archive member, as in musl's
 // libc.a; a chunk that shares local labels with another stays with it.
 // Musl's `src/math/fabs.c` object.
 static_archive_member! { fabs_source {
+    // musl 1.2.6 src/math/aarch64/fabs.c.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(".text", ".global fabs", ".type fabs, %function", "fabs:", "fabs d0, d0", "ret", ".size fabs, .-fabs");
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -47,6 +51,10 @@ fabs:
 
 // Musl's `src/math/fabsf.c` object.
 static_archive_member! { fabsf_source {
+    // musl 1.2.6 src/math/aarch64/fabsf.c.
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(".text", ".global fabsf", ".type fabsf, %function", "fabsf:", "fabs s0, s0", "ret", ".size fabsf, .-fabsf");
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -71,6 +79,13 @@ fabsf:
 
 // Musl's `src/math/copysign.c` object.
 static_archive_member! { copysign_source {
+    // musl 1.2.6 src/math/copysign.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn copysign(x: f64, y: f64) -> f64 {
+        f64::from_bits((x.to_bits() & 0x7fff_ffff_ffff_ffff) | (y.to_bits() & 0x8000_0000_0000_0000))
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text
@@ -100,6 +115,13 @@ copysign:
 
 // Musl's `src/math/copysignf.c` object.
 static_archive_member! { copysignf_source {
+    // musl 1.2.6 src/math/copysignf.c.
+    #[cfg(target_arch = "aarch64")]
+    #[no_mangle]
+    pub extern "C" fn copysignf(x: f32, y: f32) -> f32 {
+        f32::from_bits((x.to_bits() & 0x7fff_ffff) | (y.to_bits() & 0x8000_0000))
+    }
+    #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(
         r#"
     .text

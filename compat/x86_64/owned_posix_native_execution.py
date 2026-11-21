@@ -29,6 +29,7 @@ import owned_crypt_profile as crypt
 import owned_atomic_addressable_profile as atomic
 import owned_math_oracle_defects as math_oracle
 import owned_wordexp_upstream_policy as wordexp_policy
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-posix-native-execution/v2'
@@ -80,7 +81,7 @@ SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES, *wordexp_policy.wordexp.SOURC
     'compat/x86_64/owned_posix_family_observations.py',
     'compat/x86_64/owned_posix_static_products.py',
     'compat/x86_64/owned_dynamic_qualification.py',
-    'compat/upstreams.toml', 'rust-toolchain.toml', 'docker/Dockerfile.x86_64',
+    'compat/upstreams.toml', 'rust-toolchain.toml', f"docker/Dockerfile.{native_arch()['arch']}",
 )
 # Family admission is deliberately a consuming phase over the two existing
 # execution receipts. It does not rerun either producer and cannot turn a
@@ -103,9 +104,10 @@ write_new = family.static_products.write_new
 
 
 def require_execution_environment():
-    require(platform.system() == 'Linux' and platform.machine() == 'x86_64'
+    require(platform.system() == 'Linux' and platform.machine().lower() in
+            ({'x86_64', 'amd64'} if native_arch()['arch'] == 'x86_64' else {'aarch64', 'arm64'})
             and sys.byteorder == 'little' and os.geteuid() == 0,
-            'native execution requires the pinned Linux/x86-64 root environment')
+            'native execution requires the pinned native Linux root environment')
 
 
 def require_live_oracle(work, oracle):
@@ -598,7 +600,7 @@ def validate_admission_receipt(root, path):
     path = family.physical(root, path)
     require(path.name == 'family-admission.json', 'expected family-admission.json receipt')
     observed = collect_admission(root, path.parent)
-    require(same_json(read(path), observed), 'POSIX family admission receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'POSIX family admission receipt changed')
     return observed
 
 
@@ -618,7 +620,7 @@ def collect_component(root, work, index, component, inputs, product, source_moun
         {'invocation.json', 'stdout', 'stderr', 'status', 'tmp'},
         {'invocation.json', 'stdout', 'stderr', 'status', 'tmp', 'receipt.json'}), 'component step roster differs')
     start = work / 'sequence' / f'{index:02d}-{component.id}.json'
-    require(same_json(read(start), sequence_record(index, component, predecessor, inputs)),
+    require(source_seal.same_evidence(read(start), sequence_record(index, component, predecessor, inputs)),
             'component sequence predecessor or inputs changed')
     expected_invocation = family.invocation(Path(source_mount),
         component_command(root, component, product, source_mount), family.case_environment(root, step, source_mount))
@@ -716,7 +718,7 @@ def _collect(root, work):
     for index, component in enumerate(COMPONENTS):
         observed = collect_component(root, work, index, component, inputs, product, request['source_mount'], predecessor)
         path = work / 'runs' / component.id / 'receipt.json'
-        require(same_json(read(path), observed), 'native component receipt changed: ' + component.id)
+        require(source_seal.same_evidence(read(path), observed), 'native component receipt changed: ' + component.id)
         components[component.id] = observed
         predecessor = family.file_identity(root, path)
     guard(root, inputs, product)
@@ -827,7 +829,7 @@ def validate_receipt(root, path):
     path = family.physical(root, path)
     require(path.name == 'native-execution.json', 'expected native-execution.json receipt')
     observed = collect(root, path.parent)
-    require(same_json(read(path), observed), 'native aggregate receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'native aggregate receipt changed')
     return observed
 
 
@@ -836,7 +838,7 @@ def validate_receipt_with_matrix(root, path):
     path = family.physical(root, path)
     require(path.name == 'native-execution.json', 'expected native-execution.json receipt')
     observed, matrix = _collect(root, path.parent)
-    require(same_json(read(path), observed), 'native aggregate receipt changed')
+    require(source_seal.same_evidence(read(path), observed), 'native aggregate receipt changed')
     return observed, matrix
 
 

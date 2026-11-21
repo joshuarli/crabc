@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, offset_of, size_of};
 
@@ -12,6 +11,7 @@ impl Drop for RemoveFileOnDrop {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn x86_64_stat_matches_the_kernel_record() {
     assert_eq!(size_of::<fs::Stat>(), 144);
@@ -66,7 +66,10 @@ fn x86_64_fstat_reads_regular_file_metadata() {
     assert_eq!(observed.st_size, expected.len() as i64);
     assert_eq!(observed.st_ino, std::os::unix::fs::MetadataExt::ino(&expected));
     assert_eq!(observed.st_dev, std::os::unix::fs::MetadataExt::dev(&expected));
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(observed.st_nlink, std::os::unix::fs::MetadataExt::nlink(&expected));
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(u64::from(observed.st_nlink), std::os::unix::fs::MetadataExt::nlink(&expected));
     assert_eq!(observed.st_mode & 0o170000, 0o100000);
     assert_eq!(observed.st_mode & 0o777, 0o640);
     assert!((0..1_000_000_000).contains(&observed.st_atime_nsec));

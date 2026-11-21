@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -93,6 +92,8 @@ fn thread_kill_child() {
         .expect("query SIGUSR1 action before direct thread delivery");
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(record_delivery_thread),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The static handler remains installed through the worker join;

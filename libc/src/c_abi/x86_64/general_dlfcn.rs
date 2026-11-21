@@ -158,6 +158,7 @@ pub(super) const SYMBOL_INVALID_HANDLE: c_int = 10006;
 // SysV AMD64 supplies the original C return address at [rsp]. A tail branch
 // carries it as the third argument without adding a Rust wrapper frame, so
 // RTLD_NEXT identifies the application caller rather than shared libc.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     ".section .text.dlsym,\"ax\",@progbits",
     ".global dlsym",
@@ -165,6 +166,18 @@ core::arch::global_asm!(
     "dlsym:",
     "mov rdx, qword ptr [rsp]",
     "jmp __crabc_x86_general_dlsym",
+    ".size dlsym, .-dlsym",
+    ".hidden __crabc_x86_general_dlsym",
+);
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".section .text.dlsym,\"ax\",%progbits",
+    ".global dlsym",
+    ".type dlsym,%function",
+    "dlsym:",
+    "mov x2, x30",
+    "b __crabc_x86_general_dlsym",
     ".size dlsym, .-dlsym",
     ".hidden __crabc_x86_general_dlsym",
 );

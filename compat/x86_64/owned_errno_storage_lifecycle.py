@@ -26,11 +26,13 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
+from native_arch import native_arch
 
 
-SCHEMA = "crabc.x86_64-owned-errno-storage-lifecycle/v2"
-SNAPSHOT_SCHEMA = "crabc.x86_64-owned-errno-storage-lifecycle-source/v1"
-TARGET = "x86_64-unknown-linux-musl"
+ARCH = native_arch()["arch"]
+SCHEMA = f"crabc.{ARCH}-owned-errno-storage-lifecycle/v2"
+SNAPSHOT_SCHEMA = f"crabc.{ARCH}-owned-errno-storage-lifecycle-source/v1"
+TARGET = native_arch()["target_triple"]
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SYMBOL_LINE = re.compile(
     r"^\s*(\d+):\s+([0-9a-fA-F]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$"
@@ -175,7 +177,7 @@ def physical_regular(path: Path, description: str, *, loader_link: Path | None =
 
 
 def shared_libc_loader_link(libc: Path) -> Path:
-    return libc.parent.parent.parent / "lib/ld-crabc-x86_64.so.1"
+    return libc.parent.parent.parent / f"lib/ld-crabc-{ARCH}.so.1"
 
 
 def physical_directory(path: Path, description: str) -> Path:
@@ -1134,7 +1136,7 @@ def validate_dynamic_link_receipts(value: object, work: Path, products: Mapping[
         receipt = read_json_object(receipt_path, f"dynamic link receipt {name}")
         if (
             type(receipt.get("schema")) is not int
-            or receipt.get("format") != "crabc-x86-64-owned-dynamic-sysroot-v1"
+            or receipt.get("format") != f"crabc-{'x86-64' if ARCH == 'x86_64' else 'aarch64'}-owned-dynamic-sysroot-v1"
             or receipt.get("mode") != mode
             or receipt.get("output_sha256") != sha256(output_path)
             or receipt.get("manifest_sha256") != manifest_sha256

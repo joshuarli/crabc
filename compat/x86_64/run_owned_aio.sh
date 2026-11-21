@@ -8,8 +8,9 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 readonly EVIDENCE="$ROOT/compat/x86_64/owned_aio_evidence.py"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_aio_probe.c"
 readonly ONE_WRITE_PROBE="$ROOT/compat/x86_64/owned_aio_native_pie_probe.c"
 readonly BEHAVIOR_PROBE="$ROOT/compat/x86_64/owned_aio_behavior_probe.c"
@@ -27,7 +28,7 @@ readonly CANCEL_DEFECT_PROBE="$ROOT/compat/x86_64/owned_aio_cancel_defect_probe.
 readonly CANCEL_CURSOR_PROBE="$ROOT/compat/x86_64/owned_aio_cancel_cursor_probe.c"
 readonly SUBMIT_CANCEL_PROBE="$ROOT/compat/x86_64/owned_aio_submit_cancel_probe.c"
 readonly FRESH_SIGNAL_PROBE="$ROOT/compat/x86_64/owned_aio_fresh_signal_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 # Queue cleanup races descriptor reuse after terminal aiocb publication. A
 # repeated bounded witness makes that source window observable without
 # turning a successful scheduling outcome into a false oracle mismatch.

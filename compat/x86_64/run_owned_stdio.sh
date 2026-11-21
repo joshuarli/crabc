@@ -4,14 +4,15 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_stdio_probe.c"
 readonly FOPEN64_C_PROBE="$ROOT/compat/x86_64/fopen64_header_abi_probe.c"
 readonly FOPEN64_CXX_PROBE="$ROOT/compat/x86_64/fopen64_header_abi_probe.cpp"
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_stdio.sh"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
 readonly RECEIPT_READER="$ROOT/compat/x86_64/owned_stdio_component_receipt.py"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -43,7 +44,7 @@ done
 [ -z "$provided_static" ] || [ -n "$provided_dynamic" ] || usage
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) fail "unsupported architecture $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 
 python3 -B - "$ROOT" "$TMPDIR" "$provided_static" "$provided_dynamic" <<'PY'
@@ -101,9 +102,11 @@ printf 'owned stdio products evidence: %s\n' "$WORK"
 if [ -z "$provided_dynamic" ]; then
     provided_static="$WORK/static-product"
     provided_dynamic="$WORK/dynamic-product"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$provided_static" \
+    architecture_args=()
+    if [ "$arch" = aarch64 ]; then architecture_args=(--architecture aarch64); fi
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${architecture_args[@]}" --output "$provided_static" \
         >"$WORK/static-build.json"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$provided_dynamic" \
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${architecture_args[@]}" --output "$provided_dynamic" \
         >"$WORK/dynamic-build.json"
 fi
 readonly STATIC_PRODUCT="$provided_static"

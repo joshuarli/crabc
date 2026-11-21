@@ -26,10 +26,11 @@ ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "src" / "lib.rs"
 CONTRACT = ROOT / "x86_64-helper-contract.toml"
 sys.path.insert(0, str(ROOT.parent))
+from compat.x86_64.native_arch import native_arch
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
 TOOLCHAIN = pinned_toolchain(ROOT.parent)
-TARGET = "x86_64-unknown-linux-musl"
+TARGET = native_arch("x86_64")["target_triple"]
 ARCHIVE_NAME = "libcrabc-builtins.a"
 MEMBER_NAME = "crabc-builtins.o"
 REQUIRED_SYMBOLS = frozenset({
@@ -85,6 +86,9 @@ def native_source_definitions(source: Path) -> dict[str, str]:
     definitions: dict[str, str] = {}
     pattern = re.compile(r'pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(__\w+)\s*\((.*?)\)\s*->\s*([\w:<>]+)', re.S)
     for match in pattern.finditer(text):
+        attributes = re.search(r'(?:^[ \t]*#\[[^\n]*\][ \t]*\n)*\Z', text[:match.start()], re.M).group(0)
+        if '#[cfg(target_arch = "aarch64")]' in attributes:
+            continue
         name = match.group(1)
         _require(name not in definitions, f"duplicate native helper definition: {name}")
         definitions[name] = " ".join(match.group(0).split())

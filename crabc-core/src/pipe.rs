@@ -84,8 +84,15 @@ pub fn tee_raw(fd_in: RawFd, fd_out: RawFd, length: usize, flags: u32) -> Result
 /// values. A null pointer selects and advances the descriptor's current
 /// offset; a non-null pointer selects an explicit offset and advances the
 /// pointed-to value. At least one descriptor must refer to a pipe, as
-/// required by Linux. The pointers and descriptor lifetimes are owned by
-/// the caller for the duration of this call.
+/// required by Linux; the kernel validates descriptors, direction and flags.
+///
+/// # Safety
+///
+/// Each of `offset_in` and `offset_out` must be null or point to a Linux
+/// `loff_t` that stays valid for reads and writes for the duration of the
+/// call, with no live Rust reference to it, because Linux reads and updates
+/// the pointee. A pointer the caller intentionally passes through to the
+/// kernel instead preserves the C ABI's `EFAULT` behavior.
 #[inline]
 pub unsafe fn splice_raw(
     fd_in: RawFd,

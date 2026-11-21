@@ -57,6 +57,7 @@ const _: () = {
 // The fixed product libc keeps this weak GOT data reference. The merged link
 // binds it to the loader's record; ldso publishes the owned or conventional
 // state, preserving Scrt1's existing startup ownership.
+#[cfg(target_arch = "x86_64")]
 global_asm!(
     ".section .text.__crabc_x86_conventional_startup_v1_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_loader_conventional_startup_v1",
@@ -66,6 +67,20 @@ global_asm!(
     ".type __crabc_x86_conventional_startup_v1_record,@function",
     "__crabc_x86_conventional_startup_v1_record:",
     "mov rax, qword ptr [rip + __crabc_x86_64_loader_conventional_startup_v1@GOTPCREL]",
+    "ret",
+    ".size __crabc_x86_conventional_startup_v1_record, .-__crabc_x86_conventional_startup_v1_record",
+);
+
+#[cfg(target_arch = "aarch64")]
+global_asm!(
+    ".section .text.__crabc_x86_conventional_startup_v1_record,\"ax\",%progbits",
+    ".weak __crabc_x86_64_loader_conventional_startup_v1",
+    ".hidden __crabc_x86_conventional_startup_v1_record",
+    ".global __crabc_x86_conventional_startup_v1_record",
+    ".type __crabc_x86_conventional_startup_v1_record,%function",
+    "__crabc_x86_conventional_startup_v1_record:",
+    "adrp x0, :got:__crabc_x86_64_loader_conventional_startup_v1",
+    "ldr x0, [x0, :got_lo12:__crabc_x86_64_loader_conventional_startup_v1]",
     "ret",
     ".size __crabc_x86_conventional_startup_v1_record, .-__crabc_x86_conventional_startup_v1_record",
 );
@@ -142,12 +157,15 @@ pub(super) unsafe fn select() -> Option<Selection> {
     if thread_pointer != record.thread_pointer as usize {
         return None;
     }
+    #[cfg(target_arch = "x86_64")]
     let dtv_slot = thread_pointer.checked_add(core::mem::size_of::<usize>())? as *const usize;
+    #[cfg(target_arch = "aarch64")]
+    let dtv_slot = thread_pointer.checked_sub(super::super::aarch64_tls_layout::DTV_OFFSET_BELOW_TP)? as *const usize;
     // Both volatile reads remain below the complete metadata/READY gate. The
     // exact loader record and `%fs:0` self pointer now make this TCB/DTV
     // prefix safe to observe before dynamic_tls::attach_initial_thread reads
     // FS:0.
-    if unsafe { core::ptr::read_volatile(record.thread_pointer.cast::<usize>()) } != thread_pointer
+    if (cfg!(target_arch = "x86_64") && unsafe { core::ptr::read_volatile(record.thread_pointer.cast::<usize>()) } != thread_pointer)
         || unsafe { core::ptr::read_volatile(dtv_slot) } != record.dtv as usize
         || unsafe { core::ptr::read_volatile(record.dtv) } != record.module_count
     {
@@ -165,7 +183,10 @@ pub(super) unsafe fn select() -> Option<Selection> {
 unsafe fn current_thread_pointer() -> Option<usize> {
     let thread_pointer: usize;
     unsafe {
+        #[cfg(target_arch = "x86_64")]
         asm!("mov {}, fs:[0]", out(reg) thread_pointer, options(nostack, readonly));
+        #[cfg(target_arch = "aarch64")]
+        asm!("mrs {}, tpidr_el0", out(reg) thread_pointer, options(nostack));
     }
     (thread_pointer != 0).then_some(thread_pointer)
 }

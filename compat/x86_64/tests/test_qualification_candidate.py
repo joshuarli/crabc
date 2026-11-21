@@ -8,16 +8,20 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import qualification_candidate as candidate  # noqa: E402
+import native_arch  # noqa: E402
+with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("x86_64")):
+    import qualification_candidate as candidate  # noqa: E402
 import qualification_gates as gates  # noqa: E402
 
 
@@ -26,6 +30,20 @@ HARNESS_FIX = {**SOURCE, "revision": "b" * 40}
 
 
 class PlanTests(unittest.TestCase):
+    def test_arm64_preflight_selects_native_image_and_reports_corpus(self) -> None:
+        arch = native_arch.native_arch("aarch64")
+        context = candidate.Context(ROOT, ROOT / ".work/aarch64/candidate", {}, dry_run=True)
+        inspected = subprocess.CompletedProcess([], 0, arch["image"] + " linux/arm64\n", "")
+        with mock.patch.object(candidate, "ARCH", arch), \
+                mock.patch.object(candidate, "WORK_PARENT", Path(".work/aarch64")), \
+                mock.patch.object(candidate.subprocess, "run", return_value=inspected) as run, \
+                mock.patch.object(candidate.source_seal, "seal", return_value={}), \
+                mock.patch.object(candidate, "_validate_package_corpus", side_effect=ValueError("missing pinned APK archives: gzip.apk")):
+            blockers = candidate.preflight(ROOT, context, candidate.plan(through="static-products"))
+        self.assertEqual(run.call_args.args[0][-1], arch["image"])
+        self.assertFalse(any("core image is absent" in blocker for blocker in blockers))
+        self.assertTrue(any("missing pinned APK archives: gzip.apk" in blocker for blocker in blockers))
+
     def test_families_run_in_ledger_dependency_order(self) -> None:
         steps = candidate.plan()
         rows = candidate._ledger_rows(ROOT)
@@ -209,6 +227,55 @@ class PlanTests(unittest.TestCase):
         )
 
 
+FAKE_DOCKER = """\
+import json, os, sys
+state = os.environ["FAKE_DOCKER_STATE"]
+with open(os.path.join(state, "log"), "a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+with open(os.path.join(state, "running"), encoding="utf-8") as handle:
+    running = dict(line.split(" ", 1) for line in handle.read().splitlines())
+command, ids = sys.argv[1], sys.argv[2:]
+if command == "ps":
+    print("\\n".join(running))
+elif command == "inspect":
+    print(json.dumps([{"Id": id, "Mounts": [{"Source": running[id]}]} for id in ids if id in running]))
+elif command == "stop":
+    with open(os.path.join(state, "running"), "w", encoding="utf-8") as handle:
+        handle.writelines(f"{id} {source}\\n" for id, source in running.items() if id not in ids)
+"""
+FAKE_DISPATCHER = """\
+echo "new $CANDIDATE_ROOT" >> "$FAKE_DOCKER_STATE/running"
+(trap '' TERM; exec sleep 300) &
+echo $! > "$FAKE_DOCKER_STATE/grandchild.tmp"
+mv "$FAKE_DOCKER_STATE/grandchild.tmp" "$FAKE_DOCKER_STATE/grandchild"
+wait
+"""
+CANDIDATE_CHILD = """\
+import os, sys
+from pathlib import Path
+from unittest import mock
+sys.path.insert(0, sys.argv[1])
+import native_arch
+with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("x86_64")):
+    import qualification_candidate as candidate
+root, work, dispatcher = Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+source = {"revision": "a" * 40, "content_sha256": "c" * 64}
+with mock.patch.object(candidate, "preflight", return_value=[]), \\
+        mock.patch.object(candidate, "STOP_GRACE", 1.0, create=True):
+    candidate.execute(root, work, {}, through="static-products", source=lambda _root: source,
+                      runner=lambda _argv, stdout, stderr: candidate._run(["bash", dispatcher], stdout, stderr))
+"""
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return not state.stdout.strip().startswith("Z")
+
+
 class ExecutionTests(unittest.TestCase):
     """Run the real plan against a runner that fakes each producer's outputs."""
 
@@ -334,6 +401,46 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn("posix-native", self.calls)
         failed = [path.name for path in (self.work / "steps").iterdir() if ".failed-" in path.name]
         self.assertEqual(len(failed), 1)
+
+    def test_a_stopped_candidate_ends_its_dispatcher_group_and_containers(self) -> None:
+        state = self.root / "docker"
+        bin_directory = state / "bin"
+        bin_directory.mkdir(parents=True)
+        docker = bin_directory / "docker"
+        docker.write_text(f"#!{sys.executable}\n" + FAKE_DOCKER, encoding="utf-8")
+        docker.chmod(0o755)
+        (state / "running").write_text(f"old {ROOT}\nother /elsewhere\n", encoding="utf-8")
+        dispatcher = state / "dispatcher.sh"
+        dispatcher.write_text(FAKE_DISPATCHER, encoding="utf-8")
+        environment = {**os.environ, "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
+                       "FAKE_DOCKER_STATE": str(state), "CANDIDATE_ROOT": str(ROOT)}
+        child = subprocess.Popen([sys.executable, "-B", "-c", CANDIDATE_CHILD, str(ROOT / "compat/x86_64"),
+                                  str(self.root), str(self.work), str(dispatcher)],
+                                 cwd=ROOT, env=environment, start_new_session=True)
+        self.addCleanup(lambda: child.poll() is None and os.killpg(child.pid, signal.SIGKILL))
+        pidfile = state / "grandchild"
+        deadline = time.monotonic() + 30
+        while not pidfile.exists() and time.monotonic() < deadline and child.poll() is None:
+            time.sleep(0.05)
+        self.assertTrue(pidfile.exists(), "fake dispatcher never started")
+        grandchild = int(pidfile.read_text(encoding="ascii"))
+        self.addCleanup(lambda: _alive(grandchild) and os.kill(grandchild, signal.SIGKILL))
+
+        child.send_signal(signal.SIGTERM)
+        child.wait(timeout=30)
+        self.assertFalse(_alive(grandchild), "dispatcher grandchild outlived the candidate")
+        stops = [line.split()[1:] for line in (state / "log").read_text(encoding="utf-8").splitlines()
+                 if line.startswith("stop")]
+        self.assertEqual(stops, [["new"]])
+
+        summary = json.loads((self.work / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["steps"][-1]["status"], "failed")
+        self.assertEqual(summary["steps"][-1]["exit_status"], 128 + signal.SIGTERM)
+        self.assertFalse((self.work / "steps/00-static-products/record.json").exists())
+        resumed = self._execute(through="static-products")
+        self.assertNotIn("error", resumed)
+        self.assertEqual(self.calls, ["static-products"])
+        self.assertTrue((self.work / "steps/00-static-products.failed-1/stdout").is_file())
 
     def test_changed_output_or_another_product_source_fails_closed(self) -> None:
         self.assertTrue(self._execute(through="posix-family")["steps"])
@@ -469,6 +576,18 @@ class ExecutionTests(unittest.TestCase):
 
 
 class AttachmentTests(unittest.TestCase):
+    def test_arm64_maps_only_the_x86_work_prefix(self) -> None:
+        context = candidate.Context(ROOT, ROOT / ".work/aarch64/feature-complete", {}, dry_run=True)
+        steps = candidate.plan()
+        with mock.patch.object(candidate, "ARCH", native_arch.native_arch("aarch64")), \
+                mock.patch.object(candidate, "WORK_PARENT", Path(".work/aarch64")):
+            records = candidate.attachments(ROOT, context, steps)
+        self.assertEqual(len(records), 4)
+        self.assertTrue(all(record["state"] == "attached" for record in records))
+        self.assertTrue(all(record["row_receipt"].startswith(".work/x86_64/") for record in records))
+        with mock.patch.object(candidate, "ARCH", native_arch.native_arch("x86_64")):
+            self.assertTrue(all(record["state"] == "mismatch" for record in candidate.attachments(ROOT, context, steps)))
+
     def test_a_row_naming_another_receipt_is_a_preflight_blocker(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             root = Path(temporary)

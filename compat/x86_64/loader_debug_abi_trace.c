@@ -11,6 +11,10 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/user.h>
+#if defined(__aarch64__)
+#include <sys/uio.h>
+#include <elf.h>
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -40,6 +44,37 @@ static void poke(uintptr_t address, long value)
 {
     if (ptrace(PTRACE_POKETEXT, child, (void *)address, (void *)value)) fail("debugger poke");
 }
+#if defined(__aarch64__)
+struct native_regs { uint64_t regs[31], sp, pc, pstate; };
+static void get_regs(struct native_regs *regs)
+{
+    struct iovec io = { regs, sizeof *regs };
+    if (ptrace(PTRACE_GETREGSET, child, (void *)NT_PRSTATUS, &io) || io.iov_len != sizeof *regs)
+        fail("debugger registers");
+}
+static void set_regs(struct native_regs *regs)
+{
+    struct iovec io = { regs, sizeof *regs };
+    if (ptrace(PTRACE_SETREGSET, child, (void *)NT_PRSTATUS, &io)) fail("debugger registers");
+}
+#define PROGRAM_COUNTER(r) ((r).pc)
+#define BREAKPOINT_SIZE 0
+#define BREAKPOINT_WORD(v) (((v) & ~0xffffffffL) | 0xd4200000L)
+#else
+#define native_regs user_regs_struct
+static void get_regs(struct native_regs *regs)
+{
+    if (ptrace(PTRACE_GETREGS, child, 0, regs)) fail("debugger registers");
+}
+static void set_regs(struct native_regs *regs)
+{
+    if (ptrace(PTRACE_SETREGS, child, 0, regs)) fail("debugger registers");
+}
+#define PROGRAM_COUNTER(r) ((r).rip)
+#define BREAKPOINT_SIZE 1
+#define BREAKPOINT_WORD(v) (((v) & ~255L) | 0xcc)
+#endif
+
 static int wait_child(void)
 {
     int status;
@@ -56,11 +91,20 @@ static uintptr_t provider_base(const struct stat *provider)
     while (fgets(line, sizeof line, maps)) {
         unsigned long start, end, offset, inode;
         unsigned device_major, device_minor;
-        if (sscanf(line, "%lx-%lx %7s %lx %x:%x %lu", &start, &end,
-                   permissions, &offset, &device_major, &device_minor, &inode) != 7)
+        int path_offset = 0;
+        if (sscanf(line, "%lx-%lx %7s %lx %x:%x %lu %n", &start, &end,
+                   permissions, &offset, &device_major, &device_minor, &inode, &path_offset) != 7)
             fail("debugger maps row");
-        if (offset == 0 && inode == provider->st_ino
-            && device_major == major(provider->st_dev) && device_minor == minor(provider->st_dev)) {
+        int same_device = device_major == major(provider->st_dev) && device_minor == minor(provider->st_dev);
+#if defined(__aarch64__)
+        if (!same_device && path_offset && line[path_offset] == '/') {
+            char *name = line + path_offset;
+            name[strcspn(name, "\n")] = 0;
+            struct stat mapped;
+            same_device = stat(name, &mapped) == 0 && mapped.st_dev == provider->st_dev && mapped.st_ino == provider->st_ino;
+        }
+#endif
+        if (offset == 0 && inode == provider->st_ino && same_device) {
             if (result) fail("debugger ambiguous provider");
             result = start;
         }
@@ -98,12 +142,12 @@ int main(int argc, char **argv)
         || ptrace(PTRACE_CONT, child, 0, 0)) fail("debugger continue to exec");
     status = wait_child();
     if (!WIFSTOPPED(status) || (unsigned)status >> 16 != PTRACE_EVENT_EXEC) fail("debugger exec stop");
-    struct user_regs_struct registers;
-    if (ptrace(PTRACE_GETREGS, child, 0, &registers)) fail("debugger entry registers");
-    uintptr_t loader_base = registers.rip - entry;
+    struct native_regs registers;
+    get_regs(&registers);
+    uintptr_t loader_base = PROGRAM_COUNTER(registers) - entry;
     uintptr_t breakpoint = loader_base + hook;
     long original = peek(breakpoint);
-    poke(breakpoint, (original & ~255L) | 0xcc);
+    poke(breakpoint, BREAKPOINT_WORD(original));
     if (ptrace(PTRACE_CONT, child, 0, 0)) fail("debugger start");
     unsigned events = 0, initial_count = 0, maximum_delta = 0;
     uintptr_t debug_address = 0;
@@ -115,8 +159,8 @@ int main(int argc, char **argv)
             return 0;
         }
         if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGTRAP) fail("debugger unexpected child stop");
-        if (ptrace(PTRACE_GETREGS, child, 0, &registers) || registers.rip != breakpoint + 1)
-            fail("debugger breakpoint registers");
+        get_regs(&registers);
+        if (PROGRAM_COUNTER(registers) != breakpoint + BREAKPOINT_SIZE) fail("debugger breakpoint registers");
         uintptr_t actual = (uintptr_t)peek(provider_base(&provider) + pointer_offset);
         if (!actual || (debug_address && debug_address != actual)) fail("debugger pointer ownership");
         debug_address = actual;
@@ -144,12 +188,12 @@ int main(int argc, char **argv)
         fprintf(stderr, "debug-event=%d,maps-added=%u\n", debug.r_state, delta);
         if (++events > 255) fail("debugger event bound");
         poke(breakpoint, original);
-        --registers.rip;
-        if (ptrace(PTRACE_SETREGS, child, 0, &registers) || ptrace(PTRACE_SINGLESTEP, child, 0, 0))
-            fail("debugger single step");
+        PROGRAM_COUNTER(registers) -= BREAKPOINT_SIZE;
+        set_regs(&registers);
+        if (ptrace(PTRACE_SINGLESTEP, child, 0, 0)) fail("debugger single step");
         status = wait_child();
         if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGTRAP) fail("debugger step stop");
-        poke(breakpoint, (original & ~255L) | 0xcc);
+        poke(breakpoint, BREAKPOINT_WORD(original));
         if (ptrace(PTRACE_CONT, child, 0, 0)) fail("debugger continue");
     }
 }

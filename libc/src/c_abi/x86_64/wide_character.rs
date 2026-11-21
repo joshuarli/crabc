@@ -32,7 +32,7 @@
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the wide-character core requires little-endian Linux/x86-64");
@@ -74,6 +74,9 @@ unsafe fn wide_length(mut string: *const Wchar) -> usize {
 
 #[inline]
 fn compare_units(left: Wchar, right: Wchar) -> c_int {
+    // Linux/AArch64 `wchar_t` is unsigned; Linux/x86-64 `wchar_t` is signed.
+    #[cfg(target_arch = "aarch64")]
+    let (left, right) = (left as u32, right as u32);
     if left < right {
         -1
     } else if left > right {

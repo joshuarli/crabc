@@ -161,9 +161,8 @@ deferred on both architectures.
 ## Sequencing with x86
 
 - Converging edits shared source and therefore changes the x86 product digest.
-  **Nothing from this campaign merges to main until x86 F2 (final8) is
-  accepted.** A0 host bring-up and A1 inventory can start now on a branch,
-  because they need no merge.
+  The owner merged `crab8/integration` to main on 2026-11-20, before F2
+  acceptance; main is now the integration branch.
 - After F2, every merge that touches shared source needs the focused x86 checks
   for that family on the x86 host. A5 needs both candidates.
 - x86 F3 (performance) stays unscheduled, consistent with deferring performance.
@@ -204,11 +203,10 @@ starting brief for the Apple Silicon session.
   at a fixed main SHA, then a musl-vs-crabc perf comparison. `plan.md` Status
   records that chain. Acceptance (F2 closeout step 6) is recorded from the x86
   host afterwards. The Mac session never runs or edits x86 candidates.
-- **Merge rule:** until final8 is accepted, nothing that touches the x86
-  product source seal merges to main. The seal is `PRODUCT_TREES` and
-  `PRODUCT_FILES` in `compat/x86_64/source_seal.py`, and it includes
-  `docker/`, so even the arm64 Dockerfile waits on its branch. Docs outside the
-  seal may land.
+- **Merge rule:** lanes branch from main and land only after their focused
+  checks pass on both arches; changes inside the product source seal
+  (`PRODUCT_TREES` and `PRODUCT_FILES` in `compat/x86_64/source_seal.py`,
+  including `docker/`) invalidate the running candidate.
 
 ### Host setup (OrbStack)
 
@@ -302,8 +300,8 @@ Use `-Zbuild-std=std,panic_abort` for `crabc-rs`. The override drops
 
 ### Progress record (2026-11-18)
 
-Integration branch: `crab8/integration` (origin). Lanes branch from it and are
-cherry-picked back after review; nothing merges to main before final8.
+Integration branch: main (formerly `crab8/integration`). Lanes branch from it
+and are cherry-picked back after review.
 
 Done on arm64, each matching the `[musl_native]` oracle's stdout and status:
 static, static-PIE and dynamic PIE `hello`, static/static-PIE pthread+TLS,
@@ -326,19 +324,55 @@ the TLS layout contract is `libc/src/c_abi/x86_64/aarch64_tls_layout.rs`
 selects platform, image, triple, linker, oracle and work directory for the
 harness.
 
+Milestone (2026-11-19, `cb9cfcd2d`): the materialized dynamic product cohort
+qualifies natively on arm64 — all 77 required cases pass for the installed,
+second-build and extracted products, and the qualification receipt publishes.
+The 34-case package corpus, the resolver/network gate and all 22
+`compat.abi-differential` steps also pass on arm64, and the A5 candidate's arm64
+dry run reports no preflight blockers. Independent audits of the port are
+tracked in `docs/evidence/crab8-aarch64-port-audit.md`.
+
 Open, in dependency order:
-- Harness contracts for the remaining gate producers: loader family
-  (`owned_loader_family.py` x86 receipt guard; no aarch64 package corpus is
-  pinned), hardened runtime (static builder's hardened guard; aarch64 `rcrt1`
-  lacks the x86 hardened checks), resolver-network and Lua (package,
-  extraction, driver and ELF contracts), POSIX native inputs, ABI evidence,
-  Rust std/LTO (the static driver rejects rustc's `-Wl,--as-needed`;
-  `unwinder/owned_rust_link.py` is x86-only).
-- The three-mode fixture sweep over `tests/fixtures/*_test.c`.
+- The seven-gate driver itself: `compat/x86_64/qualification_candidate.py` now
+  takes its work root, oracle wrapper and image pin from `native_arch`; its
+  product cohort (static preparation, materialized dynamic qualification,
+  static/combined sysroot, CRT dynamic startup) is being made to run on arm64.
+  On arm64 the ledger rows' `.work/x86_64/` receipt paths map to
+  `.work/aarch64/`, and the canonical run is `--work .work/aarch64/feature-complete`.
+- Family producers still x86-bound: loader family readers, hardened entry
+  probes, `owned-wordexp` (the aarch64 candidate must reproduce the fixed x86
+  traces), dynamic Lua (driver `--application-dependency-file`), Rust provider
+  regressions, POSIX native aggregate, pthread/text/resolver/C-ABI families and
+  ABI evidence.
+- Package corpus: `compat/corpus/manifest.toml` pins the 34-case Alpine
+  3.24.1 AArch64 corpus by archive SHA-256, and the converged readers now
+  stage and validate it on arm64. The 20 cases whose archives are still
+  available match pinned musl byte for byte (stdout, stderr, status) through
+  the converged dynamic product. Seven pinned archives (curl 8.21.0-r0,
+  git 2.54.0-r0, gzip 1.14-r2, openssh-client-default 10.3_p1-r0,
+  openssl 3.5.7-r0, python3 3.14.7-r1, sqlite 3.53.2-r0) now return 404 from
+  dl-cdn and mirrors for both architectures, because Alpine drops superseded
+  builds, and their binaries also need libacl, libmagic, libpcre2 and libzstd,
+  which the pinned image lacks. Decided (2026-11-18, owner-delegated): add
+  `compat/corpus/manifest-aarch64.toml`, the AArch64 counterpart of
+  `manifest-x86_64.toml`. It pins current v3.24 aarch64 direct-package versions
+  and their complete solved non-libc closure by SHA-256, with provenance from the
+  signed index under a pinned key, and records `native_version_deltas`. The
+  workload source `manifest.toml` and the x86 contract stay unchanged.
 - x86 link and run of the converged tree on the x86 host (type-checked only
   here).
-- Owner decision: binary128 soft-float rounding and exception fidelity
-  (`compiler_builtins` helpers versus libgcc's soft-fp).
+- Revised (2026-11-19, owner-delegated): binary128 `long double` arithmetic
+  must honor the FPCR rounding mode and raise FPSR exception flags. The earlier
+  choice (compiler_builtins helpers, round-to-nearest only, recorded as a known
+  difference) leaked into user-visible output: musl's float formatter uses
+  `long double` arithmetic, so `snprintf("%.0f", -0.5)` under `FE_DOWNWARD`
+  printed `-0` where musl prints `-1`. The owned builtins provide
+  rounding-mode-aware binary128 helpers, differentially tested against
+  musl + libgcc soft-fp; libgcc itself stays out of the owned sysroot. Where libgcc's soft-fp and the AArch64 tininess rule
+  disagree (the largest subnormal times 1 + 2^-112 under round-to-nearest gives
+  the smallest normal with underflow and inexact in libgcc), the pinned oracle
+  governs. Implemented in `builtins/src/aarch64_binary128.rs`; the long-double
+  completion evidence now reports zero differences with no allowlist.
 
 Host workflow: the VM clone is `~/crabc`, reachable from the Mac as git remote
 `a64` (`crabc@orb:crabc`) with `receive.denyCurrentBranch updateInstead`.

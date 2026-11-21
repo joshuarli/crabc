@@ -30,6 +30,12 @@ describes a mechanism that only test or audit builds compile, it says so; the
 production x86 owner-exit and free paths are in
 [Thread attach and owner exit](#thread-attach-and-owner-exit).
 
+The owned static and dynamic product builders for x86-64 and AArch64 compile
+the pinned C backend with `-Denviron=(*__crabc_allocator_environ())`. This
+keeps upstream's case-insensitive environment scan and its original ordering;
+the internal accessor supplies an empty vector in secure execution and the
+live `environ` variable otherwise. The upstream source remains unchanged.
+
 ## Scope and fidelity rules
 
 - Active target: native Linux/x86-64, little-endian, kernel 5.10 or newer. The

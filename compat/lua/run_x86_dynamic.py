@@ -36,6 +36,8 @@ ROOT = LUA.ROOT
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_posix_product_evidence as product_evidence
 import owned_dynamic_receipt as receipt_contract
+from native_arch import native_arch
+from native_runtime_profile import NativeRuntimeProfile
 
 FIXTURES = LUA.FIXTURES
 MANIFEST = LUA.MANIFEST
@@ -46,10 +48,11 @@ DEFAULT_WORK_ROOT = ROOT / ".work/x86_64/lua-dynamic-source-build"
 DEFAULT_REPORT = ROOT / "compat/reports/lua/x86_64-dynamic-latest.json"
 DYNAMIC_SYSROOT_BUILDER = ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"
 DYNAMIC_PACKAGE_TOOL = ROOT / "compat/x86_64/owned_dynamic_package.py"
-CANONICAL_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+ARCH = LUA.ARCH
+CANONICAL_INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1" if ARCH == "x86_64" else "crabc-aarch64-owned-dynamic-sysroot-v1"
 CHROOT = "/usr/sbin/chroot"
-_SHELL_COMPAT_ALIAS = "lib/ld-musl-x86_64.so.1"
+_SHELL_COMPAT_ALIAS = f"lib/ld-musl-{ARCH}.so.1"
 _APPLICATION_PAYLOAD = (
     ("lua", "application/bin/lua"),
     ("luac", "application/bin/luac"),
@@ -63,8 +66,8 @@ _APPLICATION_PAYLOAD = (
 def require_native_x86_64() -> None:
     """Refuse a result produced through an emulation path."""
 
-    if platform.system() != "Linux" or platform.machine() not in {"x86_64", "amd64"}:
-        raise LUA.RunnerError("native Lua dynamic source-build gate requires native Linux/x86-64")
+    if platform.system() != "Linux" or platform.machine() not in ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}):
+        raise LUA.RunnerError(f"native Lua dynamic source-build gate requires native Linux/{'x86-64' if ARCH == 'x86_64' else 'aarch64'}")
 
 
 def dynamic_environment(state: Path) -> dict[str, str]:
@@ -88,13 +91,13 @@ def owned_dynamic_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise LUA.RunnerError(f"invalid owned x86 dynamic sysroot manifest: {manifest_path}") from error
-    aliases = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
+    aliases = NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture(ARCH)
     if not isinstance(manifest, dict) or (
         manifest.get("schema"),
         manifest.get("format"),
         manifest.get("target"),
         manifest.get("symlinks"),
-    ) != (1, FORMAT, "x86_64-unknown-linux-musl", aliases):
+    ) != (1, FORMAT, LUA.ARCHITECTURE["target_triple"], aliases):
         raise LUA.RunnerError("manifest does not identify the owned x86 dynamic sysroot")
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
@@ -136,15 +139,16 @@ def owned_dynamic_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict
         raise LUA.RunnerError("owned x86 dynamic compiler wrapper is not executable")
     runtime = {
         "headers": root / "usr/include",
-        "loader": root / "lib/ld-crabc-x86_64.so.1",
+        "loader": root / f"lib/ld-crabc-{ARCH}.so.1",
         "crt1.o": root / "usr/lib/crt1.o",
         "Scrt1.o": root / "usr/lib/Scrt1.o",
         "crti.o": root / "usr/lib/crti.o",
         "crtn.o": root / "usr/lib/crtn.o",
-        "attach": root / "usr/lib/crabc-dynamic-attach.o",
         "libc.so": root / "usr/lib/libc.so",
         "builtins": root / "usr/lib/libcrabc-builtins.a",
     }
+    if ARCH == "x86_64":
+        runtime["attach"] = root / "usr/lib/crabc-dynamic-attach.o"
     LUA.require_physical_directory(runtime["headers"], "owned x86 dynamic headers")
     for name, artifact in runtime.items():
         if name != "headers":
@@ -209,7 +213,7 @@ def dynamic_driver_plan(
         "--dynamic-linker",
         CANONICAL_INTERPRETER,
         str(runtime["Scrt1.o"]),
-        str(runtime["crabc-dynamic-attach.o"]) if "crabc-dynamic-attach.o" in runtime else str(runtime["attach"]),
+        *([str(runtime["attach"])] if ARCH == "x86_64" else []),
     )
     for item in required:
         if item not in linker:
@@ -565,7 +569,7 @@ def audit_dynamic_receipt(
             runtime["libc.so"],
             runtime["crtn.o"],
             runtime["Scrt1.o"] if mode == "pie" else runtime["crt1.o"],
-            runtime["attach"],
+            *([runtime["attach"]] if ARCH == "x86_64" else []),
         )
     )
     archive = runtime["builtins"]
@@ -661,8 +665,9 @@ def dynamic_elf(path: Path, *, executable: bool, label: str) -> dict[str, object
     segments = LUA.readelf(path, "-lW")
     dynamic = LUA.readelf(path, "-dW")
     relocations = LUA.readelf(path, "-rW")
-    if "Advanced Micro Devices X86-64" not in header or not re.search(r"Type:\s+DYN\b", header):
-        raise LUA.RunnerError(f"{label} is not an x86-64 ET_DYN artifact")
+    machine = "Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64"
+    if machine not in header or not re.search(r"Type:\s+DYN\b", header):
+        raise LUA.RunnerError(f"{label} is not an {'x86-64' if ARCH == 'x86_64' else 'aarch64'} ET_DYN artifact")
     if executable:
         if CANONICAL_INTERPRETER not in segments:
             raise LUA.RunnerError(f"{label} does not name the canonical crabc loader")
@@ -1013,7 +1018,7 @@ def _shell_ldd_closure(text: str) -> tuple[str, ...]:
             raise LUA.RunnerError(f"external shell ldd output has an unsealed dependency: {line!r}")
         if path not in closure:
             closure.append(path)
-    if tuple(closure) != ("/lib/ld-musl-x86_64.so.1",):
+    if tuple(closure) != (f"/{_SHELL_COMPAT_ALIAS}",):
         raise LUA.RunnerError("external shell ldd closure differs from its single pinned loader fixture")
     return tuple(closure)
 
@@ -1038,7 +1043,7 @@ def qualified_shell_loader_fixture(work: Path, shell: Path, timeout: float) -> t
         raise LUA.RunnerError("external shell ldd output is not text")
     closure = _shell_ldd_closure(text)
     try:
-        physical = (MUSL_ROOT / "lib/ld-musl-x86_64.so.1").resolve(strict=True)
+        physical = (MUSL_ROOT / _SHELL_COMPAT_ALIAS).resolve(strict=True)
     except OSError as error:
         raise LUA.RunnerError("qualified musl shell loader fixture is unavailable") from error
     loader = require_regular(physical, "qualified musl shell loader fixture")
@@ -1076,7 +1081,7 @@ def prepare_candidate_execution_root(
     source_root_entry = _entry_record(source_root, "candidate execution product root")
     expected_product = _tree_entries(source_root, "candidate execution product")
     alias = expected_product.get(_SHELL_COMPAT_ALIAS)
-    if alias != {"type": "symlink", "target": "ld-crabc-x86_64.so.1"}:
+    if alias != {"type": "symlink", "target": f"ld-crabc-{ARCH}.so.1"}:
         raise LUA.RunnerError("candidate execution product lacks the canonical shell compatibility alias")
     for relative in ("bin/sh", "application", "application/bin", "application/lib", "work"):
         if relative in expected_product:
@@ -1099,12 +1104,12 @@ def prepare_candidate_execution_root(
             raise LUA.RunnerError(f"candidate execution runtime copy drifted: {name}")
 
     alias_path = root / _SHELL_COMPAT_ALIAS
-    if not alias_path.is_symlink() or os.readlink(alias_path) != "ld-crabc-x86_64.so.1":
+    if not alias_path.is_symlink() or os.readlink(alias_path) != f"ld-crabc-{ARCH}.so.1":
         raise LUA.RunnerError("candidate execution root did not preserve its initial shell compatibility alias")
     closure_loader = shell_loader_closure.get("qualified_loader")
     closure_command = shell_loader_closure.get("command")
     if (
-        shell_loader_closure.get("closure") != ["/lib/ld-musl-x86_64.so.1"]
+        shell_loader_closure.get("closure") != [f"/{_SHELL_COMPAT_ALIAS}"]
         or shell_loader_closure.get("required_in_root_path") != _SHELL_COMPAT_ALIAS
         or not isinstance(closure_loader, Mapping)
         or closure_loader.get("sha256") != LUA.sha256_file(require_regular(shell_loader, "qualified musl shell loader fixture"))
@@ -1171,7 +1176,7 @@ def prepare_candidate_execution_root(
             "loader_destination": f"/{_SHELL_COMPAT_ALIAS}",
             "loader_entry": shell_loader_record,
             "ldd_closure": dict(shell_loader_closure),
-            "alias_exception": "only /lib/ld-musl-x86_64.so.1 replaces the copied product symlink",
+            "alias_exception": ("only /lib/ld-musl-x86_64.so.1 replaces the copied product symlink" if ARCH == "x86_64" else "the external shell loader is added at /lib/ld-musl-aarch64.so.1"),
         },
         "immutable_entries": expected_entries,
         "mutable_root": "/work",
@@ -1431,7 +1436,7 @@ def verify_candidate_maps(
     if process_root is not None and process_root.resolve(strict=True) != root:
         raise LUA.RunnerError("candidate map snapshot does not belong to its selected private execution root")
     expected = {
-        "owned_loader": ("/lib/ld-crabc-x86_64.so.1", runtime["loader"]),
+        "owned_loader": (CANONICAL_INTERPRETER, runtime["loader"]),
         "owned_libc": ("/usr/lib/libc.so", runtime["libc.so"]),
         "liblua": ("/application/lib/liblua.so.5.4", libraries / "liblua.so.5.4"),
         "probe": ("/application/lib/crabc_probe.so", libraries / "crabc_probe.so"),
@@ -1596,7 +1601,7 @@ def run_workloads(
         fail_workload("dynamic luac did not produce both bytecode artifacts", workloads, execution)
 
     source_reference, _ = LUA.run_lua(
-        [str(MUSL_ROOT / "lib/ld-musl-x86_64.so.1"), str(reference["lua"])],
+        [str(MUSL_ROOT / _SHELL_COMPAT_ALIAS), str(reference["lua"])],
         script,
         reference_libraries,
         reference_runtime,
@@ -1613,7 +1618,7 @@ def run_workloads(
         capture_maps=True,
     )
     bytecode_reference, _ = LUA.run_lua(
-        [str(MUSL_ROOT / "lib/ld-musl-x86_64.so.1"), str(reference["lua"])],
+        [str(MUSL_ROOT / _SHELL_COMPAT_ALIAS), str(reference["lua"])],
         reference_bytecode,
         reference_libraries,
         reference_runtime,
@@ -1688,10 +1693,11 @@ def run_dynamic_lane(
     jobs: int,
     timeout: float,
     build_profile: str = "release",
+    manifest_path: Path = MANIFEST,
 ) -> dict[str, object]:
     require_native_x86_64()
     root = LUA.native_work_root(work_root)
-    manifest = LUA.load_manifest(MANIFEST)
+    manifest = LUA.load_manifest(manifest_path)
     archive = LUA.fetch_archive(manifest, offline, cache)
     sysroot, wrapper, runtime, installed_manifest = owned_dynamic_sysroot(sysroot_path)
     if build_profile == "debug" and installed_manifest.get("build_profile") != "debug":
@@ -1702,7 +1708,7 @@ def run_dynamic_lane(
         "runner": "crabc-lua-native-x86-dynamic-source-build" + ("-debug" if build_profile == "debug" else ""),
         "result": "fail",
         "passed": False,
-        "manifest": {"path": str(MANIFEST), "sha256": LUA.sha256_file(MANIFEST), "contents": manifest},
+        "manifest": {"path": str(manifest_path), "sha256": LUA.sha256_file(manifest_path), "contents": manifest},
         "source_archive": LUA.artifact_record(archive),
         "work_directory": str(lane),
         "environment": {
@@ -1798,6 +1804,7 @@ def publish_report(report: Path, latest_report: Path) -> Path:
 def run_dynamic_dispatch(
     *, jobs: int, timeout: float, offline: bool, state_parent: Path = DEFAULT_WORK_ROOT,
     latest_report: Path | None = DEFAULT_REPORT, allocator_backend: str = "accepted-c",
+    architecture: str = "x86_64",
 ) -> tuple[dict[str, object], Path, Path | None]:
     """Build, package/extract, and source-qualify one isolated dynamic Lua graph."""
 
@@ -1835,7 +1842,7 @@ def run_dynamic_dispatch(
     try:
         builder = require_regular(DYNAMIC_SYSROOT_BUILDER, "native Lua dynamic sysroot builder")
         producer = command(
-            [sys.executable, "-B", str(builder), "--output", str(installed),
+            [sys.executable, "-B", str(builder), *(("--architecture", architecture) if architecture != "x86_64" else ()), "--output", str(installed),
              *(("--allocator-backend", allocator_backend) if allocator_backend != "accepted-c" else ())],
             work=ROOT,
             state=state / "producer",
@@ -1843,6 +1850,8 @@ def run_dynamic_dispatch(
         )
         dispatcher["producer"] = producer
         require_success(producer, "native Lua dynamic sysroot producer")
+        if architecture != "x86_64":
+            raise LUA.RunnerError("aarch64 Lua dynamic package and driver receipt contracts are unavailable")
         package_tool = require_regular(DYNAMIC_PACKAGE_TOOL, "native Lua dynamic sysroot package tool")
         packaged = command(
             [sys.executable, "-B", str(package_tool), "package", str(installed), str(package)],
@@ -1927,6 +1936,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    arch = native_arch()
     try:
         if args.build_profile == "debug":
             LUA.disable_core_dump_inheritance()
@@ -1938,6 +1948,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             LUA.write_json_atomic(report_path, report)
             latest = None
+        elif arch["arch"] == "aarch64":
+            if args.allocator_backend != "accepted-c":
+                raise LUA.RunnerError("aarch64 Lua dynamic requires the accepted C allocator")
+            report, report_path, latest = run_dynamic_dispatch(
+                jobs=args.jobs, timeout=args.timeout, offline=args.offline, architecture="aarch64",
+                state_parent=ROOT / ".work" / arch["work_name"] / "lua-dynamic-source-build", latest_report=None,
+            )
         elif args.allocator_backend == "accepted-c":
             report, report_path, latest = run_dynamic_dispatch(
                 jobs=args.jobs, timeout=args.timeout, offline=args.offline
@@ -1958,6 +1975,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "latest_report": str(latest) if latest is not None else None,
         "passed": report.get("passed") is True,
     }, sort_keys=True))
+    if arch["arch"] == "aarch64" and report.get("error"):
+        print(f"native Lua dynamic source-build: {report['error']}", file=sys.stderr)
     return 0 if report.get("passed") is True else 1
 
 

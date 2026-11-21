@@ -1,10 +1,9 @@
-//! Linux/x86-64 regression coverage for the complete native terminal slice.
+//! Linux regression coverage for the complete native terminal slice.
 //!
 //! The session-changing check runs only in a raw-fork child.  The parent test
 //! process therefore never acquires a controlling terminal or changes its
 //! foreground process group.
 
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::MaybeUninit;
 
@@ -48,7 +47,7 @@ fn x86_64_terminal_attributes_queue_special_codes_and_window_size_round_trip() {
     assert_eq!(observed.input_speed(), 9_600);
     assert_eq!(observed.output_speed(), 9_600);
 
-    // On Linux/x86-64, a zero CIBAUD selector is the distinct B0 input
+    // On Linux, a zero CIBAUD selector is the distinct B0 input
     // setting. It must not be reported as a copy of the output selector.
     changed.set_input_speed(0).expect("select B0 input baud rate");
     assert_eq!(changed.input_speed(), 0);

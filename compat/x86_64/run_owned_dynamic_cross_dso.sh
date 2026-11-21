@@ -5,6 +5,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1"
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
@@ -20,7 +21,7 @@ readonly work
 chmod 0755 "$work"
 trap 'printf "owned dynamic cross-DSO: FAIL; evidence: %s\n" "$work" >&2' ERR
 readonly driver="$installed/bin/crabc-cc-dynamic"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 readonly fixtures="$ROOT/compat/x86_64"
 mkdir "$work/oracle"
 "$driver" --dynamic-shared-object "$fixtures/owned_dynamic_cross_dso_library.c" -o "$work/libcross-initial.so"
@@ -35,7 +36,8 @@ mkdir "$work/oracle"
 readelf -dW "$work/libcross-initial.so" >"$work/libcross-initial.dynamic"
 grep -Eq '\(FLAGS\).*STATIC_TLS' "$work/libcross-initial.dynamic"
 readelf -rW "$work/libcross-initial.so" >"$work/libcross-initial.relocations"
-grep -q 'R_X86_64_TPOFF64' "$work/libcross-initial.relocations"
+if [ "$arch" = aarch64 ]; then tls_relocation=R_AARCH64_TLS_TPREL64; else tls_relocation=R_X86_64_TPOFF64; fi
+grep -q "$tls_relocation" "$work/libcross-initial.relocations"
 cp -a "$installed" "$work/execution-root"
 cp "$work/libcross-initial.so" "$work/libcross-plugin.so" "$work/execution-root/usr/lib/"
 for mode in --dynamic-pie --dynamic-non-pie; do
@@ -46,7 +48,7 @@ for mode in --dynamic-pie --dynamic-non-pie; do
     "$oracle_cc" "${oracle_flags[@]}" "$fixtures/owned_dynamic_cross_dso_consumer.c" \
         -L"$work/oracle" -l:libcross-initial.so -Wl,-rpath,"$work/oracle" -o "$work/oracle/$name"
     readelf -rW "$work/$name" >"$work/$name.relocations"
-    grep -Eq 'R_X86_64_TPOFF64 .* cross_ie_value' "$work/$name.relocations"
+    grep -Eq "$tls_relocation .* cross_ie_value" "$work/$name.relocations"
     cp "$work/$name" "$work/execution-root/$name"
     # A regular-file stdout makes stdio fully buffered: exit must flush it
     # after every atexit handler and destructor has written.

@@ -23,6 +23,8 @@
 //! terminator, before the start, or past the count lie outside the caller's
 //! Rust-visible object even though their page is mapped.
 
+#[cfg(target_arch = "x86_64")]
+mod x86 {
 use core::arch::x86_64::{
     __m128i, _mm_cmpeq_epi8, _mm_movemask_epi8, _mm_or_si128, _mm_set1_epi8, _mm_setzero_si128,
 };
@@ -75,7 +77,7 @@ fn equal(vector: __m128i, wanted: __m128i) -> u32 {
 ///
 /// `string` must designate a readable NUL-terminated byte sequence.
 #[inline]
-pub(super) unsafe fn find_byte_or_nul(string: *const u8, target: u8) -> *const u8 {
+pub(crate) unsafe fn find_byte_or_nul(string: *const u8, target: u8) -> *const u8 {
     // SAFETY: SSE2 is part of the x86-64 baseline.
     let (nul, wanted) = unsafe { (_mm_setzero_si128(), _mm_set1_epi8(target as i8)) };
     let skipped = string as usize % VECTOR;
@@ -127,7 +129,7 @@ pub(super) unsafe fn find_byte_or_nul(string: *const u8, target: u8) -> *const u
 /// there is none, `count` readable bytes. It may be null only when `count` is
 /// zero.
 #[inline]
-pub(super) unsafe fn find_byte(start: *const u8, target: u8, count: usize) -> *const u8 {
+pub(crate) unsafe fn find_byte(start: *const u8, target: u8, count: usize) -> *const u8 {
     if count == 0 {
         return null();
     }
@@ -203,4 +205,32 @@ pub(super) unsafe fn find_byte(start: *const u8, target: u8, count: usize) -> *c
 fn low_lanes(lanes: usize) -> u32 {
     debug_assert!((1..=VECTOR).contains(&lanes));
     (1u32 << lanes) - 1
+}
+
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(super) use x86::{find_byte, find_byte_or_nul};
+
+#[cfg(target_arch = "aarch64")]
+pub(super) unsafe fn find_byte_or_nul(mut string: *const u8, target: u8) -> *const u8 {
+    loop {
+        // SAFETY: the caller guarantees a readable NUL-terminated sequence.
+        let byte = unsafe { string.read() };
+        if byte == 0 || byte == target {
+            return string;
+        }
+        string = string.wrapping_add(1);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(super) unsafe fn find_byte(start: *const u8, target: u8, count: usize) -> *const u8 {
+    for offset in 0..count {
+        // SAFETY: the caller guarantees readable bytes through the first match.
+        if unsafe { start.add(offset).read() } == target {
+            return start.wrapping_add(offset);
+        }
+    }
+    core::ptr::null()
 }

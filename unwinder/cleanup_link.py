@@ -11,8 +11,11 @@ import subprocess
 import sys
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'compat/x86_64'))
+from native_arch import native_arch
+
 FALLBACK_REQUESTS = frozenset({'-lgcc', '-lgcc_s', '-lunwind'})
-PINNED_MUSL_LINKER = '/usr/local/bin/crabc-x86_64-musl-gcc'
+PINNED_MUSL_LINKER = native_arch()['oracle']
 STOCK_RUST_UNWIND_ARCHIVE = re.compile(r'libunwind-[0-9a-f]+\.rlib')
 
 

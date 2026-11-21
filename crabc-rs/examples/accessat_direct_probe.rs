@@ -2,8 +2,9 @@
 
 #![no_std]
 
-use crabc_rs::fs::{self, Access, AtFlags};
+use crabc_rs::fs::{self, Access, AccessAtFlags};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
@@ -11,14 +12,14 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 #[no_mangle]
 pub extern "C" fn crabc_rs_accessat_direct_probe() -> i32 {
-    if fs::accessat(fs::CWD, &b"/"[..], Access::EXISTS, AtFlags::empty()).is_err() {
+    if fs::accessat(fs::CWD, &b"/"[..], Access::EXISTS, AccessAtFlags::empty()).is_err() {
         return 1;
     }
     if fs::accessat(
         fs::CWD,
         &b"/"[..],
         Access::EXISTS,
-        AtFlags::SYMLINK_NOFOLLOW,
+        AccessAtFlags::SYMLINK_NOFOLLOW,
     )
     .is_err()
     {

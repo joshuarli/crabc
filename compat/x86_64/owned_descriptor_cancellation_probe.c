@@ -162,8 +162,13 @@ static int wait_in_syscall(struct wait_state *s, long expected) {
     return 0;
 }
 static int exercise_wait(enum wait_operation operation) {
+#if defined(__aarch64__)
+    const long syscalls[]={SYS_ppoll,SYS_ppoll,SYS_pselect6,SYS_pselect6,
+        SYS_epoll_pwait,SYS_epoll_pwait,SYS_read,SYS_write,SYS_ppoll,SYS_rt_sigsuspend};
+#else
     const long syscalls[]={SYS_poll,SYS_ppoll,SYS_select,SYS_pselect6,
         SYS_epoll_pwait,SYS_epoll_pwait,SYS_read,SYS_write,SYS_pause,SYS_rt_sigsuspend};
+#endif
     int descriptors[2]; CHECK(!pipe(descriptors));
     struct wait_state state={.operation=operation,.fd=descriptors[0]};
     if (operation==WAIT_EPOLL || operation==WAIT_EPOLL_MASK) {

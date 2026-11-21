@@ -25,6 +25,7 @@ import argparse
 import ast
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -35,7 +36,13 @@ import sys
 import tempfile
 from typing import Callable, Iterable, Mapping, Sequence
 
+if __package__:
+    from .native_arch import native_arch
+else:
+    from native_arch import native_arch
+
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = native_arch()
 PRODUCT_TREES = (
     ".cargo", "builtins", "crabc-core", "crabc-mimalloc", "crabc-rs", "crt", "docker", "include", "ldso",
     "libc", "unwinder",
@@ -57,7 +64,8 @@ PRODUCT_FILES = (
     "compat/x86_64/run_owned_ldso_initial_tls_cases.sh",
     "compat/x86_64/run_owned_ldso_runtime_v1_cases.sh",
     "rust-toolchain.toml",
-)
+) + (("compat/x86_64/crabc_cc_aarch64_dynamic.py",
+      "compat/x86_64/owned_resolver_alias_image_inputs_aarch64.json") if ARCH["arch"] == "aarch64" else ())
 PRODUCT_BUILDERS = (
     "compat/x86_64/owned_dynamic_package.py",
     "compat/x86_64/owned_static_sysroot_package.py",
@@ -69,11 +77,11 @@ PRODUCT_LAZY_MODULES = (
     "compat/x86_64/compiler_helper_evidence.py",
     "compat/x86_64/header_callable_inventory.py",
     "compat/x86_64/validate_loader_libc_tls_runtime_v1.py",
-)
+) + (("compat/x86_64/owned_posix_product_evidence.py",) if ARCH["arch"] == "aarch64" else ())
 PYTHON_SEARCH = ("compat/x86_64", "scripts", "")
 GUARD_EXCLUDED_TOP = frozenset({".git", ".work", "target"})
 GUARD_PINNED_CACHES = ("compat/allocator/.cache",)
-GUARD_SCRATCH = ".work/x86_64/tmp"
+GUARD_SCRATCH = f".work/{ARCH['work_name']}/tmp"
 
 
 class SourceSealError(RuntimeError):
@@ -228,6 +236,38 @@ def same_product(left: object, right: object) -> bool:
         return content if isinstance(content, str) and re.fullmatch(r"[0-9a-f]{64}", content) else None
 
     return digest(left) is not None and digest(left) == digest(right)
+
+
+def _is_seal(value: object) -> bool:
+    return (isinstance(value, Mapping) and isinstance(value.get("revision"), str)
+            and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value["revision"]) is not None
+            and "content_sha256" in value)
+
+
+def _with_retained_revisions(retained: object, observed: object) -> object:
+    if isinstance(retained, Mapping) and isinstance(observed, Mapping):
+        if _is_seal(retained) and _is_seal(observed) and same_product(retained, observed):
+            observed = {**observed, "revision": retained["revision"]}
+        return {key: _with_retained_revisions(retained[key], value) if key in retained else value
+                for key, value in observed.items()}
+    if isinstance(retained, list) and isinstance(observed, (list, tuple)) and len(retained) == len(observed):
+        return [_with_retained_revisions(left, right) for left, right in zip(retained, observed)]
+    return observed
+
+
+def same_evidence(retained: object, observed: object) -> bool:
+    """Whether a retained JSON record equals its recollection at this checkout.
+
+    Values compare as JSON, including scalar types. Every source seal in the
+    recollection (a mapping with a commit `revision` and a `content_sha256`)
+    must name the same product as the seal at the same place in the retained
+    record and agree on every other field; only its revision may differ.
+    """
+
+    def text(value: object) -> str:
+        return json.dumps(value, sort_keys=True, allow_nan=False)
+
+    return text(retained) == text(_with_retained_revisions(retained, observed))
 
 
 # ---------------------------------------------------------------------------

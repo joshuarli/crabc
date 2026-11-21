@@ -7,13 +7,15 @@ umask 022
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly MUSL_LIB=/opt/musl-1.2.6/lib/libc.so
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_pthread_timed_feature_contract_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
+readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
 readonly EXECUTION_PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-readonly EXECUTION_TMPDIR="$ROOT/.work/x86_64/tmp"
+readonly EXECUTION_TMPDIR="$ROOT/.work/$work_name/tmp"
 
 # Every launched command reads EOF from /dev/null.
 export PATH="$EXECUTION_PATH"
@@ -46,7 +48,6 @@ fail() {
 
 [ "$#" -eq 2 ] || usage
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 case "$TMPDIR" in
     "$ROOT"/.work/*) ;;
     *) fail 'internal TMPDIR escaped checkout .work' ;;
@@ -62,11 +63,12 @@ done
 
 static_product="$(realpath -e "$1")"
 dynamic_product="$(realpath -e "$2")"
-python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" <<'PY'
+python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" "$arch" <<'PY'
 from pathlib import Path
 import sys
 
-root, temporary, static, dynamic = (Path(value).resolve(strict=True) for value in sys.argv[1:])
+root, temporary, static, dynamic = (Path(value).resolve(strict=True) for value in sys.argv[1:5])
+arch = sys.argv[5]
 for path, label in ((temporary, "TMPDIR"), (static, "static product"), (dynamic, "dynamic product")):
     if not path.is_relative_to(root / ".work"):
         raise SystemExit(f"owned pthread timed feature contract {label} must remain below checkout .work")
@@ -85,7 +87,7 @@ for path, label in ((static / "bin/crabc-cc", "static compiler"),
                     (dynamic / "usr/lib/crabc-dynamic-attach.o", "dynamic CRT attach object"),
                     (dynamic / "usr/lib/libcrabc-builtins.a", "dynamic builtins archive"),
                     (dynamic / "usr/lib/libc.so", "dynamic libc"),
-                    (dynamic / "lib/ld-crabc-x86_64.so.1", "dynamic loader")):
+                    (dynamic / f"lib/ld-crabc-{arch}.so.1", "dynamic loader")):
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f"owned pthread timed feature contract missing physical {label}: {path}")
 
@@ -133,7 +135,7 @@ same_transcript() {
 
 normalize_runtime_root() {
     local root="$1" flavor="$2"
-    python3 -B - "$root" "$flavor" <<'PY'
+    python3 -B - "$root" "$flavor" "$arch" <<'PY'
 import os
 from pathlib import Path
 import stat
@@ -141,16 +143,17 @@ import sys
 
 root = Path(sys.argv[1]).resolve(strict=True)
 flavor = sys.argv[2]
+arch = sys.argv[3]
 if flavor not in {"musl", "dynamic"}:
     raise SystemExit("unknown pthread runtime-root flavor")
 executables = {
     "contract",
-    "lib/ld-musl-x86_64.so.1",
+    f"lib/ld-musl-{arch}.so.1",
     "usr/lib/libc.so",
 } if flavor == "musl" else {
     "contract",
     "bin/crabc-cc-dynamic",
-    "lib/ld-crabc-x86_64.so.1",
+    f"lib/ld-crabc-{arch}.so.1",
     "usr/lib/libc.so",
 }
 for path in [root, *sorted(root.rglob("*"))]:
@@ -244,7 +247,7 @@ for mode in pie non-pie; do
         non-pie) oracle_mode=(-no-pie); oracle_type=exec ;;
     esac
     run "musl-dynamic-$mode-link" "$ORACLE_CC" -std=c11 -pthread -rdynamic \
-        "${oracle_mode[@]}" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 \
+        "${oracle_mode[@]}" "-Wl,--dynamic-linker,$MUSL_INTERPRETER" \
         "$WORK/contract.o" "-Wl,-Map,$WORK/musl-dynamic-$mode-contract.map" \
         -o "$WORK/musl-dynamic-$mode-contract"
     assert_elf_type "musl-dynamic-$mode-contract" \
@@ -252,12 +255,12 @@ for mode in pie non-pie; do
 
     musl_root="$WORK/musl-dynamic-$mode-root"
     mkdir "$musl_root" "$musl_root/lib" "$musl_root/usr" "$musl_root/usr/lib"
-    cp "$MUSL_LIB" "$musl_root/lib/ld-musl-x86_64.so.1"
+    cp "$MUSL_LIB" "$musl_root$MUSL_INTERPRETER"
     cp "$MUSL_LIB" "$musl_root/usr/lib/libc.so"
     cp "$WORK/musl-dynamic-$mode-contract" "$musl_root/contract"
     normalize_runtime_root "$musl_root" musl
     run "musl-dynamic-$mode-kernel" chroot "$musl_root" /contract
-    run "musl-dynamic-$mode-direct" chroot "$musl_root" /lib/ld-musl-x86_64.so.1 /contract
+    run "musl-dynamic-$mode-direct" chroot "$musl_root" "$MUSL_INTERPRETER" /contract
     same_transcript "musl-dynamic-$mode-kernel" "musl-dynamic-$mode-direct"
 done
 

@@ -1,3 +1,5 @@
+// musl 1.2.6 src/unistd/{unlink,rmdir,link,symlink,readlink}.c,
+// src/stat/{mkdir,chmod}.c and src/stdio/rename.c provide the *at forms.
 //! Selected static Linux/x86-64 pathname-mutation C boundary.
 //!
 //! This leaf owns one coherent, bounded C pathname-lifecycle block: `chdir`,
@@ -197,6 +199,8 @@ static_archive_member! { mkdir_source {
     /// duration. Filesystem and process-umask policy remain caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn mkdir(path: *const c_char, mode: c_uint) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns the pathname pointer contract; Linux validates
         // the scalar mode word.
         let result = unsafe {
@@ -207,6 +211,23 @@ static_archive_member! { mkdir_source {
             )
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns the pathname pointer contract; Linux validates
+        // the scalar mode word.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_MKDIRAT,
+                -100,
+                path as usize as i64,
+                i64::from(mode),
+            )
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -220,11 +241,24 @@ static_archive_member! { unlink_source {
     /// duration. Namespace and link-lifetime policy remain caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns the pathname pointer contract.
         let result = unsafe {
             raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let result = unsafe {
+            raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0)
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -238,11 +272,24 @@ static_archive_member! { rmdir_source {
     /// duration. Namespace and directory-lifetime policy remain caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns the pathname pointer contract.
         let result = unsafe {
             raw_syscall::syscall1(raw_syscall::SYS_RMDIR, path as usize as i64)
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let result = unsafe {
+            raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0x200)
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -257,6 +304,8 @@ static_archive_member! { remove_source {
     /// removal policy remain caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns the pathname pointer contract.
         let mut result = unsafe {
             raw_syscall::syscall1(raw_syscall::SYS_UNLINK, path as usize as i64)
@@ -269,6 +318,24 @@ static_archive_member! { remove_source {
             };
         }
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns the pathname pointer contract.
+        let mut result = unsafe {
+            raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0)
+        };
+        if result == -EISDIR {
+            // SAFETY: preserve musl's raw intermediate result so a successful
+            // directory retry does not manufacture stale EISDIR errno.
+            result = unsafe {
+                raw_syscall::syscall3(raw_syscall::SYS_UNLINKAT, -100, path as usize as i64, 0x200)
+            };
+        }
+        c_status(result)
+
+        }
     }
 }}
 
@@ -283,6 +350,8 @@ static_archive_member! { rename_source {
     /// caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn rename(old_path: *const c_char, new_path: *const c_char) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns both pathname pointer contracts.
         let result = unsafe {
             raw_syscall::syscall2(
@@ -292,6 +361,23 @@ static_archive_member! { rename_source {
             )
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns both pathname pointer contracts.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_RENAMEAT,
+                -100,
+                old_path as usize as i64,
+                -100,
+                new_path as usize as i64,
+            )
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -309,6 +395,8 @@ static_archive_member! { link_source {
         existing_path: *const c_char,
         new_path: *const c_char,
     ) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns both pathname pointer contracts.
         let result = unsafe {
             raw_syscall::syscall2(
@@ -318,6 +406,24 @@ static_archive_member! { link_source {
             )
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns both pathname pointer contracts.
+        let result = unsafe {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_LINKAT,
+                -100,
+                existing_path as usize as i64,
+                -100,
+                new_path as usize as i64,
+                0,
+            )
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -332,6 +438,8 @@ static_archive_member! { symlink_source {
     /// caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn symlink(target: *const c_char, link_path: *const c_char) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns both pathname pointer contracts.
         let result = unsafe {
             raw_syscall::syscall2(
@@ -341,6 +449,22 @@ static_archive_member! { symlink_source {
             )
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns both pathname pointer contracts.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SYMLINKAT,
+                target as usize as i64,
+                -100,
+                link_path as usize as i64,
+            )
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -360,6 +484,8 @@ static_archive_member! { readlink_source {
         buffer: *mut c_char,
         capacity: usize,
     ) -> isize {
+        #[cfg(target_arch = "x86_64")]
+        {
         let mut dummy = 0u8;
         let (kernel_buffer, kernel_capacity) = if capacity == 0 {
             (&mut dummy as *mut u8 as *mut c_char, 1usize)
@@ -381,6 +507,34 @@ static_archive_member! { readlink_source {
         } else {
             c_ssize_status(result)
         }
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        let mut dummy = 0u8;
+        let (kernel_buffer, kernel_capacity) = if capacity == 0 {
+            (&mut dummy as *mut u8 as *mut c_char, 1usize)
+        } else {
+            (buffer, capacity)
+        };
+        // SAFETY: the caller owns the pathname and nonzero output contracts; the
+        // local dummy is writable for the zero-capacity musl compatibility path.
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_READLINKAT,
+                -100,
+                path as usize as i64,
+                kernel_buffer as usize as i64,
+                kernel_capacity as i64,
+            )
+        };
+        if capacity == 0 && result > 0 {
+            0
+        } else {
+            c_ssize_status(result)
+        }
+
+        }
     }
 }}
 
@@ -394,6 +548,8 @@ static_archive_member! { chmod_source {
     /// duration. Permission, ownership, and namespace policy remain caller-owned.
     #[no_mangle]
     pub unsafe extern "C" fn chmod(path: *const c_char, mode: c_uint) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller owns the pathname pointer contract; Linux validates
         // the scalar mode word.
         let result = unsafe {
@@ -404,6 +560,23 @@ static_archive_member! { chmod_source {
             )
         };
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller owns the pathname pointer contract; Linux validates
+        // the scalar mode word.
+        let result = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FCHMODAT,
+                -100,
+                path as usize as i64,
+                i64::from(mode),
+            )
+        };
+        c_status(result)
+
+        }
     }
 }}
 
@@ -416,6 +589,8 @@ static_archive_member! { fchmod_source {
     /// errors preserve their original Linux `errno` result.
     #[no_mangle]
     pub extern "C" fn fchmod(fd: c_int, mode: c_uint) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: both initial fchmod words are scalar Linux values.
         let result = unsafe {
             raw_syscall::syscall2(
@@ -450,6 +625,47 @@ static_archive_member! { fchmod_source {
             )
         };
         c_status(fallback)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: both initial fchmod words are scalar Linux values.
+        let result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_FCHMOD,
+                i64::from(fd),
+                i64::from(mode),
+            )
+        };
+        if result != -EBADF {
+            return c_status(result);
+        }
+
+        // SAFETY: F_GETFD is the selected scalar descriptor-liveness probe. Do
+        // not translate this intermediate result: musl returns the original
+        // fchmod EBADF if the probe itself fails.
+        let descriptor_is_live = unsafe {
+            raw_syscall::syscall2(raw_syscall::SYS_FCNTL, i64::from(fd), F_GETFD)
+        } >= 0;
+        if !descriptor_is_live {
+            return c_status(result);
+        }
+
+        let mut procfd_path = [0u8; PROC_FD_NAME_SIZE];
+        procfdname(&mut procfd_path, fd);
+        // SAFETY: procfdname writes a NUL-terminated fixed stack pathname, and
+        // Linux validates the scalar mode word.
+        let fallback = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FCHMODAT,
+                -100,
+                procfd_path.as_ptr() as i64,
+                i64::from(mode),
+            )
+        };
+        c_status(fallback)
+
+        }
     }
 }}
 

@@ -27,6 +27,19 @@ struct crabc_tls_index {
 extern void *__tls_get_addr(const struct crabc_tls_index *index);
 #endif
 
+#if defined(__aarch64__)
+static unsigned long fs_self(void) {
+    unsigned long value;
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(value));
+    return value;
+}
+static unsigned long *fs_dtv(void) {
+    unsigned long *value;
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-8]" : "=r"(value));
+    return value;
+}
+static int read_thread_base(unsigned long *base) { *base = fs_self(); return 0; }
+#else
 static long syscall2(long number, long one, long two) {
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(one), "S"(two) : "rcx", "r11", "memory");
@@ -45,6 +58,9 @@ static unsigned long *fs_dtv(void) {
     return value;
 }
 
+static int read_thread_base(unsigned long *base) { return syscall2(158, 0x1003, (long)base); }
+#endif
+
 static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
 #if defined(CRABC_GENERAL_INITIAL_TLS_CANDIDATE)
     unsigned long fs_base = 0;
@@ -61,7 +77,7 @@ static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
     void *resolved_shared = __tls_get_addr(&shared_tls);
     void *resolved_right = __tls_get_addr(&right_tls);
 
-    if (syscall2(158, 0x1003, (long)&fs_base) != 0
+    if (read_thread_base(&fs_base) != 0
         || fs_base == 0
         || fs_base != fs_self()
         || dtv == 0
@@ -90,13 +106,13 @@ static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
         general_shared_tls_address(),
         general_right_tls_address(),
     };
-    if (syscall2(158, 0x1003, (long)&fs_base) != 0) return 60;
+    if (read_thread_base(&fs_base) != 0) return 60;
     if (fs_base == 0 || fs_base != fs_self()) return 61;
     if (dtv == 0) return 62;
-    if (dtv[0] < 5) return 63;
+    if (dtv[0] < 4) return 63;
     unsigned long modules[4] = { 0, 0, 0, 0 };
     for (int image = 0; image < 4; image++) {
-        for (unsigned long slot = 1; slot < dtv[0]; slot++) {
+        for (unsigned long slot = 1; slot <= dtv[0]; slot++) {
             if ((void *)dtv[slot] == images[image]) {
                 modules[image] = slot;
                 break;
@@ -110,7 +126,7 @@ static int candidate_dtv_has_one_loader_order_slot_per_tls_image(void) {
         if (__tls_get_addr(&index) != images[image]) return 72 + image;
     }
     const struct crabc_tls_index zero_module = { 0, 0 };
-    const struct crabc_tls_index absent_module = { dtv[0], 0 };
+    const struct crabc_tls_index absent_module = { dtv[0] + 1, 0 };
     if (__tls_get_addr(&zero_module) != 0) return 76;
     if (__tls_get_addr(&absent_module) != 0) return 77;
 #endif
@@ -125,7 +141,7 @@ int main(void) {
        evidence rather than an invalid constructor-order differential. */
     if (general_shared_constructor_stage_value() != 7) return 40;
 #endif
-    if (!candidate_dtv_has_one_loader_order_slot_per_tls_image()) return 41;
+    if (candidate_dtv_has_one_loader_order_slot_per_tls_image() != 1) return 41;
     if (general_main_tbss != 0 || general_shared_tbss_value() != 0) return 42;
     if (general_left_initial_value() != 30) return 43;
     if (general_right_initial_value() != 40) return 44;

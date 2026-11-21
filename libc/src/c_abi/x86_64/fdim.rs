@@ -18,7 +18,7 @@
 //! conversions, special functions, binary80 math, errno policy, and general libm
 //! remain outside this artifact.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 fdim leaf requires little-endian Linux/x86-64");
 
 // Keep the checked representation in an integer object. Rust's ordinary

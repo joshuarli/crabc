@@ -50,7 +50,7 @@ const LINE_LIM: usize = 256;
 const NAME_MAX: usize = 255;
 const TCB_PATH_CAPACITY: usize = 20 + NAME_MAX;
 const O_NONBLOCK: c_int = 0o4000;
-const O_NOFOLLOW: c_int = 0o400000;
+const O_NOFOLLOW: c_int = super::raw_syscall::O_NOFOLLOW as c_int;
 const O_CLOEXEC: c_int = 0o2000000;
 const S_IFMT: u32 = 0o170000;
 const S_IFREG: u32 = 0o100000;
@@ -102,6 +102,7 @@ static mut GETSPNAM_RECORD: Shadow = EMPTY_SHADOW;
 // same-crate Rust declaration cannot fold the source client into a known
 // allocator provider before the public ELF boundary. The allocation persists
 // for process lifetime in the source, so there is intentionally no free tail.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(r#"
     .text
     .p2align 4
@@ -112,6 +113,8 @@ __crabc_x86_shadow_cabi_malloc:
     jmp malloc
     .size __crabc_x86_shadow_cabi_malloc, .-__crabc_x86_shadow_cabi_malloc
 "#);
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("owned_shadow_thunks_0_aarch64.S"));
 
 unsafe extern "C" {
     #[link_name = "__crabc_x86_shadow_cabi_malloc"]

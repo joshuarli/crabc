@@ -683,7 +683,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_allocator_wrapper_stays_mixed_runtime_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.posix-runtime")
-        self.assertEqual(family["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
         artifacts = family["verified_artifact"]
         assert isinstance(artifacts, list)
         artifact = next(
@@ -779,7 +779,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_allocator_observability_is_exact_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
-        self.assertEqual(family["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
         slices = family["verified_slice"]
         assert isinstance(slices, list)
         slice_entry = next(
@@ -829,7 +829,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_stack_check_failure_stays_a_private_terminal_archive_pair(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
-        self.assertEqual(family["status"], "planned")
+        self.assertEqual(family["status"], "foundation-verified")
         artifacts = family["verified_artifact"]
         assert isinstance(artifacts, list)
         artifact = next(
@@ -3244,6 +3244,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence = family["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["state"] = "verified"
+        evidence[0].pop("receipt", None)
         with self.assertRaisesRegex(ledger.LedgerError, "needs a family admission receipt"):
             ledger.require_posix_runtime_family_admission(family)
 
@@ -3284,7 +3285,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_math_log2_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
-        self.assertEqual(text_math["status"], "planned")
+        self.assertEqual(text_math["status"], "foundation-verified")
         artifacts = text_math["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 77
         artifact = next(
@@ -3394,7 +3395,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(fnmatch_slice["capabilities"], ["pattern.fnmatch"])
         for owner in (
             "crabc-core/src/pattern.rs",
-            "crabc-rs/src/pattern_x86_64.rs",
+            "crabc-rs/src/pattern.rs",
             "crabc-rs/tests/x86_64_fnmatch.rs",
             "crabc-rs/examples/fnmatch_direct_probe.rs",
             "compat/x86_64/verify_fnmatch_direct.sh",
@@ -3410,9 +3411,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         for owner in (
             "crabc-core/src/fs.rs",
             "crabc-core/src/pattern.rs",
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/src/raw_dir.rs",
-            "crabc-rs/src/pattern_x86_64.rs",
+            "crabc-rs/src/pattern.rs",
             "crabc-rs/tests/x86_64_glob.rs",
             "crabc-rs/examples/glob_direct_probe.rs",
             "compat/x86_64/verify_glob_direct.sh",
@@ -3450,7 +3451,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in errno_tls["native_evidence"]},
         )
         posix_runtime = self.family(data, "libc.posix-runtime")
-        self.assertEqual(posix_runtime["status"], "planned")
+        self.assertEqual(posix_runtime["status"], "foundation-verified")
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertIn(
             "./scripts/dev-x86_64.sh header-abi socket-messages",
@@ -6472,8 +6473,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh libc-readiness-waits",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
-        self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
-        self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "planned")
+        self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "foundation-verified")
+        self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "foundation-verified")
         for capability in (
             "io.readiness-poll",
             "io.readiness-ppoll",
@@ -6830,8 +6831,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/process.rs",
-            "crabc-core/src/syscall_x86_64.rs",
-            "crabc-rs/src/process_x86_64.rs",
+            "crabc-core/src/syscall.rs",
+            "crabc-rs/src/process.rs",
             "crabc-rs/tests/x86_64_chroot.rs",
             "crabc-rs/examples/process_chroot_direct_probe.rs",
             "compat/x86_64/run_x86_root_change_reference.sh",
@@ -6872,7 +6873,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/process.rs",
-            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/src/process.rs",
             "crabc-rs/tests/x86_64_child_ownership.rs",
             "compat/x86_64/run_x86_child_ownership_reference.sh",
             "compat/x86_64/x86_child_ownership_reference_probe.c",
@@ -6906,7 +6907,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/process.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/signal.rs",
             "crabc-rs/tests/x86_64_thread_kill.rs",
             "crabc-rs/examples/thread_kill_direct_probe.rs",
@@ -6955,9 +6956,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         for source_owner in (
-            "crabc-core/src/mm_x86_64.rs",
-            "crabc-core/src/syscall_x86_64.rs",
-            "crabc-rs/src/mm_x86_64.rs",
+            "crabc-core/src/mm.rs",
+            "crabc-core/src/syscall.rs",
+            "crabc-rs/src/mm.rs",
             "crabc-rs/tests/x86_64_memory_mapping.rs",
             "crabc-rs/examples/mapping_direct_probe.rs",
             "compat/x86_64/run_x86_mapping_reference.sh",
@@ -7016,12 +7017,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             all(evidence["state"] == "verified" for evidence in memory_vm["native_evidence"])
         )
         for source_owner in (
-            "crabc-core/src/mm_x86_64.rs",
+            "crabc-core/src/mm.rs",
             "crabc-core/src/process.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/lib.rs",
-            "crabc-rs/src/mm_x86_64.rs",
-            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/src/mm.rs",
+            "crabc-rs/src/process.rs",
             "crabc-rs/tests/x86_64_memory_vm.rs",
             "crabc-rs/examples/memory_vm_direct_probe.rs",
             "crabc-rs/Cargo.toml",
@@ -7099,11 +7100,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             pty_basic["native_evidence"][0]["scope"],
         )
         for source_owner in (
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-core/src/io.rs",
             "crabc-rs/src/lib.rs",
-            "crabc-rs/src/fs_x86_64.rs",
-            "crabc-rs/src/pty_x86_64.rs",
+            "crabc-rs/src/fs.rs",
+            "crabc-rs/src/pty.rs",
             "crabc-rs/tests/x86_64_pty_basic.rs",
             "crabc-rs/examples/pty_basic_direct_probe.rs",
             "crabc-rs/Cargo.toml",
@@ -7176,9 +7177,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         for source_owner in (
             "crabc-core/src/io.rs",
             "crabc-core/src/process.rs",
-            "crabc-core/src/syscall_x86_64.rs",
-            "crabc-rs/src/pty_x86_64.rs",
-            "crabc-rs/src/termios_x86_64.rs",
+            "crabc-core/src/syscall.rs",
+            "crabc-rs/src/pty.rs",
+            "crabc-rs/src/termios.rs",
             "crabc-rs/tests/x86_64_terminal.rs",
             "crabc-rs/examples/x86_64_terminal_direct_probe.rs",
             "compat/x86_64/run_x86_terminal_reference.sh",
@@ -7336,9 +7337,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         for source_owner in (
             "crabc-core/src/fs.rs",
             "crabc-core/src/io.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/lib.rs",
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/src/users.rs",
             "crabc-rs/tests/x86_64_users_databases.rs",
             "crabc-rs/examples/users_databases_direct_probe.rs",
@@ -7400,9 +7401,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/mount.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/lib.rs",
-            "crabc-rs/src/mount_x86_64.rs",
+            "crabc-rs/src/mount.rs",
             "crabc-rs/tests/x86_64_mount.rs",
             "crabc-rs/examples/mount_direct_probe.rs",
             "crabc-rs/Cargo.toml",
@@ -7455,7 +7456,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/fs.rs",
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/tests/x86_64_path_lifecycle.rs",
             "crabc-rs/tests/x86_64_namespace.rs",
             "crabc-rs/tests/x86_64_readlink.rs",
@@ -7476,8 +7477,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/fs.rs",
-            "crabc-core/src/syscall_x86_64.rs",
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-core/src/syscall.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/tests/x86_64_xattr.rs",
             "crabc-rs/examples/xattr_direct_probe.rs",
             "compat/x86_64/run_x86_xattr_reference.sh",
@@ -7503,7 +7504,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-rs/src/raw_dir.rs",
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/tests/x86_64_raw_directory.rs",
             "crabc-rs/tests/x86_64_directory.rs",
             "crabc-rs/tests/x86_64_directory_position.rs",
@@ -7534,7 +7535,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         for source_owner in (
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/tests/x86_64_temporary_objects.rs",
             "crabc-rs/examples/fs_named_tempfile_direct_probe.rs",
             "crabc-rs/examples/fs_tempfile_direct_probe.rs",
@@ -7567,8 +7568,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/fs.rs",
-            "crabc-core/src/syscall_x86_64.rs",
-            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-core/src/syscall.rs",
+            "crabc-rs/src/fs.rs",
             "crabc-rs/tests/x86_64_statx.rs",
             "crabc-rs/examples/statx_direct_probe.rs",
             "compat/x86_64/run_x86_statx_reference.sh",
@@ -7616,12 +7617,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         for source_owner in (
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-core/src/fs.rs",
             "crabc-core/src/process.rs",
             "crabc-rs/src/lib.rs",
-            "crabc-rs/src/fs_x86_64.rs",
-            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/src/fs.rs",
+            "crabc-rs/src/process.rs",
             "crabc-rs/tests/x86_64_canonicalize.rs",
             "crabc-rs/tests/x86_64_cwd_mutation.rs",
             "crabc-rs/examples/fs_canonicalize_direct_probe.rs",
@@ -7661,7 +7662,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/ipc.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/ipc.rs",
             "crabc-rs/tests/x86_64_ipc.rs",
             "crabc-rs/examples/ipc_direct_probe.rs",
@@ -7712,7 +7713,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/fs.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/shm.rs",
             "crabc-rs/tests/x86_64_shm.rs",
             "crabc-rs/examples/shm_direct_probe.rs",
@@ -7771,9 +7772,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for source_owner in (
             "crabc-core/src/inotify.rs",
-            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/syscall.rs",
             "crabc-rs/src/lib.rs",
-            "crabc-rs/src/system_x86_64.rs",
+            "crabc-rs/src/system.rs",
             "crabc-rs/tests/x86_64_inotify.rs",
             "crabc-rs/examples/inotify_direct_probe.rs",
             "crabc-rs/Cargo.toml",
@@ -7836,11 +7837,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         for source_owner in (
-            "crabc-core/src/time_x86_64.rs",
+            "crabc-core/src/time.rs",
             "crabc-core/src/tests.rs",
             "crabc-rs/src/civil_time.rs",
             "crabc-rs/UPSTREAM.md",
-            "crabc-rs/src/time_x86_64.rs",
+            "crabc-rs/src/time.rs",
             "crabc-rs/src/timezone.rs",
             "crabc-rs/tests/x86_64_calendar_time.rs",
             "crabc-rs/tests/time.rs",
@@ -7912,10 +7913,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
         for source_owner in (
-            "crabc-core/src/syscall_x86_64.rs",
-            "crabc-core/src/time_x86_64.rs",
+            "crabc-core/src/syscall.rs",
+            "crabc-core/src/time.rs",
             "crabc-core/src/tests.rs",
-            "crabc-rs/src/time_x86_64.rs",
+            "crabc-rs/src/time.rs",
             "crabc-rs/tests/x86_64_advanced_time.rs",
             "crabc-rs/examples/time_dynamic_direct_probe.rs",
             "crabc-rs/examples/process_clock_id_direct_probe.rs",
@@ -8063,7 +8064,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_clock_nanosleep.rs", remaining["source_owners"]
         )
         self.assertIn(
-            "crabc-rs/src/process_x86_64.rs", remaining["source_owners"]
+            "crabc-rs/src/process.rs", remaining["source_owners"]
         )
         self.assertIn(
             "compat/x86_64/run_x86_timerfd_reference.sh", direct["source_owners"]
@@ -8130,18 +8131,18 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_getcwd_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn("crabc-core/src/fs.rs", remaining["source_owners"])
-        self.assertIn("crabc-rs/src/fs_x86_64.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/src/fs.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_readlink.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_readlinkat_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_readlinkat_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-core/src/io.rs", remaining["source_owners"])
-        self.assertIn("crabc-core/src/syscall_x86_64.rs", remaining["source_owners"])
+        self.assertIn("crabc-core/src/syscall.rs", remaining["source_owners"])
         self.assertNotIn("crabc-rs/tests/x86_64_memfd.rs", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/run_x86_memfd_reference.sh", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/x86_memfd_reference_probe.c", remaining["source_owners"])
         self.assertNotIn("crabc-core/src/thread.rs", remaining["source_owners"])
         self.assertNotIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
-        self.assertNotIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
+        self.assertNotIn("crabc-rs/src/thread.rs", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/run_x86_sched_rr_interval_reference.sh", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/x86_sched_rr_interval_reference_probe.c", remaining["source_owners"])
         self.assertNotIn("crabc-rs/tests/x86_64_sched_affinity.rs", remaining["source_owners"])
@@ -8341,7 +8342,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("process.supplementary-groups", direct["capabilities"])
         self.assertNotIn("process.supplementary-groups", remaining["capabilities"])
         pthread_tls = self.family(data, "libc.pthread-tls")
-        self.assertEqual(pthread_tls["status"], "planned")
+        self.assertEqual(pthread_tls["status"], "foundation-verified")
         self.assertIn("libc/src/c_abi/x86_64/atomic.rs", pthread_tls["source_owners"])
         self.assertIn("libc/src/c_abi/x86_64/clone.rs", pthread_tls["source_owners"])
         self.assertIn(
@@ -8464,6 +8465,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_pthread_family_admission_keeps_leaf_view_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.pthread-tls")
+        family["status"] = "planned"
         planned = ledger.pthread_runtime_private_artifact_view(family, None)
         self.assertIs(planned, family)
         family["status"] = "foundation-verified"
@@ -8572,6 +8574,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         resolver = self.family(data, "libc.resolver")
         posix = self.family(data, "libc.posix-runtime")
+        resolver["status"] = "planned"
+        resolver["native_evidence"][2].pop("receipt", None)
         self.assertIsNone(ledger.require_resolver_family_admission(resolver, posix, None))
         self.assertIs(ledger.resolver_private_artifact_view(resolver, None), resolver)
         attached = copy.deepcopy(resolver)
@@ -8653,6 +8657,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")
         posix = self.family(data, "libc.posix-runtime")
+        family["status"] = "planned"
+        family["native_evidence"][0].pop("receipt", None)
         self.assertIsNone(ledger.require_c_abi_compat_family_admission(family, posix, None))
         attached = copy.deepcopy(family)
         attached["native_evidence"][0]["receipt"] = ".work/x86_64/c-abi-compat-family/assessment.json"
@@ -8969,8 +8975,11 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_stdio_installed_file_engine_slice_is_bound_to_the_engine_receipt(self) -> None:
         data = self.data()
         family = self.family(data, "libc.text-math-locale-stdio")
-        self.assertEqual(family["status"], "planned")
-        ledger.require_stdio_installed_file_engine_slice(family)
+        self.assertEqual(family["status"], "foundation-verified")
+        admission = {"source": "admitted"}
+        ledger.require_stdio_installed_file_engine_slice(
+            ledger.text_math_locale_stdio_private_artifact_view(family, admission)
+        )
 
         def changed(mutate) -> dict[str, object]:
             changed_data = self.data()
@@ -8981,7 +8990,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 if entry["id"] == "stdio.installed-file-engine"
             )
             mutate(selected)
-            return changed_family
+            return ledger.text_math_locale_stdio_private_artifact_view(changed_family, admission)
 
         cases = (
             (lambda entry: entry.__setitem__("capabilities", [*entry["capabilities"], "stdio.fopen64-alias"]),

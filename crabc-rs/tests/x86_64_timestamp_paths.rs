@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::cell::Cell;
 use core::ffi::CStr;
@@ -131,8 +130,8 @@ impl Drop for TimestampPathFixture {
 }
 
 fn assert_times(stat: fs::Stat, access: (i64, i64), modification: (i64, i64)) {
-    assert_eq!((stat.st_atime, stat.st_atime_nsec), access);
-    assert_eq!((stat.st_mtime, stat.st_mtime_nsec), modification);
+    assert_eq!((stat.st_atime, i64::try_from(stat.st_atime_nsec).unwrap()), access);
+    assert_eq!((stat.st_mtime, i64::try_from(stat.st_mtime_nsec).unwrap()), modification);
 }
 
 fn assert_current_timestamp(
@@ -161,8 +160,8 @@ fn assert_current_timestamp(
 }
 
 fn assert_current_times(stat: fs::Stat, before: time::Timespec, after: time::Timespec) {
-    assert_current_timestamp((stat.st_atime, stat.st_atime_nsec), before, after);
-    assert_current_timestamp((stat.st_mtime, stat.st_mtime_nsec), before, after);
+    assert_current_timestamp((stat.st_atime, i64::try_from(stat.st_atime_nsec).unwrap()), before, after);
+    assert_current_timestamp((stat.st_mtime, i64::try_from(stat.st_mtime_nsec).unwrap()), before, after);
 }
 
 fn is_timestamp_cwd_child() -> bool {

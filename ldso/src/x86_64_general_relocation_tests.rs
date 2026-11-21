@@ -36,6 +36,7 @@ fn binding_slots_require_relro_in_hardened_profile() {
 #[test]
 fn symbol_address_slots_require_relro_in_hardened_profile() {
     for kind in [R_64, R_X86_64_PC32] {
+        if cfg!(target_arch = "aarch64") && kind == R_X86_64_PC32 { continue; }
         let mut image = Image::new();
         image.symbol(1, 1, 2, 0, 1, IMAGE_DATA as u64, 8);
         image.rela(IMAGE_DATA as u64, kind, 1, 0);
@@ -672,6 +673,26 @@ fn general_relr_exceeds_legacy_table_and_target_limits_like_musl() {
 }
 
 #[test]
+#[cfg(all(feature = "x86_64-owned-dynamic-runtime", target_arch = "aarch64"))]
+fn interpreter_relative_relocations_preserve_bootstrap_state() {
+    let mut image = Image::new();
+    image.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
+    image.rela(0x1008, R_64, 0, 0);
+    image.data[0] = 0xfeed;
+    image.data[1] = 0;
+    image.data[2] = 0xbeef;
+    let relr = [0x1010u64];
+    let mut object = image.object(true);
+    object.interpreter_self = true;
+    object.relr = relr.as_ptr().cast();
+    object.relrsz = 8;
+    assert!(unsafe { apply_resolved_word_relocations(&object, &[123, 456]) }.is_some());
+    assert_eq!(image.data[0], 0xfeed);
+    assert_eq!(image.data[1], 456);
+    assert_eq!(image.data[2], 0xbeef);
+}
+
+#[test]
 fn runtime_relocation_scope_grows_past_initial_capacity_and_never_rewrites_retained_objects() {
     let mut images: self::std::vec::Vec<Image> = (0..40).map(|_| Image::new()).collect();
     for (index, image) in images.iter_mut().enumerate() {
@@ -904,6 +925,7 @@ fn invalid_later_object_relocation_cannot_commit_earlier_main_or_dependency_writ
     assert_eq!(main.data[0], 0xaaaa); assert_eq!(provider.data[0], 0xbbbb);
 }
 
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn pc32_relocation_writes_four_bytes_and_preflights_the_whole_graph() {
     let mut main = Image::new(); let mut provider = Image::new();
@@ -931,7 +953,7 @@ fn pc32_relocation_writes_four_bytes_and_preflights_the_whole_graph() {
     assert_eq!(main.data[1], 0);
 }
 
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[cfg(all(target_arch = "x86_64", feature = "x86_64-owned-dynamic-runtime"))]
 #[test]
 fn runtime_pc32_relocation_commits_four_bytes_only_after_all_new_objects_preflight() {
     let mut main = Image::new(); let mut first = Image::new(); let mut late = Image::new();
@@ -941,10 +963,10 @@ fn runtime_pc32_relocation_commits_four_bytes_only_after_all_new_objects_preflig
     first.rela(0x1001, R_X86_64_PC32, 1, -4);
     late.rela(0x1000 + IMAGE_DATA_BYTES as u64 - 2, R_X86_64_PC32, 0, 0);
     let objects = [main.object(false), first.object(true), late.object(true)];
-    assert!(unsafe { deferred::relocate_new(&objects, &[0, 1, 2], 1, 0, false) }.is_none());
+    assert!(unsafe { deferred::relocate_new(&objects, &[0, 1, 2], 1, 0, false, #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))] &mut []) }.is_none());
     assert_eq!(first.data[0], 0xaabbccdd11223344);
 
-    assert!(unsafe { deferred::relocate_new(&objects[..2], &[0, 1], 1, 0, false) }.is_some());
+    assert!(unsafe { deferred::relocate_new(&objects[..2], &[0, 1], 1, 0, false, #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))] &mut []) }.is_some());
     let displacement = (main.object(false).base + 0x1000).wrapping_sub(4)
         .wrapping_sub(first.object(true).base + 0x1001) as u32;
     let mut expected = 0xaabbccdd11223344u64.to_le_bytes();
@@ -1356,18 +1378,116 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     for addend in [-8, 0, 4, 56] {
         let offset = 8 + addend;
         assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_DTPOFF64, 1, addend) }, Some(offset as u64));
-        assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, addend) }, Some((offset - 8192) as u64));
+        assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, addend) }, Some((if cfg!(target_arch = "aarch64") { offset + 8192 } else { offset - 8192 }) as u64));
     }
     assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_DTPMOD64, 1, 0) }, Some(2));
-    assert_eq!(unsafe { word_value(&scope, &objects, 1, R_X86_64_TPOFF64, 0, 8) }, Some((-8184i64) as u64));
+    assert_eq!(unsafe { word_value(&scope, &objects, 1, R_X86_64_TPOFF64, 0, 8) }, Some((if cfg!(target_arch = "aarch64") { 8200i64 } else { -8184i64 }) as u64));
     for addend in [-9, 57, i64::MAX, i64::MIN] {
         assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, addend) }.is_none());
     }
     provider.symbol(1, 6, 1, 0, 1, 60, 8);
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
     provider.symbol(1, 6, 1, 0, 1, 8, 8);
-    objects[1].tls_offset_below_tp = 32;
+    objects[1].tls_offset_below_tp = if cfg!(target_arch = "aarch64") { 8 } else { 32 };
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_module_id = 0;
     assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_TPOFF64, 1, 0) }.is_none());
+}
+
+#[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+#[test]
+fn tlsdesc_static_checks_both_words_and_returns_tp_offset() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 4);
+    let mut object = image.object(false);
+    object.tls_module_id = 1;
+    object.tls_memsz = 16;
+    object.tls_offset_below_tp = 32;
+    let scope = SymbolScope { indices: &[0], module_count: 1, static_tls_count: 1, initial: true };
+    // SAFETY: The fixture owns its ELF metadata, writable target and TLS coordinates.
+    unsafe {
+        preflight_object(&scope, &[object], 0).unwrap();
+        apply_word_relocations(&scope, &[object], 0).unwrap();
+        let descriptor = (object.base as usize + IMAGE_DATA) as *const usize;
+        let resolver: unsafe extern "C" fn(*const usize) -> usize = core::mem::transmute(*descriptor);
+        assert_eq!(resolver(descriptor), 36);
+        image.relocations[0][0] = (IMAGE_DATA + IMAGE_DATA_BYTES - 8) as u64;
+        assert!(preflight_object(&scope, &[object], 0).is_none());
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn runtime_tlsdesc_uses_dynamic_descriptor() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 4);
+    let mut object = image.object(true);
+    object.tls_module_id = 1;
+    object.tls_memsz = 16;
+    let objects = [EMPTY_OBJECT, object];
+    let records = unsafe { relocate_runtime_objects(&objects, &[0, 1], 1, 0) }.unwrap();
+    assert_eq!(image.data[0], tlsdesc_dynamic as *const () as u64);
+    assert_eq!(image.data[1], records.as_slice().as_ptr() as u64);
+    assert_eq!(records.as_slice()[0], [1, 4]);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn tlsdesc_is_not_an_unsupported_dlopen_relocation() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 0);
+    let objects = [EMPTY_OBJECT, image.object(false)];
+    assert!(unsafe { deferred::diagnose_new(&objects, &[0, 1], 1, 0, false) }.is_none());
+
+    let mut provider = Image::new();
+    provider.symbol(1, 1, 1, 0, 1, IMAGE_DATA as u64, 8);
+    let mut consumer = Image::new();
+    consumer.symbol(1, 6, 1, 0, 0, 0, 0);
+    consumer.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 1, 0);
+    let objects = [provider.object(false), consumer.object(true)];
+    assert!(matches!(unsafe { deferred::diagnose_new(&objects, &[0, 1], 1, 0, false) },
+        Some(deferred::RelocationFailure::MissingSymbol { owner: 1, symbol: b"value" })));
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn x86_pc32_relocation_is_rejected_before_writes() {
+    let mut image = Image::new();
+    image.data[0] = 0x1122334455667788;
+    image.rela(0x1000, R_X86_64_PC32, 0, 0);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = image.object(false);
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_none());
+    assert_eq!(image.data[0], 0x1122334455667788);
+}
+
+#[cfg(all(target_arch = "aarch64", feature = "x86_64-owned-dynamic-runtime"))]
+#[test]
+fn runtime_relative_relocation_commits_only_after_all_new_objects_preflight() {
+    let mut first = Image::new(); let mut late = Image::new();
+    first.data[0] = 0xaabbccdd11223344;
+    first.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1010);
+    late.rela(0x1000 + IMAGE_DATA_BYTES as u64 - 4, R_X86_64_RELATIVE, 0, 0);
+    let objects = [EMPTY_OBJECT, first.object(true), late.object(true)];
+    assert!(unsafe { deferred::relocate_new(&objects, &[0, 1, 2], 1, 0, false, #[cfg(crabc_general_initial_tls_materialization_v1)] &mut []) }.is_none());
+    assert_eq!(first.data[0], 0xaabbccdd11223344);
+    assert!(unsafe { deferred::relocate_new(&objects[..2], &[0, 1], 1, 0, false, #[cfg(crabc_general_initial_tls_materialization_v1)] &mut []) }.is_some());
+    assert_eq!(first.data[0], first.object(true).base + 0x1010);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn tlsdesc_requires_complete_relro_in_hardened_profile() {
+    let mut image = Image::new();
+    image.rela(IMAGE_DATA as u64, R_X86_64_TLSDESC, 0, 4);
+    let mut object = image.object(false);
+    object.tls_module_id = 1; object.tls_memsz = 16; object.tls_offset_below_tp = 32;
+    let scope = SymbolScope { indices: &[0], module_count: 1, static_tls_count: 1, initial: true };
+    object.relro_virtual_address = (IMAGE_DATA + 4096) as u64;
+    object.relro_byte_len = 16;
+    assert_eq!(unsafe { preflight_object(&scope, &[object], 0) }.is_some(), !cfg!(crabc_hardened));
+    object.relro_virtual_address = IMAGE_DATA as u64;
+    assert!(unsafe { preflight_object(&scope, &[object], 0) }.is_some());
+    assert!(relro_covers(&object, IMAGE_DATA as u64 + PAGE - 8, 8));
+    assert!(!relro_covers(&object, IMAGE_DATA as u64 + PAGE - 8, 16));
 }

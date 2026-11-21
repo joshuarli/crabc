@@ -189,11 +189,23 @@ static void fork_round(void)
     CHECK(pthread_getattr_np(pthread_self(), &before) == 0);
     CHECK(pthread_attr_getstack(&before, &stack_before, &size_before) == 0);
     uintptr_t canary;
+#if defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-16]" : "=r"(canary));
+#else
     __asm__ volatile("mov %%fs:40, %0" : "=r"(canary));
+#endif
 #ifdef CRABC_OWNED_WITNESS
     uintptr_t runtime_view, cancellation;
+#if defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-32]" : "=r"(runtime_view));
+#else
     __asm__ volatile("mov %%fs:24, %0" : "=r"(runtime_view));
+#endif
+#if defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-24]" : "=r"(cancellation));
+#else
     __asm__ volatile("mov %%fs:32, %0" : "=r"(cancellation));
+#endif
     CHECK(runtime_view != 0 && cancellation != 0);
 #endif
     pthread_cleanup_push(cleanup, (void *)(uintptr_t)73);
@@ -205,12 +217,24 @@ static void fork_round(void)
         CHECK(executable_tls == 49 && *fork_initial_tls() == 51 && *one_tls() == 52);
         CHECK(pthread_getspecific(key) == (void *)(uintptr_t)73);
         uintptr_t inherited_canary;
-        __asm__ volatile("mov %%fs:40, %0" : "=r"(inherited_canary));
+#if defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-16]" : "=r"(inherited_canary));
+#else
+    __asm__ volatile("mov %%fs:40, %0" : "=r"(inherited_canary));
+#endif
         CHECK(inherited_canary == canary);
 #ifdef CRABC_OWNED_WITNESS
         uintptr_t inherited_view, inherited_cancellation;
-        __asm__ volatile("mov %%fs:24, %0" : "=r"(inherited_view));
-        __asm__ volatile("mov %%fs:32, %0" : "=r"(inherited_cancellation));
+#if defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-32]" : "=r"(inherited_view));
+#else
+    __asm__ volatile("mov %%fs:24, %0" : "=r"(inherited_view));
+#endif
+#if defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-24]" : "=r"(inherited_cancellation));
+#else
+    __asm__ volatile("mov %%fs:32, %0" : "=r"(inherited_cancellation));
+#endif
         CHECK(inherited_view == runtime_view && inherited_cancellation == cancellation);
 #endif
         pthread_attr_t after;
@@ -301,10 +325,15 @@ static void deny_fork(void)
     struct instruction { unsigned short code; unsigned char yes, no; unsigned int value; };
     struct program { unsigned short length; struct instruction *instructions; };
     struct instruction instructions[] = {
-        { 0x20, 0, 0, 0 }, { 0x15, 0, 1, SYS_fork },
+        { 0x20, 0, 0, 0 },
+#if defined(__aarch64__)
+        { 0x15, 0, 3, SYS_clone }, { 0x20, 0, 0, 16 }, { 0x15, 0, 1, SIGCHLD },
+#else
+        { 0x15, 0, 1, SYS_fork },
+#endif
         { 0x06, 0, 0, 0x00050000 | EAGAIN }, { 0x06, 0, 0, 0x7fff0000 },
     };
-    struct program filter = { 4, instructions };
+    struct program filter = { sizeof instructions / sizeof *instructions, instructions };
     CHECK(syscall(SYS_prctl, PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) == 0);
     CHECK(syscall(SYS_seccomp, 1L, 0L, &filter) == 0);
 }

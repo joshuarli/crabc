@@ -1,0 +1,719 @@
+#!/usr/bin/env python3
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+import platform
+import shutil
+from pathlib import Path
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from unittest import mock
+
+
+CAN_BUILD = platform.system() == "Linux" and platform.machine() in ("aarch64", "arm64") and Path("/opt/cargo/bin/rustup").is_file()
+
+
+class Aarch64DynamicNonPieTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT"):
+            return
+        if not CAN_BUILD:
+            return
+        root = Path(__file__).resolve().parents[3]
+        cls.product_dir = tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"])
+        cls.addClassCleanup(cls.product_dir.cleanup)
+        product = Path(cls.product_dir.name) / "sysroot"
+        subprocess.run([sys.executable, "-B", str(root / "scripts/build_x86_64_owned_dynamic_sysroot.py"),
+                        "--architecture", "aarch64", "--output", str(product)], cwd=root, check=True)
+        os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"] = str(product)
+        cls.addClassCleanup(os.environ.pop, "CRABC_AARCH64_DYNAMIC_SYSROOT", None)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_dso_declarations_validate_native_reserved_names_before_planning(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        for option in ("--application-dso", "--transitive-application-dso"):
+            for name in ("libc.so", "ld-crabc-aarch64.so.1", "ld-musl-aarch64.so.1", "libapp.so.5beta"):
+                with self.subTest(option=option, name=name):
+                    result = subprocess.run([driver, "-pie", option, "/tmp/" + name, "--print-link-plan"],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue("reserved application DSO" in result.stderr or
+                                    "unowned application DSO" in result.stderr, result.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_link_evidence_requires_exact_opt_in_and_retains_source_object(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, output = work / "main.c", work / "main"
+            source.write_text("int main(void) { return 0; }\n")
+            for value in ("", "0", "true", "retain"):
+                with self.subTest(value=value):
+                    result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True,
+                                            env={**os.environ, "CRABC_X86_64_RETAIN_LINK_EVIDENCE": value})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("retain link evidence", result.stderr)
+                    self.assertFalse(output.exists())
+            subprocess.run([driver, "-pie", source, "-o", output], check=True,
+                           env={**os.environ, "CRABC_X86_64_RETAIN_LINK_EVIDENCE": "1"})
+            receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
+            objects = [Path(item["path"]) for item in receipt["input_receipts"]
+                       if item["path"].endswith("/0.o")]
+            self.assertEqual(len(objects), 1)
+            self.assertTrue(objects[0].is_file())
+            self.assertTrue(objects[0].parent.name.startswith("crabc-dynamic-link."))
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_link_plan_preserves_runpath_and_export_policy(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        plan = json.loads(subprocess.check_output([driver, "-pie", "-rdynamic", "--application-runpath",
+                                                   "/app/lib:$ORIGIN/plugins", "--print-link-plan"], text=True))
+        self.assertEqual(plan["application_runpath"], "/app/lib:$ORIGIN/plugins")
+        self.assertIn("/app/lib:$ORIGIN/plugins", plan["linker"])
+        self.assertIn("--export-dynamic", plan["linker"])
+        result = subprocess.run([driver, "-shared", "-rdynamic", "--print-link-plan"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("-rdynamic", result.stderr)
+        result = subprocess.run([driver, "-pie", "-frounding-math", "--print-link-plan"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("translation options", result.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_translation_uses_sealed_headers_and_uncompressed_debug(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            include = work / "include"
+            include.mkdir()
+            (include / "local.h").write_text("#define LOCAL_VALUE 7\n")
+            source, output = work / "main.c", work / "main.o"
+            source.write_text('#include "local.h"\n#ifndef _REENTRANT\n#error no pthread\n#endif\n'
+                              'int value = LOCAL_VALUE;\n')
+            subprocess.run([driver, "-pie", "-c", "-g", "-pthread", "-frounding-math",
+                            "--application-quote-include-dir", include, source, "-o", output], check=True)
+            sections = subprocess.check_output(["readelf", "-SW", output], text=True)
+            info = next(line for line in sections.splitlines() if ".debug_info " in line)
+            self.assertNotIn(" C ", info)
+            link = work / "include-link"
+            link.symlink_to(include)
+            for options in (("--application-quote-include-dir", str(link)),
+                            ("--application-quote-include-dir", str(product / "usr/include")),
+                            ("-gz=zlib",), ("-lpthread",), ("-I", str(include))):
+                with self.subTest(options=options):
+                    bad = work / "bad.o"
+                    result = subprocess.run([driver, "-pie", "-c", "-g", *options, source, "-o", bad],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(bad.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_weak_data_import_keeps_native_dynamic_got_relocation(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "compat/x86_64"))
+        import owned_dynamic_elf
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, obj = work / "main.c", work / "main.o"
+            source.write_text('extern int fixture_weak_data __attribute__((weak));\n'
+                              '__asm__(".type fixture_weak_data,%object");\n'
+                              'int main(void) { return &fixture_weak_data != 0; }\n')
+            subprocess.run(["gcc", "-fPIC", "-c", source, "-o", obj], check=True)
+            for mode in ("pie", "non-pie"):
+                with self.subTest(mode=mode):
+                    output = work / mode
+                    subprocess.run([driver, "--dynamic-" + mode, obj, "-o", output], check=True)
+                    facts = owned_dynamic_elf.inspect(output, architecture="aarch64")
+                    self.assertEqual(facts["weak_undefined_symbols"], [
+                        "__crabc_x86_64_loader_tls_runtime_v1", "__crabc_x86_64_owned_crt_handoff", "fixture_weak_data"])
+                    symbols = subprocess.check_output(["readelf", "--dyn-syms", "-rW", output], text=True)
+                    self.assertRegex(symbols, r"R_AARCH64_GLOB_DAT\s+0+ fixture_weak_data \+ 0")
+                    self.assertRegex(symbols, r"OBJECT\s+WEAK\s+DEFAULT\s+UND fixture_weak_data")
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_nonconforming_native_outputs_are_not_published(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_elf
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            ifunc = ('static int chosen(void) { return 7; }\n'
+                     '__attribute__((used)) static void *pick(void) { return (void *)chosen; }\n'
+                     '__asm__(".globl leaf\\n.type leaf, %gnu_indirect_function\\n.set leaf, pick\\n");\n')
+            cases = {
+                "ifunc.so": ("-shared", ifunc),
+                "irelative": ("-pie", ifunc + "extern int leaf(void); int main(void) { return leaf(); }\n"),
+                "rwx": ("-no-pie", '__asm__(".section .crabc_rwx,\\\"awx\\\",%progbits\\n.byte 0\\n.text\\n");\n'
+                        "int main(void) { return 0; }\n"),
+            }
+            for name, (mode, text) in cases.items():
+                with self.subTest(name=name):
+                    source, output = work / (name + ".c"), work / name
+                    source.write_text(text)
+                    result = subprocess.run([driver, mode, source, "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("final ELF inspection rejected", result.stderr)
+                    for path in (output, Path(str(output) + ".crabc-link.json"),
+                                 *owned_dynamic_elf.sidecar_paths(output)):
+                        self.assertFalse(path.exists(), path)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_relink_detects_old_sidecars_without_aliasing_prospective_output(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_elf
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, output = work / "source.c", work / "libsearch.so"
+            source.write_text("int search(void) { return 11; }\n")
+            command = [driver, "-shared", "--application-runpath", "/usr/lib", source, "-o", output]
+            subprocess.run(command, check=True)
+            moved = work / "moved"
+            moved.mkdir()
+            for path in (output, Path(str(output) + ".crabc-link.json")):
+                path.replace(moved / path.name)
+            second = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(second.returncode, 0)
+            self.assertNotIn("alias check is unsafe", second.stderr)
+            self.assertIn("cannot reserve dynamic link receipt", second.stderr)
+            self.assertFalse(output.exists())
+            for path in owned_dynamic_elf.sidecar_paths(output):
+                path.replace(moved / path.name)
+            subprocess.run(command, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_native_package_round_trip_and_malformed_archives(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_package as package
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            one, two, extracted = work / "one.tar", work / "two.tar", work / "extracted"
+            package.package(product, one)
+            package.package(product, two)
+            self.assertEqual(one.read_bytes(), two.read_bytes())
+            package.extract(one, extracted)
+            self.assertEqual(package.driver.validate(product), package.driver.validate(extracted))
+            for name in ("../escape", "/escape", "duplicate"):
+                with self.subTest(name=name):
+                    archive_path, rejected = work / ("bad-" + name.replace("/", "_")), work / "rejected"
+                    with tarfile.open(archive_path, "w") as archive:
+                        entry = tarfile.TarInfo(name)
+                        entry.size = 1
+                        archive.addfile(entry, io.BytesIO(b"x"))
+                        if name == "duplicate":
+                            archive.addfile(entry, io.BytesIO(b"x"))
+                    with self.assertRaises(package.driver.shared.DriverError):
+                        package.extract(archive_path, rejected)
+                    self.assertFalse(rejected.exists())
+            for index, value in enumerate(([], None, "manifest", 7, True)):
+                with self.subTest(manifest=value):
+                    archive_path, rejected = work / ("bad-manifest-" + str(index)), work / "rejected"
+                    payload = json.dumps(value).encode()
+                    with tarfile.open(archive_path, "w") as archive:
+                        entry = tarfile.TarInfo("share/crabc/manifest.json")
+                        entry.size = len(payload)
+                        archive.addfile(entry, io.BytesIO(payload))
+                    with self.assertRaises(package.driver.shared.DriverError):
+                        package.extract(archive_path, rejected)
+                    self.assertFalse(rejected.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_native_shared_libc_keeps_helper_and_errno_policies_private(self):
+        root = Path(__file__).resolve().parents[3]
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        provenance = json.loads((product / "share/crabc/libc-shared.provenance.json").read_text())
+        command = provenance["libc_shared_link_command"]
+        self.assertIn("--exclude-libs=libcrabc-builtins.a", command)
+        self.assertNotIn("-Bsymbolic", command)
+        self.assertNotIn("-Bsymbolic-functions", command)
+        self.assertEqual(provenance["shared_errno_private_aliases"]["members"], ["___errno_location"])
+        exports = set((root / "builtins/aarch64-helper-exports.txt").read_text().splitlines())
+        listing = subprocess.check_output(["readelf", "--dyn-syms", "-W", product / "usr/lib/libc.so"], text=True)
+        defined = {fields[-1] for line in listing.splitlines() if len(fields := line.split()) >= 8
+                   and fields[0].endswith(":") and fields[6] != "UND"}
+        self.assertEqual(defined & exports, set())
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_native_builder_rejects_existing_output_before_tool_resolution(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "scripts"))
+        import build_x86_64_owned_dynamic_sysroot as builder
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            output = Path(directory) / "occupied"
+            output.mkdir()
+            marker = output / "existing"
+            marker.write_bytes(b"existing product")
+            with mock.patch.object(builder.common, "pinned_rustup", side_effect=AssertionError("tool invoked")) as tool:
+                with self.assertRaisesRegex(builder.common.BuildError, "output already exists"):
+                    builder.build_aarch64(output, allocator_backend=builder.common.DEFAULT_ALLOCATOR_BACKEND,
+                                          lifecycle_test_audit=False, profile="release",
+                                          hardening_profile=builder.common.NativeRuntimeProfile.COMPATIBILITY)
+                tool.assert_not_called()
+            self.assertEqual(marker.read_bytes(), b"existing product")
+            staged = Path(directory) / "staged"
+            staged.mkdir()
+            (staged / "candidate").write_bytes(b"candidate product")
+            with self.assertRaises(builder.shared_package.PackageError):
+                builder.shared_package.publish_noreplace(staged, output, "dynamic sysroot output")
+            self.assertEqual(marker.read_bytes(), b"existing product")
+            self.assertEqual((staged / "candidate").read_bytes(), b"candidate product")
+            failed = Path(directory) / "failed"
+            with mock.patch.object(builder.common, "run", side_effect=builder.common.BuildError("isolated build failure")):
+                with self.assertRaisesRegex(builder.common.BuildError, "isolated build failure"):
+                    builder.build_aarch64(failed, allocator_backend=builder.common.DEFAULT_ALLOCATOR_BACKEND,
+                                          lifecycle_test_audit=False, profile="release",
+                                          hardening_profile=builder.common.NativeRuntimeProfile.COMPATIBILITY)
+            self.assertFalse(failed.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_combined_native_product_validates_and_links_all_dynamic_modes(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "scripts"))
+        import build_x86_64_owned_combined_sysroot as combined
+        import crabc_cc_owned_dynamic as driver
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            static, installed = work / "static", work / "combined"
+            subprocess.run([sys.executable, "-B", str(root / "scripts/build_x86_64_owned_sysroot.py"),
+                            "--architecture", "aarch64", "--output", str(static)], cwd=root, check=True,
+                           stdout=subprocess.DEVNULL)
+            combined.compose({"static": static, "dynamic": product}, installed)
+            driver.validate_installation(installed)
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for mode in ("pie", "non-pie", "shared-object"):
+                with self.subTest(mode=mode):
+                    output = work / ("output-" + mode)
+                    subprocess.run([installed / "bin/crabc-cc-dynamic", "--dynamic-" + mode,
+                                    source, "-o", output], check=True)
+                    self.assertTrue(output.is_file())
+            manifest = installed / "share/crabc/manifest.json"
+            original = manifest.read_bytes()
+            try:
+                record = json.loads(original)
+                record["hardening_profile"] = "hardened"
+                manifest.write_text(json.dumps(record))
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.validate_installation(installed)
+            finally:
+                manifest.write_bytes(original)
+            foreign = installed / "usr/lib/unreviewed.o"
+            foreign.write_bytes(b"unexpected payload")
+            with self.assertRaises(driver.shared.DriverError):
+                driver.validate_installation(installed)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_receipt_reservations_precede_translation_and_preserve_existing_files(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = product / "bin/crabc-cc-dynamic"
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source = work / "invalid.c"
+            source.write_text("this is not C\n")
+            for kind in ("regular", "symlink", "hardlink"):
+                with self.subTest(kind=kind):
+                    output = work / kind
+                    receipt = Path(str(output) + ".crabc-link.json")
+                    original = work / (kind + ".original")
+                    original.write_bytes(b"existing receipt")
+                    if kind == "regular":
+                        receipt.write_bytes(b"existing receipt")
+                    elif kind == "symlink":
+                        receipt.symlink_to(original)
+                    else:
+                        os.link(original, receipt)
+                    result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True,
+                                            env={**os.environ, "CRABC_X86_64_RETAIN_LINK_EVIDENCE": "1"})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue("reserve dynamic link receipt" in result.stderr or "symlink" in result.stderr,
+                                    result.stderr)
+                    self.assertEqual(receipt.read_bytes(), b"existing receipt")
+                    self.assertEqual(original.read_bytes(), b"existing receipt")
+                    self.assertFalse(output.exists())
+                    self.assertEqual(list(work.glob("crabc-dynamic-link.*")), [])
+            output = work / "new"
+            result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+            self.assertFalse(output.exists())
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            import owned_dynamic_elf
+            for index in (0, 1):
+                output = work / ("sidecar-" + str(index))
+                sidecar = owned_dynamic_elf.sidecar_paths(output)[index]
+                sidecar.write_bytes(b"existing sidecar")
+                result = subprocess.run([driver, "-pie", source, "-o", output], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(sidecar.read_bytes(), b"existing sidecar")
+                self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+                self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_failed_link_preserves_replaced_receipt_inode(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        loader = importlib.machinery.SourceFileLoader("arm_driver_test", str(product / "bin/crabc-cc-dynamic"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            work = Path(directory)
+            source, output = work / "main.c", work / "main"
+            source.write_text("int main(void) { return 0; }\n")
+            receipt = Path(str(output) + ".crabc-link.json")
+            receipt.write_bytes(b"existing receipt")
+            with mock.patch.object(module.dynamic_shared, "dynamic_symbols") as inspect:
+                with self.assertRaises(module.shared.DriverError):
+                    module.execute(["-pie", str(source), "-o", str(output)])
+                inspect.assert_not_called()
+            self.assertEqual(receipt.read_bytes(), b"existing receipt")
+            receipt.unlink()
+
+            def fail_link(command, temporary):
+                if command[0].endswith("gcc"):
+                    return ""
+                self.assertEqual(receipt.read_bytes(), b"")
+                receipt.unlink()
+                receipt.write_bytes(b"competing receipt")
+                raise subprocess.CalledProcessError(1, command)
+
+            with mock.patch.object(module.dynamic_shared, "dynamic_symbols", return_value=(set(), set())), \
+                 mock.patch.object(module.dynamic_shared, "run", side_effect=fail_link):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    module.execute(["-pie", str(source), "-o", str(output)])
+            self.assertEqual(receipt.read_bytes(), b"competing receipt")
+            output = work / "rejected"
+            with mock.patch.object(module.dynamic_shared, "final_elf_inspection",
+                                   side_effect=module.shared.DriverError("rejected linked ELF")):
+                with self.assertRaisesRegex(module.shared.DriverError, "rejected linked ELF"):
+                    module.execute(["-pie", str(source), "-o", str(output)])
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_resealed_crt_and_loader_provenance_drift_is_rejected(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for name in ("crt.provenance.json", "loader.provenance.json"):
+                with self.subTest(name=name):
+                    copy = work / name
+                    shutil.copytree(product, copy, symlinks=True)
+                    loader = copy / "lib/ld-crabc-aarch64.so.1"
+                    loader.unlink()
+                    os.link(copy / "usr/lib/libc.so", loader)
+                    relative = "share/crabc/" + name
+                    path = copy / relative
+                    value = json.loads(path.read_text())
+                    if name.startswith("crt"):
+                        value["hardening_profile"] = "hardened"
+                    else:
+                        value["artifact"]["sha256"] = "0" * 64
+                    path.write_text(json.dumps(value))
+                    manifest_path = copy / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    manifest["files"][relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    manifest_path.write_text(json.dumps(manifest))
+                    output = work / (name + ".o")
+                    result = subprocess.run([copy / "bin/crabc-cc-dynamic", "--dynamic-pie", "-c", source,
+                                             "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_qualification_rejects_resealed_producer_tool_drift(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import owned_dynamic_qualification as qualification
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as directory:
+            copy = Path(directory) / "product"
+            shutil.copytree(product, copy, symlinks=True)
+            loader = copy / "lib/ld-crabc-aarch64.so.1"
+            loader.unlink()
+            os.link(copy / "usr/lib/libc.so", loader)
+            tool_path = copy / "share/crabc/producer-tools.json"
+            tools = json.loads(tool_path.read_text())
+            tools["linker"]["sha256"] = "0" * 64
+            tool_path.write_text(json.dumps(tools))
+            tool_hash = hashlib.sha256(tool_path.read_bytes()).hexdigest()
+            state_path = copy / "share/crabc/dynamic-product-state.json"
+            state = json.loads(state_path.read_text())
+            state["payload_files"]["share/crabc/producer-tools.json"] = tool_hash
+            state_path.write_text(json.dumps(state))
+            manifest_path = copy / "share/crabc/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["files"]["share/crabc/producer-tools.json"] = tool_hash
+            manifest["files"]["share/crabc/dynamic-product-state.json"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(qualification.QualificationError, "source-pinned validation"):
+                qualification.product_identity(copy)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_driver_rejects_target_input_injection_before_compiling(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for option in ("--sysroot=/", "-nostdinc", "-Wl,--dynamic-linker,/tmp/loader", "-L/tmp", "-lc"):
+                with self.subTest(option=option):
+                    output = work / "injected.o"
+                    result = subprocess.run([product / "bin/crabc-cc-dynamic", "--dynamic-pie", "-c", option,
+                                             source, "-o", output], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(output.exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_driver_rejects_unsealed_payload_and_static_or_implicit_modes(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            driver = product / "bin/crabc-cc-dynamic"
+            source = work / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            for arguments in ([str(source)], ["-static", str(source)], ["-static-pie", str(source)],
+                              ["--static-et-exec", str(source)], ["--static-pie", str(source)]):
+                result = subprocess.run([driver, *arguments, "-o", work / "out"], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, arguments)
+            copy = work / "product"
+            shutil.copytree(product, copy, symlinks=True)
+            loader = copy / "lib/ld-crabc-aarch64.so.1"
+            loader.unlink()
+            os.link(copy / "usr/lib/libc.so", loader)
+            with (copy / "usr/include/stddef.h").open("ab") as target:
+                target.write(b"tampered")
+            result = subprocess.run([copy / "bin/crabc-cc-dynamic", "-pie", "-c", source,
+                                     "-o", work / "tampered.o"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("payload hash mismatch", result.stderr)
+            self.assertFalse((work / "tampered.o").exists())
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_direct_dso_rejects_undeclared_dependencies_and_unresolved_imports(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as temporary:
+            work = Path(temporary)
+            leaf, middle, missing, main = (work / name for name in ("leaf.c", "middle.c", "missing.c", "main.c"))
+            leaf.write_text("int leaf(void) { return 7; }\n")
+            middle.write_text("int leaf(void); int middle(void) { return leaf(); }\n")
+            missing.write_text("int absent(void); int call(void) { return absent(); }\n")
+            main.write_text("int main(void) { return 0; }\n")
+            driver = product / "bin/crabc-cc-dynamic"
+            leaf_so, middle_so, missing_so = (work / name for name in ("leaf.so", "middle.so", "missing.so"))
+            subprocess.run([driver, "-shared", leaf, "-o", leaf_so], check=True)
+            subprocess.run([driver, "-shared", middle, "--application-dso", leaf_so, "-o", middle_so], check=True)
+            subprocess.run(["gcc", "-shared", "-fPIC", "-nostdlib", "-Wl,-soname,missing.so", missing,
+                            "-o", missing_so], check=True)
+            for dso, expected in ((middle_so, "undeclared transitive"), (missing_so, "unresolved runtime imports")):
+                result = subprocess.run([driver, "-pie", main, "--application-dso", dso,
+                                         "-o", work / "bad"], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+            search_dso = work / "search.so"
+            subprocess.run([driver, "-shared", leaf, "--application-runpath", "/fixture", "-o", search_dso], check=True)
+            receipt_path = Path(str(search_dso) + ".crabc-link.json")
+            receipt = json.loads(receipt_path.read_text())
+            receipt["unreviewed"] = True
+            receipt_path.write_text(json.dumps(receipt))
+            result = subprocess.run([driver, "-pie", main, "--application-dso", search_dso,
+                                     "-o", work / "bad-search"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("fields do not match", result.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_posix_link_reader_rejects_tampered_native_receipt(self):
+        root = Path(__file__).resolve().parents[3]
+        sys.path.insert(0, str(root / "compat/x86_64"))
+        import owned_posix_product_evidence as evidence
+        import owned_libc_test
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source, obj, binary = (work / name for name in ("main.c", "main.o", "main"))
+            source.write_text("int main(void) { return 0; }\n")
+            subprocess.run([driver, "-pie", "-c", str(source), "-o", str(obj)], check=True)
+            subprocess.run([driver, "-pie", str(obj), "-o", str(binary)], check=True)
+            receipt = Path(str(binary) + ".crabc-link.json")
+            record = json.loads(receipt.read_text())
+            evidence.validate_link(product, obj, binary, receipt, "pie")
+            evidence.validate_retained_link(root, "/workspace", product, obj, binary, receipt, "pie", record["resolved_linker"])
+            arguments = dict(product=product, output=binary, receipt_path=receipt, objects=[obj],
+                             application_dsos=[], shared_object=False, runpath="/usr/lib", export_dynamic=False)
+            self.assertEqual(owned_libc_test.verify_candidate_receipt(**arguments)["link_trace"], record["link_trace"])
+            record["link_trace"].append("trace: /foreign/runtime.o")
+            receipt.write_text(json.dumps(record))
+            with self.assertRaisesRegex(owned_libc_test.EvidenceError, "unadmitted input"):
+                owned_libc_test.verify_candidate_receipt(**arguments)
+            record["link_trace"].pop()
+            record["link_command"].insert(1, "--allow-multiple-definition")
+            receipt.write_text(json.dumps(record))
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence.validate_link(product, obj, binary, receipt, "pie")
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence.validate_retained_link(root, "/workspace", product, obj, binary, receipt, "pie", record["resolved_linker"])
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_lazy_binding_requires_exact_runtime_imports(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source = work / "plugin.c"
+            source.write_text("extern int missing(void); int call(void) { return missing(); }\n")
+            for args in (["--binding", "lazy"], ["--binding", "lazy", "--runtime-import", "wrong"],
+                         ["--binding", "now", "--runtime-import", "missing"],
+                         ["--binding", "lazy", "--binding", "now"]):
+                output = work / "bad.so"
+                result = subprocess.run([driver, "-shared", *args, str(source), "-o", str(output)], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+            output = work / "plugin.so"
+            subprocess.run([driver, "-shared", "--binding", "lazy", "--runtime-import", "missing",
+                            str(source), "-o", str(output)], check=True)
+            dynamic = subprocess.check_output(["readelf", "-dW", str(output)], text=True)
+            self.assertNotIn("BIND_NOW", dynamic)
+            receipt = json.loads(Path(str(output) + ".crabc-link.json").read_text())
+            self.assertEqual(receipt["binding"], "lazy")
+            self.assertEqual(receipt["runtime_imports"], ["missing"])
+            assembly = work / "ifunc.S"
+            assembly.write_text(".text\n.globl witness\n.type witness,%gnu_indirect_function\n"
+                                "witness: ret\n.globl call\n.type call,%function\ncall: b missing\n")
+            obj = work / "ifunc.o"
+            subprocess.run(["gcc", "-fPIC", "-c", assembly, "-o", obj], check=True)
+            result = subprocess.run([driver, "-shared", "--binding", "lazy", "--runtime-import", "missing",
+                                     obj, "-o", work / "ifunc.so"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("IFUNC", result.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_application_dependency_file(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source, header, obj, dep = (work / name for name in ("main.c", "local.h", "main.o", "main.d"))
+            source.write_text('#include "local.h"\n#include <stddef.h>\nint x = VALUE;\n')
+            header.write_text('#define VALUE 1\n')
+            subprocess.run([driver, "-pie", "-c", str(source), "-o", str(obj),
+                            "--application-dependency-file", str(dep)], check=True)
+            content = dep.read_text()
+            self.assertIn(str(source), content)
+            self.assertIn(str(header), content)
+            self.assertIn(str(product / "usr/include/stddef.h"), content)
+            for args in (["-pie", str(source), "-o", str(work / "bin"), "--application-dependency-file", str(dep)],
+                         ["-pie", "-c", str(source), "-o", str(obj), "--application-dependency-file", str(source)],
+                         ["-pie", "-c", str(source), "-o", str(obj), "--application-dependency-file", str(dep),
+                          "--application-dependency-file", str(dep)]):
+                result = subprocess.run([driver, *args], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_non_pie_receipt_and_execution(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            source, obj, binary = (work / name for name in ("hello.c", "hello.o", "hello"))
+            source.write_text("int main(void) { return 0; }\n")
+            driver = str(product / "bin/crabc-cc-dynamic")
+            subprocess.run([driver, "--dynamic-non-pie", "-c", str(source), "-o", str(obj)], check=True)
+            subprocess.run([driver, "--dynamic-non-pie", str(obj), "-o", str(binary)], check=True)
+            header = subprocess.check_output(["readelf", "-hW", str(binary)], text=True)
+            segments = subprocess.check_output(["readelf", "-lW", str(binary)], text=True)
+            self.assertIn("EXEC (Executable file)", header)
+            self.assertIn("/lib/ld-crabc-aarch64.so.1", segments)
+            receipt = json.loads(Path(str(binary) + ".crabc-link.json").read_text())
+            self.assertEqual(receipt["mode"], "exec")
+            self.assertIn("usr/lib/crt1.o", receipt["owned_runtime_inputs"])
+            self.assertNotIn("usr/lib/Scrt1.o", receipt["owned_runtime_inputs"])
+            subprocess.run([str(product / "lib/ld-crabc-aarch64.so.1"), str(binary)], check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_transitive_application_dso_is_validation_only(self):
+        product = Path(os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]).resolve(strict=True)
+        driver = str(product / "bin/crabc-cc-dynamic")
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"]) as tmp:
+            work = Path(tmp)
+            leaf, middle, main = (work / name for name in ("leaf.c", "middle.c", "main.c"))
+            leaf.write_text("int leaf(void) { return 7; }\n")
+            middle.write_text("int leaf(void); int middle(void) { return leaf(); }\n")
+            main.write_text("int middle(void); int main(void) { return middle() != 7; }\n")
+            leaf_so, middle_so, binary = (work / name for name in ("leaf.so", "middle.so", "main"))
+            subprocess.run([driver, "-shared", str(leaf), "-o", str(leaf_so)], check=True)
+            subprocess.run([driver, "-shared", str(middle), "--application-dso", str(leaf_so), "-o", str(middle_so)], check=True)
+            subprocess.run([driver, "-pie", str(main), "--application-dso", str(middle_so),
+                            "--transitive-application-dso", str(leaf_so), "-o", str(binary)], check=True)
+            receipt = json.loads(Path(str(binary) + ".crabc-link.json").read_text())
+            self.assertEqual(receipt["schema"], 3)
+            self.assertEqual(receipt["application_dso_roles"], {"middle.so": "direct", "leaf.so": "transitive"})
+            self.assertNotIn(str(leaf_so), receipt["link_command"])
+            needed = subprocess.check_output(["readelf", "-dW", str(binary)], text=True)
+            self.assertIn("[middle.so]", needed)
+            self.assertNotIn("[leaf.so]", needed)
+            rejected = subprocess.run([driver, "-pie", str(main), "--transitive-application-dso", str(leaf_so),
+                                       "-o", str(work / "bad")], capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("require one direct", rejected.stderr)
+            missing = subprocess.run([driver, "-pie", str(main), "--application-dso", str(middle_so),
+                                      "--transitive-application-dso", str(middle_so), "-o", str(work / "duplicate")],
+                                     capture_output=True, text=True)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("duplicate application DSO", missing.stderr)
+            receipt_path = Path(str(middle_so) + ".crabc-link.json")
+            middle_receipt = json.loads(receipt_path.read_text())
+            receipt_path.write_text(json.dumps({**middle_receipt, "unreviewed": True}))
+            extra = subprocess.run([driver, "-pie", str(main), "--application-dso", str(middle_so),
+                                    "--transitive-application-dso", str(leaf_so), "-o", str(work / "extra")],
+                                   capture_output=True, text=True)
+            self.assertNotEqual(extra.returncode, 0)
+            self.assertIn("fields do not match", extra.stderr)
+            middle_receipt["application_dsos"]["leaf.so"] = "0" * 64
+            receipt_path.write_text(json.dumps(middle_receipt))
+            tampered = subprocess.run([driver, "-pie", str(main), "--application-dso", str(middle_so),
+                                       "--transitive-application-dso", str(leaf_so), "-o", str(work / "tampered")],
+                                      capture_output=True, text=True)
+            self.assertNotEqual(tampered.returncode, 0)
+            self.assertIn("application DSO input identity differs", tampered.stderr)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_errno_alias_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        subprocess.run(["bash", str(root / "compat/x86_64/tests/test_aarch64_errno_alias.sh"),
+                        os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]], cwd=root, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_dynamic_driver_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        environment = {**os.environ, "CRABC_AARCH64_DYNAMIC_PRODUCT": os.environ["CRABC_AARCH64_DYNAMIC_SYSROOT"]}
+        subprocess.run([sys.executable, "-B", str(root / "compat/x86_64/test_aarch64_dynamic_driver.py")],
+                       cwd=root, env=environment, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_tls_trace_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        subprocess.run([sys.executable, "-B", str(root / "compat/x86_64/test_aarch64_tls_trace.py")], cwd=root, check=True)
+
+    @unittest.skipUnless(os.environ.get("CRABC_AARCH64_DYNAMIC_SYSROOT") or CAN_BUILD, "requires a built aarch64 product")
+    def test_default_runtime_regression(self):
+        root = Path(__file__).resolve().parents[3]
+        subprocess.run(["bash", str(root / "compat/x86_64/run_aarch64_default_runtime_regression.sh")], cwd=root, check=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

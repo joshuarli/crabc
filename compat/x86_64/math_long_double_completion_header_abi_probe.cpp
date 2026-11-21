@@ -7,7 +7,7 @@
  * parenthesized addresses make both properties compile-time contracts and
  * retain the named C ABI references for the runner's ELF check.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this probe requires native Linux/x86-64 little-endian LP64"
@@ -34,8 +34,13 @@ static binary80_unary_signature volatile direct_pow10l = &(pow10l);
 
 static_assert(sizeof(long double) == 16 && alignof(long double) == 16,
 	"SysV x86-64 binary80 storage");
+#if defined(__aarch64__)
+static_assert(LDBL_MANT_DIG == 113 && LDBL_MAX_EXP == 16384,
+	"AArch64 binary128 format");
+#else
 static_assert(LDBL_MANT_DIG == 64 && LDBL_MAX_EXP == 16384,
 	"SysV x86-64 binary80 format");
+#endif
 /* The runner deliberately compiles both ordinary SSE and x87 callers. */
 static_assert(FLT_EVAL_METHOD == 0 || FLT_EVAL_METHOD == 2,
 	"selected caller expression modes");

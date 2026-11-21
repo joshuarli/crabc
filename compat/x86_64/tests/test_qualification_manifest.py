@@ -17,6 +17,8 @@ from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch  # noqa: E402
 GENERATOR_PATH = ROOT / "compat" / "x86_64" / "generate_qualification_manifest.py"
 RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_qualification_manifest.py"
 
@@ -44,7 +46,7 @@ class QualificationManifestTests(unittest.TestCase):
             checkout = Path(directory)
             self.assertEqual(
                 qualification.host_receipt_directory(checkout),
-                checkout / ".work/x86_64/qualification-receipts",
+                checkout / ".work" / native_arch()["work_name"] / "qualification-receipts",
             )
 
     def test_profiles_keep_full_roster_and_close_only_selected_readiness(self):
@@ -68,7 +70,7 @@ class QualificationManifestTests(unittest.TestCase):
         report = qualification.load_contract()
         self.assertEqual(report["qualification_profile"], "correctness")
         self.assertEqual(report["deferred_gate_ids"], ["performance.release"])
-        self.assertEqual(report["execution"], qualification.EXECUTION_CONTRACT)
+        self.assertEqual(report["execution"], qualification.DECLARED_EXECUTION_CONTRACT)
         self.assertEqual(
             tuple(row["id"] for row in report["promotion_chain"]),
             qualification.CHAIN,
@@ -205,6 +207,16 @@ class QualificationManifestTests(unittest.TestCase):
             ["bash", "compat/x86_64/run_libc_resolver_runtime.sh"],
         )
 
+    def test_runner_admits_only_the_native_target_machine(self) -> None:
+        machines = {"x86_64": ("x86_64", "aarch64"), "aarch64": ("arm64", "x86_64")}
+        native, foreign = machines[qualification.TARGET["machine"]]
+        with patch.object(runner.platform, "system", return_value="Linux"):
+            with patch.object(runner.platform, "machine", return_value=native):
+                runner.require_native_linux()
+            with patch.object(runner.platform, "machine", return_value=foreign):
+                with self.assertRaisesRegex(runner.QualificationRunError, "refuses emulation"):
+                    runner.require_native_linux()
+
     @unittest.skipUnless(
         sys.platform == "linux" and platform.machine() in {"x86_64", "amd64"},
         "the x86 dispatcher refuses non-native hosts before argument validation",
@@ -302,7 +314,7 @@ class QualificationManifestTests(unittest.TestCase):
                 case = {
                     "schema": qualification.CASE_SCHEMA,
                     "gate": gate["id"],
-                    "target": qualification.TARGET,
+                    "target": qualification.DECLARED_TARGET,
                     "oracle": gate["oracle"],
                     "provenance": gate["provenance"],
                     "purity": gate["purity"],
@@ -349,7 +361,7 @@ class QualificationManifestTests(unittest.TestCase):
         report["promotion_chain"][1]["state"] = "planned"
         with patch.object(qualification, "load_contract", return_value=report), patch.object(
             qualification, "write_or_check"
-        ), patch.object(runner, "require_native_linux_x86_64") as native, patch.object(
+        ), patch.object(runner, "require_native_linux") as native, patch.object(
             runner, "execute_chain_case"
         ) as execute:
             with self.assertRaisesRegex(runner.QualificationRunError, "planned dependencies: compat.posix-process"):

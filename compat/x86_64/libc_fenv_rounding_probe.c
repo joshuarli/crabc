@@ -1,3 +1,6 @@
+#if defined(__aarch64__)
+#include "libc_fenv_rounding_aarch64.inc"
+#else
 /*
  * Static Linux/x86-64 fenv-sensitive rounding ABI probe.
  *
@@ -675,4 +678,6 @@ int main(void)
 {
 	return crabc_x86_64_fenv_rounding_probe();
 }
+#endif
+
 #endif

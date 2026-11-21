@@ -74,8 +74,7 @@ fn attach_with_tid_handoff(
 }
 
 pub(super) unsafe fn attach_initial_thread() -> bool {
-    let pointer: usize;
-    unsafe { core::arch::asm!("mov {}, fs:[0]", out(reg) pointer, options(nostack, readonly)); }
+    let pointer = super::pthread_identity::current_thread_pointer() as usize;
     let tid = unsafe {
         raw_syscall::syscall1(
             raw_syscall::SYS_SET_TID_ADDRESS,
@@ -249,7 +248,7 @@ pub(super) unsafe fn reset_current_thread_images(
     #[cfg(not(feature = "native-mimalloc-shadow"))]
     let result = unsafe { __crabc_x86_64_reset_current_tls_v1() };
     if result != 0 {
-        unsafe { raw_syscall::syscall1(231, 127); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_EXIT_GROUP, 127); }
         loop { core::hint::spin_loop(); }
     }
 }

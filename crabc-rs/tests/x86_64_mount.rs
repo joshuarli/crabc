@@ -1,6 +1,5 @@
-#![cfg(target_arch = "x86_64")]
 
-//! Native x86-64 contract for the narrow direct mount error boundary.
+//! Native Linux contract for the narrow direct mount error boundary.
 //!
 //! These tests deliberately never grant mount authority or attempt namespace
 //! mutation. They prove only byte-path validation and direct errors for a

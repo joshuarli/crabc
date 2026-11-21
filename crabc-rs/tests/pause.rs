@@ -7,7 +7,7 @@ use crabc_rs::{event, io, pipe, process, signal, time, Errno};
 
 static ALARM_SEEN: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "C" fn alarm_handler(_: process::Signal) {
+unsafe extern "C" fn alarm_handler(_: signal::Signal) {
     ALARM_SEEN.store(true, Ordering::Relaxed);
 }
 
@@ -19,7 +19,7 @@ fn child_pause_case(result: &crabc_rs::OwnedFd) -> ! {
         signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
-    let old_action = match unsafe { signal::sigaction(process::Signal::ALARM, Some(&action)) } {
+    let old_action = match unsafe { signal::sigaction(signal::Signal::ALARM, Some(&action)) } {
         Ok(action) => action,
         Err(_) => child_report(result, 1),
     };
@@ -45,7 +45,7 @@ fn child_pause_case(result: &crabc_rs::OwnedFd) -> ! {
         && signal::set_mask(&old_mask).is_ok()
         // SAFETY: `old_action` was returned by the successful installation
         // above and remains valid in this isolated child.
-        && unsafe { signal::sigaction(process::Signal::ALARM, Some(&old_action)).is_ok() };
+        && unsafe { signal::sigaction(signal::Signal::ALARM, Some(&old_action)).is_ok() };
     if !cleanup_ok {
         child_report(result, 6);
     }
@@ -76,9 +76,9 @@ fn pause_blocks_in_an_isolated_child_until_handler_delivery_and_cleans_up() {
     let (result_reader, result_writer) =
         pipe::pipe_with(pipe::PipeFlags::NONBLOCK | pipe::PipeFlags::CLOEXEC)
             .expect("create pause result pipe");
-    let child = match unsafe { process::fork_raw() }.expect("fork isolated pause case") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => child_pause_case(&result_writer),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork isolated pause case") {
+        Some(child) => child,
+        None => child_pause_case(&result_writer),
     };
     drop(result_writer);
 
@@ -86,26 +86,29 @@ fn pause_blocks_in_an_isolated_child_until_handler_delivery_and_cleans_up() {
 
     let status = (0..500)
         .find_map(|_| {
-            match process::waitpid(Some(child), process::WaitOptions::NOHANG)
+            let mut status = 0;
+            // SAFETY: status is writable and the child belongs to this test.
+            match unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 1) }
                 .expect("poll pause child status")
             {
-                Some((_, status)) => Some(status),
-                None => {
+                0 => {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                     None
                 }
+                _ => Some(status),
             }
         })
         .unwrap_or_else(|| {
-            let _ = process::kill_process(child, process::Signal::KILL);
-            process::waitpid(Some(child), process::WaitOptions::empty())
-                .expect("reap timed-out pause child")
-                .expect("timed-out pause child status")
-                .1
+            let _ = process::kill_process(child, signal::Signal::KILL);
+            let mut status = 0;
+            // SAFETY: status is writable and the child belongs to this test.
+            unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }
+                .expect("reap timed-out pause child");
+            status
         });
     assert_eq!(
-        status.exit_status(),
-        Some(0),
+        status,
+        0,
         "pause child status: {status:?}"
     );
 

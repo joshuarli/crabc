@@ -24,7 +24,7 @@
 //! dependencies, and only when main construction completed. The private
 //! freestanding and legacy RuntimeV1 routes keep the CRT-owned array walk.
 
-#[cfg(crabc_dynamic_main_thread_runtime_v1)]
+#[cfg(any(crabc_dynamic_main_thread_runtime_v1, all(target_arch = "aarch64", crabc_owned_dynamic_runtime)))]
 use core::ffi::c_int;
 
 const MAX_INITIAL_POINTERS: usize = 1 << 20;
@@ -51,7 +51,7 @@ static mut INITIAL_DEPENDENCY_CONSTRUCTORS: Option<LifecycleHook> = None;
 // crt1.o is also linked into static executables, which must not retain an
 // unresolved loader symbol, so it reaches the same slot only through the
 // dynamic-only main-resident attachment (see `x86_64_crt1.rs`).
-#[cfg(not(crabc_x86_64_combined_exec_entry))]
+#[cfg(all(target_arch = "x86_64", not(crabc_x86_64_combined_exec_entry)))]
 core::arch::global_asm!(
     ".att_syntax prefix",
     ".weak __crabc_x86_64_owned_crt_handoff",
@@ -70,6 +70,20 @@ core::arch::global_asm!(
     "ret",
     ".size __crabc_x86_64_owned_crt_handoff_value, .-__crabc_x86_64_owned_crt_handoff_value",
     ".intel_syntax noprefix",
+);
+
+#[cfg(all(target_arch = "aarch64", not(crabc_x86_64_combined_exec_entry)))]
+core::arch::global_asm!(
+    ".weak __crabc_x86_64_owned_crt_handoff",
+    ".type __crabc_x86_64_owned_crt_handoff,%object",
+    ".text",
+    ".global __crabc_x86_64_owned_crt_handoff_value",
+    ".type __crabc_x86_64_owned_crt_handoff_value,%function",
+    "__crabc_x86_64_owned_crt_handoff_value:",
+    "adrp x0, :got:__crabc_x86_64_owned_crt_handoff",
+    "ldr x0, [x0, :got_lo12:__crabc_x86_64_owned_crt_handoff]",
+    "ret",
+    ".size __crabc_x86_64_owned_crt_handoff_value, .-__crabc_x86_64_owned_crt_handoff_value",
 );
 
 struct InitialProcess {
@@ -100,7 +114,7 @@ unsafe extern "C" {
     fn __crabc_x86_64_owned_crt_handoff_value() -> *const OwnedCrtHandoffV1;
     #[cfg(crabc_x86_64_combined_exec_entry)]
     fn __crabc_x86_64_attached_owned_crt_handoff() -> *const OwnedCrtHandoffV1;
-    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
+    #[cfg(any(crabc_dynamic_main_thread_runtime_v1, all(target_arch = "aarch64", crabc_owned_dynamic_runtime)))]
     fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int;
 }
 
@@ -213,8 +227,12 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
     // directly, so this is neither a weak fallback nor a libc.so import. A
     // failed descriptor observation must stop before the dynamic libc sees
     // the six-argument startup boundary or any main-image callback runs.
-    #[cfg(crabc_dynamic_main_thread_runtime_v1)]
+    #[cfg(all(target_arch = "x86_64", crabc_dynamic_main_thread_runtime_v1))]
     if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
+        startup_reject();
+    }
+    #[cfg(all(target_arch = "aarch64", crabc_owned_dynamic_runtime))]
+    if !handoff.is_null() && unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0 {
         startup_reject();
     }
     unsafe {
@@ -394,11 +412,14 @@ fn startup_reject() -> ! {
         // A dependency constructor may already have created workers when a
         // later main-image array is rejected. Linux exit terminates only this
         // thread; exit_group stops the entire malformed startup transaction.
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!(
             "syscall",
             in("rax") 231usize,
             in("rdi") 127usize,
             options(noreturn, nostack),
         );
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("svc 0", in("x8") 94usize, in("x0") 127usize, options(noreturn, nostack));
     }
 }

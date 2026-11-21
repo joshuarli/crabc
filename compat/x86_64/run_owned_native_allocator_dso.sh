@@ -2,11 +2,12 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly dso_linker="$ROOT/compat/x86_64/owned_native_allocator_dso.py"
 readonly probe="$ROOT/compat/x86_64/owned_native_allocator_dso_probe.c"
 readonly library="$ROOT/compat/x86_64/owned_native_allocator_dso_library.c"
-readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
+readonly musl_interpreter=/lib/ld-musl-${arch}.so.1
 readonly receipt_runner=owned-native-allocator-dso
 readonly case_timeout=30
 
@@ -89,7 +90,7 @@ receipt_products+=(
     "dynamic-product-state=$dynamic_sysroot/share/crabc/dynamic-product-state.json"
     "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
     "dynamic-libc=$dynamic_sysroot/usr/lib/libc.so"
-    "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-x86_64.so.1"
+    "dynamic-loader=$dynamic_sysroot/lib/ld-crabc-${arch}.so.1"
     "dynamic-driver=$driver"
     "dynamic-builtins=$dynamic_sysroot/usr/lib/libcrabc-builtins.a"
     "musl-libc=/opt/musl-1.2.6/lib/libc.so"
@@ -179,7 +180,7 @@ for mode in pie non-pie; do
     receipt_products+=("candidate-probe-$mode=$work/execution-root/probe-$mode")
     for entry in kernel direct; do
         loader=()
-        [ "$entry" = kernel ] || loader=(/lib/ld-crabc-x86_64.so.1)
+        [ "$entry" = kernel ] || loader=(/lib/ld-crabc-${arch}.so.1)
         run_case "$entry-$mode" chroot "$work/execution-root" "${loader[@]}" "/probe-$mode" /libdso-plugin.so
         cmp "$work/oracle-$mode.stdout" "$work/$entry-$mode.stdout" || {
             printf 'native-allocator-dso: %s-%s transcript differs from musl\n' "$entry" "$mode" >&2

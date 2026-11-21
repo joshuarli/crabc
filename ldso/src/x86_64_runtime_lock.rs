@@ -26,12 +26,12 @@ const CONTENDED: i32 = 2;
 fn acquire(lock: &AtomicI32) {
     if lock.compare_exchange(FREE, HELD, Ordering::Acquire, Ordering::Relaxed).is_ok() { return; }
     while lock.swap(CONTENDED, Ordering::Acquire) != FREE {
-        unsafe { syscall6(202, lock as *const _ as i64, 128, CONTENDED as i64, 0, 0, 0); }
+        unsafe { syscall6(SYS_FUTEX, lock as *const _ as i64, 128, CONTENDED as i64, 0, 0, 0); }
     }
 }
 fn release(lock: &AtomicI32) {
     if lock.swap(FREE, Ordering::Release) == CONTENDED {
-        unsafe { syscall6(202, lock as *const _ as i64, 129, 1, 0, 0, 0); }
+        unsafe { syscall6(SYS_FUTEX, lock as *const _ as i64, 129, 1, 0, 0, 0); }
     }
 }
 
@@ -93,10 +93,10 @@ impl Drop for RuntimeGuard {
 }
 
 pub(super) fn wait_initialization(state: &AtomicI32, expected: i32) {
-    unsafe { syscall6(202, state as *const AtomicI32 as i64, 128, expected as i64, 0, 0, 0); }
+    unsafe { syscall6(SYS_FUTEX, state as *const AtomicI32 as i64, 128, expected as i64, 0, 0, 0); }
 }
 pub(super) fn wake_initialization(state: &AtomicI32) {
-    unsafe { syscall6(202, state as *const AtomicI32 as i64, 129, i32::MAX as i64, 0, 0, 0); }
+    unsafe { syscall6(SYS_FUTEX, state as *const AtomicI32 as i64, 129, i32::MAX as i64, 0, 0, 0); }
 }
 
 /// Isolate mincore-after-unmap assertions from unrelated test threads that
@@ -110,16 +110,19 @@ pub(super) unsafe fn isolated_mapping_probe(probe: unsafe fn(&RuntimeGuard) -> b
     // As the product fork transaction does, keep the pool lock across the raw
     // fork so a concurrent test thread's pool update is never half-copied.
     AllocationGuard::retain_for_fork();
+    #[cfg(target_arch = "x86_64")]
     let pid = unsafe { syscall1(57, 0) };
+    #[cfg(target_arch = "aarch64")]
+    let pid = unsafe { syscall6(220, 17, 0, 0, 0, 0, 0) };
     unsafe { AllocationGuard::complete_fork(); }
     if pid == 0 {
         let result = unsafe { probe(&guard) };
-        unsafe { syscall1(60, if result { 0 } else { 1 }); core::hint::unreachable_unchecked(); }
+        unsafe { syscall1(SYS_EXIT, if result { 0 } else { 1 }); core::hint::unreachable_unchecked(); }
     }
     let mut status = -1i32;
     let waited = if pid > 0 {
         loop {
-            let result = unsafe { syscall4(61, pid, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
+            let result = unsafe { syscall4(if cfg!(target_arch = "aarch64") { 260 } else { 61 }, pid, core::ptr::addr_of_mut!(status) as i64, 0, 0) };
             if result != -4 { break result; }
         }
     } else { pid };

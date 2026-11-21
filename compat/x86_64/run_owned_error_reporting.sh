@@ -13,16 +13,17 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_error_reporting_probe.c"
-readonly crabc_interpreter=/lib/ld-crabc-x86_64.so.1
-readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
+readonly crabc_interpreter="/lib/ld-crabc-$arch.so.1"
+readonly musl_interpreter="/lib/ld-musl-$arch.so.1"
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
 
 python3 -B - "$ROOT" "${TMPDIR:-}" "${1:-}" <<'PY'
 from pathlib import Path
@@ -123,14 +124,14 @@ audit_consumer() {
     readelf -dW "$candidate" >"$candidate.dynamic"
     readelf -sW "$candidate" >"$candidate.symbols"
     readelf -sW "$provider" >"$candidate.provider-symbols"
-    python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<'PY'
+    python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" "$arch" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 
-source_root, family, mode, candidate_text, receipt_text, provider_symbols_text = sys.argv[1:]
+source_root, family, mode, candidate_text, receipt_text, provider_symbols_text, arch = sys.argv[1:]
 if family == 'dynamic':
     sys.path.insert(0, str(Path(source_root) / 'compat/x86_64'))
     import owned_dynamic_receipt as receipt_contract
@@ -143,7 +144,7 @@ def require(value, message):
         raise SystemExit('owned error-reporting artifact: ' + message)
 
 expected_format = (
-    'crabc-x86-64-owned-dynamic-sysroot-v1'
+    ('crabc-aarch64-owned-dynamic-sysroot-v1' if arch == 'aarch64' else 'crabc-x86-64-owned-dynamic-sysroot-v1')
     if family == 'dynamic' else 'crabc-x86-64-sealed-static-driver-v1'
 )
 if family == 'dynamic':
@@ -162,14 +163,14 @@ output_hash = receipt.get('output_sha256') if family == 'dynamic' else receipt.g
 require(output_hash == hashlib.sha256(candidate.read_bytes()).hexdigest(),
         'output receipt hash')
 header = Path(str(candidate) + '.header').read_text()
-require('Advanced Micro Devices X86-64' in header, 'machine')
+require(('AArch64' if arch == 'aarch64' else 'Advanced Micro Devices X86-64') in header, 'machine')
 expected_type = 'DYN' if mode in ('pie', 'static-pie') else 'EXEC'
 require(re.search(r'Type:\s+' + expected_type + r'\s', header), 'ELF mode')
 segments = Path(str(candidate) + '.segments').read_text()
 dynamic = Path(str(candidate) + '.dynamic').read_text()
 interpreters = re.findall(r'Requesting program interpreter: ([^\]]+)\]', segments)
 needed = re.findall(r'\(NEEDED\).*\[([^\]]+)\]', dynamic)
-require(interpreters == (['/lib/ld-crabc-x86_64.so.1'] if family == 'dynamic' else []),
+require(interpreters == ([f'/lib/ld-crabc-{arch}.so.1'] if family == 'dynamic' else []),
         'interpreter boundary')
 require(needed == (['libc.so'] if family == 'dynamic' else []),
         'owned runtime dependencies')

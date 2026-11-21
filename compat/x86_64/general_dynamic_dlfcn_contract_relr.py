@@ -14,9 +14,14 @@ from pathlib import Path
 import struct
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_arch import native_arch
+
 DT_SONAME, DT_RELA, DT_RELASZ, DT_RELAENT, DT_RUNPATH = 14, 7, 8, 9, 29
 DT_RELRSZ, DT_RELR, DT_RELRENT, DT_RELACOUNT = 35, 36, 37, 0x6FFFFFF9
-PT_LOAD, PT_DYNAMIC, R_X86_64_RELATIVE = 1, 2, 8
+PT_LOAD, PT_DYNAMIC = 1, 2
+ARCH = native_arch()
+RELATIVE = 1027 if ARCH["arch"] == "aarch64" else 8
 
 
 def relr_stream(offsets: list[int]) -> list[int]:
@@ -44,6 +49,8 @@ def relr_stream(offsets: list[int]) -> list[int]:
 def pack(image: bytearray) -> int:
     if len(image) < 64 or image[:6] != b"\x7fELF\x02\x01":
         raise SystemExit("source must be a little-endian ELF64 object")
+    if struct.unpack_from("<H", image, 18)[0] != (183 if ARCH["arch"] == "aarch64" else 62):
+        raise SystemExit("source ELF machine differs from native architecture")
     phoff = struct.unpack_from("<Q", image, 32)[0]
     phentsize, phnum = struct.unpack_from("<HH", image, 54)
     if phentsize < 56 or phoff + phentsize * phnum > len(image):
@@ -96,10 +103,11 @@ def pack(image: bytearray) -> int:
     for _, info, _ in relocations:
         relocation_type = info & 0xFFFFFFFF
         symbol_index = info >> 32
-        if relocation_type != R_X86_64_RELATIVE:
+        if relocation_type != RELATIVE:
             break
         if symbol_index != 0:
-            raise SystemExit("leading R_X86_64_RELATIVE relocation has a nonzero symbol")
+            raise SystemExit("leading R_AARCH64_RELATIVE relocation has a nonzero symbol" if ARCH["arch"] == "aarch64"
+                             else "leading R_X86_64_RELATIVE relocation has a nonzero symbol")
         count += 1
     if not count:
         raise SystemExit("source has no leading RELATIVE block in DT_RELA")

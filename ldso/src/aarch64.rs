@@ -1,6 +1,9 @@
 //! Linux/AArch64 syscall instruction and number boundary for `ldso`.
 
 /// Linux/AArch64 `read`.
+pub(crate) const SYS_FUTEX: i64 = 98;
+pub(crate) const SYS_GETTID: i64 = 178;
+pub(crate) const SYS_READLINKAT: i64 = 78;
 pub(crate) const SYS_READ: i64 = 63;
 /// Linux/AArch64 `write`.
 pub(crate) const SYS_WRITE: i64 = 64;
@@ -10,6 +13,10 @@ pub(crate) const SYS_OPENAT: i64 = 56;
 pub(crate) const SYS_CLOSE: i64 = 57;
 /// Linux/AArch64 `fstat`.
 pub(crate) const SYS_FSTAT: i64 = 80;
+/// Linux/AArch64 `pread64`.
+pub(crate) const SYS_PREAD64: i64 = 67;
+/// Linux/AArch64 `newfstatat`.
+pub(crate) const SYS_NEWFSTATAT: i64 = 79;
 /// Linux/AArch64 `lseek`.
 pub(crate) const SYS_LSEEK: i64 = 62;
 /// Linux/AArch64 `mmap`.
@@ -63,6 +70,24 @@ pub(crate) unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
             inlateout("x0") a1 => result,
             inlateout("x1") a2 => _,
             inlateout("x2") a3 => _,
+            options(nostack),
+        );
+    }
+    result
+}
+
+#[inline(always)]
+pub(crate) unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64 {
+    let result: i64;
+    // SAFETY: The caller supplies the Linux syscall number and argument ABI.
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x8") n => _,
+            inlateout("x0") a1 => result,
+            inlateout("x1") a2 => _,
+            inlateout("x2") a3 => _,
+            inlateout("x3") a4 => _,
             options(nostack),
         );
     }

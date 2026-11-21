@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -24,12 +25,14 @@ TRACKED_PATH = ROOT / "compat/x86_64/native-abi-exports.json"
 DYNAMIC_KEYS = ("name", "version", "version_default", "type", "binding", "visibility")
 DATA_TYPES = frozenset({"OBJECT", "TLS"})
 RUST_V0_PREFIX = "_R"
+LLVM_PROMOTION_SUFFIX = re.compile(r"\.llvm\.[0-9]+$")
 DYNAMIC_CATEGORIES = (
     "extra", "missing", "compatibility_differences", "data_size_differences", "version_differences",
 )
 STATIC_CATEGORIES = ("extra", "missing", "class_differences")
 STATIC_ENTRY_KEYS = frozenset({"name", "nm_type", "count"})
 CLASS_DIFFERENCE_KEYS = frozenset({"name", "reference", "candidate"})
+ARM_STATIC_DELTA = ROOT / "compat/x86_64/native-abi-exports-aarch64.json"
 
 
 class ExportsError(RuntimeError):
@@ -67,6 +70,10 @@ def _dynamic_entry(row: object, description: str, *, from_report: bool) -> dict[
     return entry
 
 
+def _static_name(name: str) -> str:
+    return LLVM_PROMOTION_SUFFIX.sub("", name) if name.startswith("anon.") else name
+
+
 def _static_names(rows: object, description: str, *, from_report: bool) -> list[str]:
     require(isinstance(rows, list), f"{description} must be a list")
     if from_report:
@@ -77,7 +84,7 @@ def _static_names(rows: object, description: str, *, from_report: bool) -> list[
             names.append(row["name"])
         rows = names
     require(all(isinstance(name, str) and name for name in rows), f"{description} entries are malformed")
-    return sorted({name for name in rows if not name.startswith(RUST_V0_PREFIX)})
+    return sorted({_static_name(name) for name in rows if not name.startswith(RUST_V0_PREFIX)})
 
 
 def _objects(value: object, description: str, *, keys: frozenset[str] | None = None) -> list[dict[str, Any]]:
@@ -127,13 +134,37 @@ def load_tracked(path: Path | None = None) -> dict[str, Any]:
     except inventory.InventoryError as error:
         raise ExportsError(f"reviewed native x86 export delta is invalid: {error}") from error
     value = inventory.require_exact_keys(value, {"schema", "target", "shared_dynamic", "static_archive"}, "reviewed native x86 export delta")
-    require(value["schema"] == SCHEMA and value["target"] == TARGET, "reviewed native x86 export delta contract drifted")
+    require(value["schema"] == SCHEMA and value["target"] == "x86_64-unknown-linux-musl", "reviewed native x86 export delta contract drifted")
     return _categories(value["shared_dynamic"], value["static_archive"], "reviewed delta", from_report=False)
 
 
 def differences(report_path: Path, *, tracked_path: Path | None = None) -> dict[str, dict[str, list[Any]]]:
     tracked = load_tracked(tracked_path)
     current = project(load_report(report_path))
+    if TARGET == "aarch64-unknown-linux-musl":
+        try:
+            delta = inventory.read_json(ARM_STATIC_DELTA, "reviewed native ARM static delta")
+        except inventory.InventoryError as error:
+            raise ExportsError(f"reviewed native ARM static delta is invalid: {error}") from error
+        keys = {"schema", "target", "extra_add", "extra_remove", "missing_add", "missing_remove",
+                "anonymous_extra", "anonymous_missing"}
+        require(type(delta) is dict and set(delta) == keys and delta["schema"] == 1
+                and delta["target"] == TARGET, "reviewed native ARM static delta contract drifted")
+        for key in keys - {"schema", "target"}:
+            rows = delta[key]
+            require(type(rows) is list and all(type(name) is str and name for name in rows)
+                    and rows == sorted(set(rows)), f"reviewed native ARM {key} roster differs")
+            if key.startswith("anonymous_"):
+                require(all(name.startswith("anon.") for name in rows), "reviewed ARM anonymous roster differs")
+            else:
+                require(all(not name.startswith("anon.") for name in rows), "reviewed ARM named roster differs")
+        for category in ("extra", "missing"):
+            removed, added = set(delta[category + "_remove"]), set(delta[category + "_add"])
+            baseline = set(tracked["static_archive"][category])
+            require(removed <= baseline and not (added & baseline), f"reviewed x86 static {category} contract drifted")
+            baseline = {name for name in baseline if not name.startswith("anon.")}
+            anonymous = set(map(_static_name, delta["anonymous_" + category]))
+            tracked["static_archive"][category] = sorted((baseline - removed) | added | anonymous)
     changes = {}
     for group, categories in (("shared_dynamic", DYNAMIC_CATEGORIES), ("static_archive", STATIC_CATEGORIES)):
         for category in categories:
@@ -169,6 +200,7 @@ def check(report_path: Path, *, tracked_path: Path | None = None, stream: Any = 
 
 
 def update(report_path: Path, *, tracked_path: Path | None = None) -> Path:
+    require(TARGET == "x86_64-unknown-linux-musl", "reviewed x86 export delta requires native x86 collection")
     tracked_path = TRACKED_PATH if tracked_path is None else tracked_path
     tracked = {"schema": SCHEMA, "target": TARGET, **project(load_report(report_path))}
     try:

@@ -5,7 +5,7 @@
 //! machine, but remains far smaller than a general C atomic or pthread
 //! synchronization runtime.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 atomic leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
@@ -62,22 +62,30 @@ pub(crate) unsafe fn x86_64_compare_exchange_acqrel_i32(
     expected: c_int,
     desired: c_int,
 ) -> c_int {
-    let observed: c_int;
-    // SAFETY: `address` is the raw pthread/atomic storage supplied by the
-    // caller. `lock cmpxchg` atomically compares against eax, stores only on
-    // a match, and returns the prior value in eax on either path. Its locked
-    // memory operation supplies acquire/release ordering (and, on x86, the
-    // stronger total-ordering guarantee) without a compiler helper call.
-    unsafe {
-        core::arch::asm!(
-            "lock cmpxchg dword ptr [{address}], {desired:e}",
-            address = in(reg) address,
-            desired = in(reg) desired,
-            inout("eax") expected => observed,
-            options(nostack),
-        );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let observed: c_int;
+        // SAFETY: `address` is the raw pthread/atomic storage supplied by the
+        // caller. `lock cmpxchg` atomically compares against eax, stores only on
+        // a match, and returns the prior value in eax on either path. Its locked
+        // memory operation supplies acquire/release ordering (and, on x86, the
+        // stronger total-ordering guarantee) without a compiler helper call.
+        unsafe {
+            core::arch::asm!(
+                "lock cmpxchg dword ptr [{address}], {desired:e}",
+                address = in(reg) address,
+                desired = in(reg) desired,
+                inout("eax") expected => observed,
+                options(nostack),
+            );
+        }
+        observed
     }
-    observed
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: the caller supplies live aligned storage with atomic access.
+        unsafe { AtomicI32::from_ptr(address) }.compare_exchange(expected, desired, Ordering::SeqCst, Ordering::SeqCst).unwrap_or_else(|value| value)
+    }
 }
 
 /// Exchange one aligned `i32` with x86's implicitly locked memory `xchg`.
@@ -93,19 +101,27 @@ pub(crate) unsafe fn x86_64_compare_exchange_acqrel_i32(
 /// operations compatible with this acquire/release synchronization protocol.
 #[inline(always)]
 pub(crate) unsafe fn x86_64_swap_acqrel_i32(address: *mut c_int, desired: c_int) -> c_int {
-    let previous: c_int;
-    // SAFETY: `address` is the raw pthread/atomic storage supplied by the
-    // caller. Memory `xchg` is indivisible and implicitly locked on x86; the
-    // tied register operand receives the value replaced in memory.
-    unsafe {
-        core::arch::asm!(
-            "xchg dword ptr [{address}], {desired:e}",
-            address = in(reg) address,
-            desired = inout(reg) desired => previous,
-            options(nostack),
-        );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let previous: c_int;
+        // SAFETY: `address` is the raw pthread/atomic storage supplied by the
+        // caller. Memory `xchg` is indivisible and implicitly locked on x86; the
+        // tied register operand receives the value replaced in memory.
+        unsafe {
+            core::arch::asm!(
+                "xchg dword ptr [{address}], {desired:e}",
+                address = in(reg) address,
+                desired = inout(reg) desired => previous,
+                options(nostack),
+            );
+        }
+        previous
     }
-    previous
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: the caller supplies live aligned storage with atomic access.
+        unsafe { AtomicI32::from_ptr(address) }.swap(desired, Ordering::SeqCst)
+    }
 }
 
 /// Add to one aligned `i32` with a locked x86 `xadd`, returning the old value.
@@ -122,19 +138,27 @@ pub(crate) unsafe fn x86_64_swap_acqrel_i32(address: *mut c_int, desired: c_int)
 /// operations compatible with this acquire/release synchronization protocol.
 #[inline(always)]
 pub(crate) unsafe fn x86_64_fetch_add_acqrel_i32(address: *mut c_int, value: c_int) -> c_int {
-    let previous: c_int;
-    // SAFETY: `address` is the raw pthread/atomic storage supplied by the
-    // caller. `lock xadd` atomically adds the register value, returns the old
-    // value in that register, and wraps at the i32 width selected by `dword`.
-    unsafe {
-        core::arch::asm!(
-            "lock xadd dword ptr [{address}], {value:e}",
-            address = in(reg) address,
-            value = inout(reg) value => previous,
-            options(nostack),
-        );
+    #[cfg(target_arch = "x86_64")]
+    {
+        let previous: c_int;
+        // SAFETY: `address` is the raw pthread/atomic storage supplied by the
+        // caller. `lock xadd` atomically adds the register value, returns the old
+        // value in that register, and wraps at the i32 width selected by `dword`.
+        unsafe {
+            core::arch::asm!(
+                "lock xadd dword ptr [{address}], {value:e}",
+                address = in(reg) address,
+                value = inout(reg) value => previous,
+                options(nostack),
+            );
+        }
+        previous
     }
-    previous
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: the caller supplies live aligned storage with atomic access.
+        unsafe { AtomicI32::from_ptr(address) }.fetch_add(value, Ordering::SeqCst)
+    }
 }
 
 /// Subtract from one aligned `i32` with the same locked RMW contract as add.

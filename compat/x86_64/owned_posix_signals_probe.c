@@ -214,9 +214,9 @@ static void deny_futex_interrupt(void) {
 }
 static void interrupt_bookkeeping(void) {
     CHECK(signal(SIGUSR1,handler)!=SIG_ERR); OBS(siginterrupt(SIGUSR1,1));
-    sem_t semaphore; CHECK(!sem_init(&semaphore,0,0)); struct timespec deadline; CHECK(!clock_gettime(CLOCK_REALTIME,&deadline));
-    deadline.tv_nsec+=20000000; if (deadline.tv_nsec>=1000000000) { deadline.tv_sec++; deadline.tv_nsec-=1000000000; }
-    deny_futex_interrupt(); OBS(sem_timedwait(&semaphore,&deadline)); CHECK(!sem_destroy(&semaphore));
+    sem_t semaphore; CHECK(!sem_init(&semaphore,0,0)); deny_futex_interrupt();
+    struct timespec deadline; CHECK(!clock_gettime(CLOCK_REALTIME,&deadline)); deadline.tv_sec++;
+    OBS(sem_timedwait(&semaphore,&deadline)); CHECK(!sem_destroy(&semaphore));
 }
 static unsigned char alternate[65536] __attribute__((aligned(16)));
 static volatile sig_atomic_t on_alternate,onstack_flag,disable_result,disable_error;

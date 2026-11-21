@@ -9,7 +9,7 @@
  * typed address is callable; the leaf runners own rounding, exceptions, NaN,
  * underflow, and overflow behavior.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -48,7 +48,12 @@ _Static_assert(sizeof(double) == 8 && _Alignof(double) == 8,
 	"SysV x86-64 binary64 storage");
 _Static_assert(sizeof(long double) == 16 && _Alignof(long double) == 16,
 	"SysV x86-64 binary80 storage");
-_Static_assert(FLT_RADIX == 2 && DBL_MANT_DIG == 53 && LDBL_MANT_DIG == 64,
+_Static_assert(FLT_RADIX == 2 && DBL_MANT_DIG == 53 &&
+#if defined(__aarch64__)
+	LDBL_MANT_DIG == 113,
+#else
+	LDBL_MANT_DIG == 64,
+#endif
 	"selected IEEE scalar formats");
 
 static int verify_double_surface(void)

@@ -13,7 +13,10 @@ set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$#" -eq 0 ] || { printf 'usage: %s\n' "$0" >&2; exit 2; }
-[ "$(uname -sm)" = 'Linux x86_64' ]
+case "$(uname -sm)" in
+    'Linux x86_64'|'Linux aarch64') ;;
+    *) printf 'owned combined sysroot requires native Linux x86_64 or aarch64\n' >&2; exit 1 ;;
+esac
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys

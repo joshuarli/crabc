@@ -40,17 +40,17 @@ class StatFtwHeaderSourceFormTests(unittest.TestCase):
         ):
             self.assertIn(required, header)
 
-        self.assertIn(
-            "#if !defined(__x86_64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))",
-            header,
-        )
-        self.assertIn("#if defined(__x86_64__) && defined(_LARGEFILE64_SOURCE)", header)
+        self.assertIn("#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\nint lchmod", header)
+        self.assertIn("#if defined(_LARGEFILE64_SOURCE)\n#define stat64 stat", header)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
     def test_x86_bits_stat_branch_is_intentionally_unguarded(self) -> None:
         header = (ROOT / "include/bits/stat.h").read_text(encoding="utf-8")
-        x86_branch, aarch64_branch = header.split("#else\n", maxsplit=1)
+        x86_outer, aarch64_branch = header.split("#elif defined(__aarch64__)\n", 1)
+        x86_branch = x86_outer.split("#else\n", 1)[0]
 
-        self.assertTrue(x86_branch.startswith("#if defined(__x86_64__) && defined(__LP64__)\n"))
+        self.assertTrue(x86_branch.startswith("#if defined(__x86_64__)\n#if defined(__x86_64__) && defined(__LP64__)\n"))
         self.assertIn(
             "/* copied from kernel definition, but with padding replaced\n"
             " * by the corresponding correctly-sized userspace types. */",
@@ -58,7 +58,9 @@ class StatFtwHeaderSourceFormTests(unittest.TestCase):
         )
         self.assertIn("unsigned int    __pad0;", x86_branch)
         self.assertNotIn("_BITS_STAT_H", x86_branch)
-        self.assertIn("#ifndef _BITS_STAT_H", aarch64_branch)
+        self.assertIn("unsigned long long __pad;", aarch64_branch)
+        self.assertIn("int __pad2;", aarch64_branch)
+        self.assertIn("unsigned __unused[2];", aarch64_branch)
 
     def test_ftw_source_remains_the_exact_pinned_musl_transitive_leaf(self) -> None:
         header = (ROOT / "include/ftw.h").read_text(encoding="utf-8")

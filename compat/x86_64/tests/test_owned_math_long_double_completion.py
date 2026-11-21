@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import stat
+import importlib.util
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ PROBE = ROOT / "compat/x86_64/libc_math_long_double_completion_probe.c"
 VALIDATOR = ROOT / "compat/x86_64/validate_libc_math_long_double_completion.py"
 MODULE = ROOT / "libc/src/c_abi/x86_64/math_long_double_completion.rs"
 ASSEMBLY = ROOT / "libc/src/c_abi/x86_64/math_long_double_completion_musl_x86_64.S"
+SOURCE_RUNTIME_LIBC = ROOT / "compat/x86_64/source_runtime_libc.sh"
 
 
 def simulated_feature_runner(root: Path) -> Path:
@@ -62,7 +64,8 @@ chmod +x "$output"
     fake_cargo = root / "tools/cargo"
     fake_cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_cargo.chmod(0o755)
-    (runner.parent / "source_runtime_libc.sh").write_text('''build_source_runtime_libc() {
+    (runner.parent / "source_runtime_libc.sh").write_text(f'''. '{SOURCE_RUNTIME_LIBC}'
+build_source_runtime_libc() {{
     local output="$1"
     shift
     local retained_work=''
@@ -75,11 +78,11 @@ chmod +x "$output"
         fi
     done
     mkdir -p "$retained_work"
-    printf '{"reason":"simulated cargo invocation"}\\n' > "$retained_work/cargo.stdout.jsonl"
+    printf '{{"reason":"simulated cargo invocation"}}\\n' > "$retained_work/cargo.stdout.jsonl"
     printf 'raw Cargo graph stderr\\n' > "$retained_work/cargo.stderr.log"
     printf 'source-runtime libc build failed; evidence retained: %s\\n' "$retained_work" >&2
     return 1
-}
+}}
 ''', encoding="utf-8")
     for path in (
         runner.parent / "run_musl_oracle.sh",
@@ -259,6 +262,27 @@ class OwnedMathLongDoubleCompletionTests(unittest.TestCase):
                 f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT\n",
             )
 
+
+
+class NativeBinary128RecordsTests(unittest.TestCase):
+    def test_rejects_changed_values_and_exception_flags(self):
+        spec = importlib.util.spec_from_file_location("completion_records", VALIDATOR)
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        records = [(function, index, mode, 0, 0, mode, mode, bytes(16))
+                   for mode in validator.AARCH64_MODES
+                   for function, count in ((1, 13), (2, 24), (3, 24))
+                   for index in range(count)]
+        self.assertEqual(validator.compare_aarch64(records, list(records)), 0)
+        for field, value in ((3, 16), (7, bytes([1]) + bytes(15))):
+            changed = list(records)
+            row = list(changed[0])
+            row[field] = value
+            if field == 3:
+                row[4] = value
+            changed[0] = tuple(row)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "result or flags differ"):
+                validator.compare_aarch64(records, changed)
 
 if __name__ == "__main__":
     unittest.main()

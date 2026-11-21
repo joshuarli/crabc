@@ -17,7 +17,7 @@
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little"
 )))]
 compile_error!("the x86 C mempcpy leaf requires little-endian Linux/x86-64");
@@ -25,6 +25,7 @@ compile_error!("the x86 C mempcpy leaf requires little-endian Linux/x86-64");
 // On entry rdi/rsi/rdx hold destination/source/count. Save the calculated
 // one-past return in callee-saved rbx across the direct memcpy call; the push
 // also restores the required 16-byte stack alignment before that call.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -43,3 +44,6 @@ mempcpy:
     .section .note.GNU-stack,"",@progbits
     "#,
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("mempcpy_aarch64.S"));

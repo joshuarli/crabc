@@ -24,7 +24,10 @@
 use super::*;
 use core::ffi::c_void;
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(include_str!("owned_scanf_musl_x86_64.S"), options(att_syntax));
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("owned_scanf_musl_aarch64.S"));
 
 unsafe extern "C" {
     fn __crabc_owned_scan(context: *mut c_void,

@@ -23,10 +23,12 @@ class EpollHeaderAbiTests(unittest.TestCase):
     def test_x86_packs_only_the_public_epoll_event_record(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
 
-        self.assertIn("#if defined(__x86_64__) && defined(__LP64__)", header)
-        self.assertIn("__attribute__((__packed__))", header)
-        self.assertIn("struct epoll_event", header)
-        self.assertIn("#undef __CRABC_EPOLL_EVENT_PACKED", header)
+        self.assertIn(
+            "struct epoll_event {\n\tuint32_t events;\n\tepoll_data_t data;\n}\n"
+            "#ifdef __x86_64__\n__attribute__ ((__packed__))\n#endif\n;",
+            header,
+        )
+        self.assertEqual(header.count("__packed__"), 1)
 
     def test_probes_and_runner_define_the_full_seven_profile_boundary(self) -> None:
         for probe in (C_PROBE.read_text(encoding="utf-8"), CXX_PROBE.read_text(encoding="utf-8")):

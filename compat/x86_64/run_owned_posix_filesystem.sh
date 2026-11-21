@@ -4,7 +4,10 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py" "$(uname -m)")"
+readonly ORACLE_CC="$oracle"
+architecture_args=()
+if [ "$arch" != x86_64 ]; then architecture_args=(--architecture "$arch"); fi
 readonly PROBE="$ROOT/compat/x86_64/owned_posix_filesystem_probe.c"
 readonly AUDITOR="$ROOT/compat/x86_64/owned_posix_filesystem_audit.py"
 readonly cases=(aliases directory traversal temporary handles comparators directory-edges directory-threads traversal-flags traversal-descriptor traversal-permissions legacy-edges handle-edges alias-edges namespace-boundaries)
@@ -133,6 +136,17 @@ PYTHON
 audit_consumer() {
     local family="$1" mode="$2" candidate="$3" receipt="$4" product="$5" object="$6"
 
+    if [ "$arch" = aarch64 ]; then
+        python3 -B - "$ROOT" "$product" "$object" "$candidate" "$receipt" "$mode" <<'PY_ARM_LINK'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "compat/x86_64"))
+from owned_posix_product_evidence import validate_link
+product, workload, candidate, receipt = map(Path, sys.argv[2:6])
+validate_link(product, workload, candidate, receipt, sys.argv[6])
+PY_ARM_LINK
+        return
+    fi
     if [ "$family" = static ]; then
         python3 -B "$AUDITOR" audit-static "$product" "$mode" "$object" "$candidate" "$receipt"
     else
@@ -194,7 +208,7 @@ run_in_root() {
 if [ -z "$provided_dynamic" ]; then
     step=build-dynamic
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+        "${architecture_args[@]}" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$provided_dynamic"
@@ -222,7 +236,7 @@ if [ -n "$provided_static" ]; then
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
     step=build-static
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
+        "${architecture_args[@]}" --output "$work/static-sysroot" >"$work/static-build.json"
     static_product="$work/static-sysroot"
 fi
 if [ -n "$static_product" ]; then
@@ -266,7 +280,7 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             if [ "$entry" = direct ]; then
-                command=(/lib/ld-crabc-x86_64.so.1 /consumer "$scenario")
+                command=("/lib/ld-crabc-${arch}.so.1" /consumer "$scenario")
             else
                 command=(/consumer "$scenario")
             fi

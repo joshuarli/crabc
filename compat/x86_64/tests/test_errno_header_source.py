@@ -30,13 +30,16 @@ class ErrnoHeaderSourceTests(unittest.TestCase):
         ):
             self.assertIn(definition, bits)
 
-    def test_aarch64_errno_body_remains_the_legacy_fallback(self) -> None:
-        fallback = (ROOT / "include/errno.h").read_text(encoding="utf-8").split(
-            "#else\n", 1
-        )[1]
-        self.assertIn("#define EWOULDBLOCK EAGAIN", fallback)
-        self.assertIn("#define EHWPOISON 133", fallback)
-        self.assertNotIn("program_invocation_short_name", fallback)
+    def test_aarch64_uses_the_shared_musl_errno_surface(self) -> None:
+        header = (ROOT / "include/errno.h").read_text(encoding="utf-8")
+        bits = (ROOT / "include/bits/errno.h").read_text(encoding="utf-8")
+        for source in (header, bits):
+            self.assertNotIn("__x86_64__", source)
+            self.assertNotIn("__aarch64__", source)
+        self.assertIn("#include <bits/errno.h>", header)
+        self.assertIn("#define EWOULDBLOCK      EAGAIN", bits)
+        self.assertIn("#define EHWPOISON        133", bits)
+        self.assertIn("program_invocation_short_name", header)
 
 
 if __name__ == "__main__":

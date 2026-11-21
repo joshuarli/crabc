@@ -36,6 +36,7 @@ use core::ffi::c_void;
 // thunks in `owned_static_stdio.rs` and `directory_streams.rs`: an executable
 // may replace malloc/calloc/realloc/free, and allocation plus release must
 // select precisely that same provider.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -72,6 +73,9 @@ __crabc_x86_regex_cabi_free:
     .size __crabc_x86_regex_cabi_free, .-__crabc_x86_regex_cabi_free
 "#
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("regex_thunks_aarch64.S"));
 
 unsafe extern "C" {
     #[link_name = "__crabc_x86_regex_cabi_malloc"]

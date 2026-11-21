@@ -43,7 +43,7 @@
 //! image and loader-owned runtime TLS view, while translating constructor
 //! visitors and rejecting closures held by vanished constructor owners.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
@@ -74,10 +74,6 @@ use crabc_mimalloc::__crabc_runtime::{
 const ATFORK_CAPACITY: usize = 32;
 const ENOMEM: c_int = 12;
 const EAGAIN: i64 = 11;
-// Linux x86-64 has kept the legacy `fork` syscall at 57 throughout the
-// selected Linux 5.10 baseline.  Keep it local: this leaf deliberately does
-// not widen the shared raw-syscall surface into a general process API.
-const LINUX_X86_64_SYS_FORK: i64 = 57;
 
 type AtforkHook = unsafe extern "C" fn();
 
@@ -89,19 +85,29 @@ type AtforkHook = unsafe extern "C" fn();
 /// syscall wrapper inlining after lifecycle composition changes elsewhere.
 #[inline(always)]
 unsafe fn raw_selected_fork() -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    {
     let result: i64;
     // SAFETY: SYS_fork has no argument registers. Linux returns the child's
     // PID in the parent, zero in the child, or one negative errno value.
     unsafe {
         core::arch::asm!(
             "syscall",
-            inlateout("rax") LINUX_X86_64_SYS_FORK => result,
+            inlateout("rax") 57_i64 => result,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack),
         );
     }
     result
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+    // musl 1.2.6 src/process/_Fork.c uses clone(SIGCHLD, 0) when
+    // the architecture lacks fork. Linux ignores the remaining arguments.
+    // SAFETY: no stack or pointer arguments are passed to this fork-like clone.
+    unsafe { super::raw_syscall::syscall2(super::raw_syscall::SYS_CLONE, 17, 0) }
+    }
 }
 
 // Musl's `src/thread/pthread_atfork.c` object: the handler list, its lock,

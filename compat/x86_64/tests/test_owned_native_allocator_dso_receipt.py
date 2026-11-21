@@ -16,10 +16,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt  # noqa: E402
+from native_arch import native_arch  # noqa: E402
+
+ARCH = native_arch()["arch"]
 import owned_native_allocator_dso_receipt as semantic_receipt  # noqa: E402
 
 RUNNER = "owned-native-allocator-dso"
-EVIDENCE = re.compile(r"^native-allocator-dso evidence: (/workspace/\.work/x86_64/tmp/owned-native-allocator-dso\.[^\s]+)$", re.M)
+EVIDENCE = re.compile(rf"^native-allocator-dso evidence: (/workspace/\.work/{ARCH}/tmp/owned-native-allocator-dso\.[^\s]+)$", re.M)
 
 
 class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
@@ -35,13 +38,14 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
         dynamic = os.environ.get("CRABC_DSO_DYNAMIC_SYSROOT")
         if dynamic:
             command.append(dynamic)
-        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900)
+        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900,
+                                   env={**os.environ, "TMPDIR": str(ROOT / f".work/{ARCH}/tmp")})
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         match = EVIDENCE.search(completed.stdout)
         self.assertIsNotNone(match, completed.stdout)
         work = Path(match.group(1))
         self.assertTrue(work.is_dir() and not work.is_symlink()
-                        and work.is_relative_to(ROOT / ".work/x86_64/tmp"))
+                        and work.is_relative_to(ROOT / f".work/{ARCH}/tmp"))
 
         published = receipt.read_receipt(ROOT, RUNNER, case_prefix="kernel-")
         executed = {path.stem for path in work.glob("*.status")}
@@ -181,7 +185,7 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
         replacement = (latest / "products/musl-interpreter").read_bytes()
         loader.write_bytes(replacement)
         changed_manifest = json.loads(original_manifest)
-        changed_manifest["files"]["lib/ld-crabc-x86_64.so.1"] = hashlib.sha256(replacement).hexdigest()
+        changed_manifest["files"][f"lib/ld-crabc-{ARCH}.so.1"] = hashlib.sha256(replacement).hexdigest()
         manifest.write_text(json.dumps(changed_manifest))
         changed = json.loads(original_receipt)
         changed["products"]["dynamic-loader"] = {

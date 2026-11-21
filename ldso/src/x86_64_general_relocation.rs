@@ -20,11 +20,11 @@ use super::x86_64_initial_graph_state::{InitialGraphState, ObjectState};
 mod tests;
 
 const R_NONE: u32 = 0;
-const R_64: u32 = 1;
+const R_64: u32 = if cfg!(target_arch = "aarch64") { 257 } else { 1 };
 // The x86-64 PC-relative form stores the low 32 bits of S+A-P. Its target
 // occupies four bytes and may begin at a non-word-aligned address.
 const R_X86_64_PC32: u32 = 2;
-const R_COPY: u32 = 5;
+const R_COPY: u32 = if cfg!(target_arch = "aarch64") { 1024 } else { 5 };
 const SHN_ABS: u16 = 0xfff1;
 // musl dynlink.c:find_sym2 includes GNU unique alongside global and weak in
 // OK_BINDS. It treats unique as an eligible definition, not a new scope rule.
@@ -523,7 +523,9 @@ unsafe fn tls_coordinates(
     let object = &objects[owner];
     if object.tls_module_id == 0 || object.tls_module_id > scope.module_count
         || object.tls_memsz == 0
-        || (object.tls_module_id <= scope.static_tls_count && object.tls_offset_below_tp < object.tls_memsz)
+        || (object.tls_module_id <= scope.static_tls_count
+            && if cfg!(target_arch = "aarch64") { object.tls_offset_below_tp < 16 }
+               else { object.tls_offset_below_tp < object.tls_memsz })
         || (object.tls_module_id > scope.static_tls_count && object.tls_offset_below_tp != 0)
         || offset.checked_add(size)? > object.tls_memsz as u64
     { return None; }
@@ -547,6 +549,17 @@ unsafe fn word_value(
     scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
+    if cfg!(target_arch = "aarch64") && kind == R_X86_64_PC32 { return None; }
+    #[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+    // SAFETY: The caller provides the validated scope and relocation records.
+    if kind == R_X86_64_TLSDESC
+        && unsafe { dynamic_tlsdesc_coordinates(scope, objects, owner, index, addend) }?.is_some()
+    {
+        return Some(0);
+    }
+    let kind = if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC {
+        R_X86_64_TPOFF64
+    } else { kind };
     let object = &objects[owner];
     // One validated record supplies the private selectors and ordinary lookup.
     let requested_symbol = if index != 0 { Some(unsafe { symbol_record(object, index) }?) } else { None };
@@ -625,10 +638,27 @@ unsafe fn word_value(
             if module.tls_module_id > scope.static_tls_count { return None; }
             let offset = i64::try_from(offset).ok()?;
             let placement = i64::try_from(module.tls_offset_below_tp).ok()?;
-            Some(offset.checked_sub(placement)? as u64)
+            if cfg!(target_arch = "aarch64") {
+                Some(offset.checked_add(placement)? as u64)
+            } else {
+                Some(offset.checked_sub(placement)? as u64)
+            }
         }
         _ => None,
     }
+}
+
+#[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+unsafe fn dynamic_tlsdesc_coordinates(
+    scope: &SymbolScope<'_>, objects: &[Object], owner: usize, index: usize, addend: i64,
+) -> Option<Option<[usize; 2]>> {
+    // SAFETY: The caller supplies the validated relocation scope and object metadata.
+    let (provider, value) = unsafe { tls_coordinates(scope, objects, owner, index) }?;
+    let module = &objects[provider];
+    let offset = add_signed(value, addend)?;
+    if offset > module.tls_memsz as u64 { return None; }
+    if module.tls_module_id <= scope.static_tls_count { return Some(None); }
+    Some(Some([module.tls_module_id, usize::try_from(offset).ok()?]))
 }
 
 /// None is invalid relocation; Some(None) is a validated deferred strong
@@ -749,8 +779,11 @@ unsafe fn preflight_object_resolved(
             if cfg!(crabc_hardened) {
                 let binding = matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT
                     | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
+                    || (cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC)
                     || (symbol != 0 && matches!(kind, R_64 | R_X86_64_PC32));
-                let width = if kind == R_X86_64_PC32 { 4 } else { 8 };
+                let width = if kind == R_X86_64_PC32 { 4 }
+                    else if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC { 16 }
+                    else { 8 };
                 if binding && !relro_covers(object, offset, width) { return None; }
             }
             // Reserved runtime wires are imports only through their exact
@@ -773,12 +806,49 @@ unsafe fn preflight_object_resolved(
                 // A non-lazy caller keeps each word value for application,
                 // which then needs no second symbol lookup.
                 if let Some(resolved) = resolved.as_deref_mut() { resolved.push(value?)?; }
-                if kind == R_X86_64_PC32 { 4 } else { 8 }
+                if kind == R_X86_64_PC32 { 4 }
+                else if cfg!(target_arch = "aarch64") && kind == R_X86_64_TLSDESC { 16 }
+                else { 8 }
             };
             unsafe { admitted_target(object, &mut writable, offset, length, kind != R_COPY && kind != R_X86_64_PC32) }?;
         }
     }
     Some(())
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+unsafe extern "C" fn tlsdesc_static() {
+    // musl 1.2.6 src/ldso/aarch64/tlsdesc.s::__tlsdesc_static.
+    core::arch::naked_asm!("ldr x0, [x0, #8]", "ret");
+}
+
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+unsafe extern "C" fn tlsdesc_dynamic() {
+    // musl 1.2.6 src/ldso/aarch64/tlsdesc.s::__tlsdesc_dynamic.
+    core::arch::naked_asm!(
+        "stp x1, x2, [sp, #-16]!", "mrs x1, tpidr_el0", "ldr x0, [x0, #8]",
+        "ldp x0, x2, [x0]", "sub x2, x2, x1", "ldr x1, [x1, #-8]",
+        "ldr x1, [x1, x0, lsl #3]", "add x0, x1, x2", "ldp x1, x2, [sp], #16", "ret"
+    );
+}
+
+unsafe fn write_resolved_word(address: u64, kind: u32, value: u64) {
+    #[cfg(target_arch = "aarch64")]
+    if kind == R_X86_64_TLSDESC {
+        // SAFETY: Preflight admitted both aligned descriptor words in a writable load.
+        unsafe {
+            core::ptr::write_unaligned(address as *mut u64, tlsdesc_static as *const () as u64);
+            core::ptr::write_unaligned((address + 8) as *mut u64, value);
+        }
+        return;
+    }
+    // SAFETY: Preflight admitted the relocation destination at its ABI width.
+    unsafe {
+        if kind == R_X86_64_PC32 { core::ptr::write_unaligned(address as *mut u32, value as u32); }
+        else { core::ptr::write_unaligned(address as *mut u64, value); }
+    }
 }
 
 /// [`apply_word_relocations`] with the values preflight already resolved for
@@ -791,16 +861,14 @@ unsafe fn apply_resolved_word_relocations(object: &Object, values: &[u64]) -> Op
             let kind = unsafe { read_u64(entry.add(8)) } as u32;
             if kind == R_NONE || kind == R_COPY { continue; }
             let value = *values.next()?;
+            if cfg!(target_arch = "aarch64") && object.interpreter_self && kind == R_X86_64_RELATIVE { continue; }
             let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
-            if kind == R_X86_64_PC32 {
-                unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
-            } else {
-                unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
-            }
+            // SAFETY: The complete object was preflighted before relocation.
+            unsafe { write_resolved_word(address, kind, value); }
         }
     }
     if values.next().is_some() { return None; }
-    unsafe { apply_relr_table(object) }
+    if cfg!(target_arch = "aarch64") && object.interpreter_self { Some(()) } else { unsafe { apply_relr_table(object) } }
 }
 
 unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
@@ -815,11 +883,8 @@ unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], ow
             let value = unsafe { word_resolution(scope, objects, owner, offset, kind,
                 (info >> 32) as usize, read_i64(entry.add(16)), false) }??;
             let address = runtime_address(object.base, offset)?;
-            if kind == R_X86_64_PC32 {
-                unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
-            } else {
-                unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
-            }
+            // SAFETY: The complete object was preflighted before relocation.
+            unsafe { write_resolved_word(address, kind, value); }
         }
     }
     unsafe { apply_relr_table(object) }
@@ -1036,6 +1101,7 @@ unsafe fn validate_initial_private_imports(
 /// mutation lock. `indices` contains only valid object indices and follows the
 /// admitted global-plus-dependency lookup order. New mappings are writable;
 /// their module IDs are monotonic, and only initial modules have IE placement.
+#[cfg(not(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1)))]
 pub(super) unsafe fn relocate_runtime_objects(
     objects: &[Object], indices: &[usize], first_new: usize, static_tls_count: usize,
 ) -> Option<()> {
@@ -1047,6 +1113,58 @@ pub(super) unsafe fn relocate_runtime_objects(
         unsafe { apply_word_relocations(&scope, objects, owner) }?;
     }
     Some(())
+}
+
+#[cfg(all(target_arch = "aarch64", crabc_general_initial_tls_materialization_v1))]
+/// # Safety
+/// The returned descriptor storage must outlive every relocated object and
+/// every thread that can execute its TLS descriptors.
+pub(super) unsafe fn relocate_runtime_objects(
+    objects: &[Object], indices: &[usize], first_new: usize, static_tls_count: usize,
+) -> Option<super::x86_64_runtime_memory::LoaderBuffer<[usize; 2]>> {
+    if first_new == 0 || first_new > objects.len() || indices.iter().any(|index| *index >= objects.len()) { return None; }
+    let scope = SymbolScope { indices, module_count: objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0),
+        static_tls_count, initial: false };
+    let mut capacity = 0usize;
+    for owner in first_new..objects.len() {
+        unsafe { preflight_object(&scope, objects, owner) }?;
+        capacity = capacity.checked_add(objects[owner].relasz / ELF64_RELA_SIZE)?
+            .checked_add(objects[owner].pltrelsz / ELF64_RELA_SIZE)?;
+    }
+    let mut records = super::x86_64_runtime_memory::LoaderBuffer::new(capacity, [0usize; 2])?;
+    let mut next = 0usize;
+    for owner in first_new..objects.len() {
+        let object = &objects[owner];
+        for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+            for index in 0..bytes / ELF64_RELA_SIZE {
+                let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
+                let info = unsafe { read_u64(entry.add(8)) };
+                let kind = info as u32;
+                if kind == R_NONE || kind == R_COPY { continue; }
+                let offset = unsafe { read_u64(entry) };
+                let addend = unsafe { read_i64(entry.add(16)) };
+                let value = unsafe { word_resolution(&scope, objects, owner, offset, kind,
+                    (info >> 32) as usize, addend, false) }??;
+                let address = runtime_address(object.base, offset)?;
+                if kind == R_X86_64_TLSDESC {
+                    if let Some(coordinates) = unsafe { dynamic_tlsdesc_coordinates(&scope, objects, owner,
+                        (info >> 32) as usize, addend) }? {
+                        let record = records.as_mut_slice().get_mut(next)?;
+                        *record = coordinates;
+                        unsafe {
+                            core::ptr::write_unaligned(address as *mut u64, tlsdesc_dynamic as *const () as u64);
+                            core::ptr::write_unaligned((address + 8) as *mut u64, record as *mut [usize; 2] as u64);
+                        }
+                        next += 1;
+                        continue;
+                    }
+                }
+                unsafe { write_resolved_word(address, kind, value); }
+            }
+        }
+        unsafe { apply_relr_table(object) }?;
+    }
+    Some(records)
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]

@@ -9,6 +9,9 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch
+ARCH = native_arch()["arch"]
 SOURCE = ROOT / "compat/x86_64/owned_message_queues_probe.c"
 WITNESS_HEADER = ROOT / "compat/x86_64/owned_cancellation_proc_witness.h"
 
@@ -42,8 +45,9 @@ def compile_workload(product: Path, work: Path) -> dict[str, object]:
     if any(digest(Path(path)) != before for path, before in inputs.items()):
         raise ValueError("message queues compilation inputs changed during translation")
     header = output.read_bytes()[:20]
-    if header[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(header[16:18], "little") != 1 or int.from_bytes(header[18:20], "little") != 62:
-        raise ValueError("message queues compiler did not produce a native x86-64 relocatable object")
+    machine = {"x86_64": 62, "aarch64": 183}[ARCH]
+    if header[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(header[16:18], "little") != 1 or int.from_bytes(header[18:20], "little") != machine:
+        raise ValueError(f"message queues compiler did not produce a native {ARCH} relocatable object")
     record = {"schema": "crabc.x86_64-owned-message-queues-compile/v1", "product": str(product),
               "argv": command, "input_sha256": inputs, "output": str(output), "output_sha256": digest(output)}
     with receipt.open("x") as stream:

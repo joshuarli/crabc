@@ -37,6 +37,7 @@ static mut STREAM_RECORD: Passwd = EMPTY;
 // exact boundary too. A Rust extern `free` can instead be folded into this
 // crate's known mimalloc implementation, so retain an opaque tail which the
 // linker resolves through the ordinary public C PLT entry.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(r#"
     .text
     .p2align 4
@@ -45,6 +46,17 @@ core::arch::global_asm!(r#"
     .type __crabc_x86_passwd_cabi_free,@function
 __crabc_x86_passwd_cabi_free:
     jmp free
+    .size __crabc_x86_passwd_cabi_free, .-__crabc_x86_passwd_cabi_free
+"#);
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_passwd_cabi_free
+    .hidden __crabc_x86_passwd_cabi_free
+    .type __crabc_x86_passwd_cabi_free,%function
+__crabc_x86_passwd_cabi_free:
+    b free
     .size __crabc_x86_passwd_cabi_free, .-__crabc_x86_passwd_cabi_free
 "#);
 

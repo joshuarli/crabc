@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -105,6 +106,33 @@ class NativeAbiExportsTests(unittest.TestCase):
         self.assertTrue(passed, output)
         self.assertIn("match", output)
 
+    def test_arm_inventory_uses_reviewed_x86_delta(self) -> None:
+        delta = json.loads(exports.ARM_STATIC_DELTA.read_text())
+        original = report(shared_extra=[dynamic("tgkill")],
+                          static_extra=[static(name) for name in delta["extra_remove"]],
+                          static_missing=[static(name) for name in delta["missing_remove"]])
+        self.seed(original)
+        value = report(shared_extra=[dynamic("tgkill")],
+                       static_extra=[static(name) for name in delta["extra_add"] + delta["anonymous_extra"]],
+                       static_missing=[static(name) for name in delta["missing_add"] + delta["anonymous_missing"]])
+        value["target"] = "aarch64-unknown-linux-musl"
+        with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"):
+            passed, output = self.check(value)
+            self.assertTrue(passed, output)
+            value["triage"]["static_archive"]["extra"].append(static("anon.unreviewed"))
+            passed, output = self.check(value)
+            self.assertFalse(passed, output)
+            self.assertIn("anon.unreviewed", output)
+            value["triage"]["static_archive"]["extra"].pop()
+            value["triage"]["static_archive"]["extra"].pop()
+            passed, output = self.check(value)
+            self.assertFalse(passed, output)
+            self.assertIn("static_archive.extra", output)
+            value["triage"]["shared_dynamic"]["extra"] = []
+            passed, output = self.check(value)
+            self.assertFalse(passed, output)
+            self.assertIn("shared_dynamic.extra", output)
+
     def test_new_static_extra_fails(self) -> None:
         self.seed(report(static_extra=[static("owned")]))
         passed, output = self.check(report(static_extra=[static("owned"), static("mi_malloc")]))
@@ -133,6 +161,17 @@ class NativeAbiExportsTests(unittest.TestCase):
         )
         self.assertTrue(passed, output)
         self.assertNotIn("_Rchurn", self.tracked_path.read_text(encoding="utf-8"))
+
+    def test_llvm_promotion_suffix_of_anonymous_static_extra_is_ignored(self) -> None:
+        self.seed(report(static_extra=[static("owned"), static("anon.0b65.0.llvm.18065665657365612692")]))
+        passed, output = self.check(report(static_extra=[static("owned"), static("anon.0b65.0.llvm.17626645863537651630")]))
+        self.assertTrue(passed, output)
+        passed, output = self.check(report(static_extra=[static("owned"), static("anon.0b65.1.llvm.17626645863537651630")]))
+        self.assertFalse(passed, output)
+        self.assertIn("anon.0b65.1", output)
+        passed, output = self.check(report(static_extra=[static("owned")]))
+        self.assertFalse(passed, output)
+        self.assertIn("anon.0b65.0", output)
 
     def test_measurement_differences_are_not_gated(self) -> None:
         self.seed(report(shared_extra=[dynamic("tgkill")]))

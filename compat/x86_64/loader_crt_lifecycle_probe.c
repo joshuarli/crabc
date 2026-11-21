@@ -30,8 +30,13 @@ __attribute__((used, noinline)) static void legacy_fini(void)
     static const char message[] = "loader-crt-lifecycle-ok\n";
     if (write(1, message, sizeof message - 1) != sizeof message - 1) _Exit(47);
 }
+#if defined(__aarch64__)
+__asm__(".pushsection .init,\"ax\",%progbits\nbl legacy_init\n.popsection\n"
+        ".pushsection .fini,\"ax\",%progbits\nbl legacy_fini\n.popsection\n");
+#else
 __asm__(".pushsection .init,\"ax\",@progbits\ncall legacy_init\n.popsection\n"
         ".pushsection .fini,\"ax\",@progbits\ncall legacy_fini\n.popsection\n");
+#endif
 
 int main(void)
 {

@@ -148,7 +148,11 @@ static void witness_blocked_wait(void) {
         ssize_t n=read(fd,record,sizeof record-1);CHECK(!close(fd));
         if(n>0) {
             record[n]=0;long number=-1;
-            if(sscanf(record,"%ld",&number)==1 && (number==SYS_poll || number==SYS_ppoll)) return;
+            if(sscanf(record,"%ld",&number)==1 && (number==SYS_ppoll
+#ifdef SYS_poll
+                || number==SYS_poll
+#endif
+                )) return;
         }
         CHECK(!nanosleep(&pause,0));
     }

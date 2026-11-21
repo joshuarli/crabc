@@ -215,29 +215,56 @@ const DF_1_PIE: u64 = 0x0800_0000;
 const DF_1_NODELETE: u64 = 0x8;
 
 const ELF64_RELA: u64 = 7;
-const R_X86_64_GLOB_DAT: u32 = 6;
-const R_X86_64_JUMP_SLOT: u32 = 7;
-const R_X86_64_RELATIVE: u32 = 8;
-const R_X86_64_DTPMOD64: u32 = 16;
-const R_X86_64_DTPOFF64: u32 = 17;
-const R_X86_64_TPOFF64: u32 = 18;
+// musl 1.2.6 arch/aarch64/reloc.h selects the AArch64 ELF relocation set.
+const ELF_MACHINE: u16 = if cfg!(target_arch = "aarch64") { 183 } else { 62 };
+const R_X86_64_GLOB_DAT: u32 = if cfg!(target_arch = "aarch64") { 1025 } else { 6 };
+const R_X86_64_JUMP_SLOT: u32 = if cfg!(target_arch = "aarch64") { 1026 } else { 7 };
+const R_X86_64_RELATIVE: u32 = if cfg!(target_arch = "aarch64") { 1027 } else { 8 };
+const R_X86_64_DTPMOD64: u32 = if cfg!(target_arch = "aarch64") { 1028 } else { 16 };
+const R_X86_64_DTPOFF64: u32 = if cfg!(target_arch = "aarch64") { 1029 } else { 17 };
+const R_X86_64_TPOFF64: u32 = if cfg!(target_arch = "aarch64") { 1030 } else { 18 };
 const R_X86_64_GOTTPOFF: u32 = 22;
 const R_X86_64_TPOFF32: u32 = 23;
 const R_X86_64_GOTPC32_TLSDESC: u32 = 34;
 const R_X86_64_TLSDESC_CALL: u32 = 35;
-const R_X86_64_TLSDESC: u32 = 36;
+const R_X86_64_TLSDESC: u32 = if cfg!(target_arch = "aarch64") { 1031 } else { 36 };
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64.rs"]
+mod aarch64;
+#[cfg(target_arch = "aarch64")]
+use aarch64::{syscall1, syscall2, syscall3, syscall4, syscall6, SYS_WRITE, SYS_CLOSE,
+    SYS_FSTAT, SYS_READ, SYS_PREAD64, SYS_NEWFSTATAT, SYS_MMAP, SYS_MPROTECT,
+    SYS_MUNMAP, SYS_OPENAT, SYS_EXIT, SYS_FUTEX, SYS_GETTID, SYS_READLINKAT};
+
+#[cfg(target_arch = "x86_64")]
+const SYS_FUTEX: i64 = 202;
+#[cfg(target_arch = "x86_64")]
+const SYS_GETTID: i64 = 186;
+#[cfg(target_arch = "x86_64")]
+const SYS_READLINK: i64 = 89;
+#[cfg(target_arch = "x86_64")]
 const SYS_WRITE: i64 = 1;
+#[cfg(target_arch = "x86_64")]
 const SYS_CLOSE: i64 = 3;
+#[cfg(target_arch = "x86_64")]
 const SYS_FSTAT: i64 = 5;
+#[cfg(target_arch = "x86_64")]
 const SYS_READ: i64 = 0;
+#[cfg(target_arch = "x86_64")]
 const SYS_PREAD64: i64 = 17;
+#[cfg(target_arch = "x86_64")]
 const SYS_NEWFSTATAT: i64 = 262;
+#[cfg(target_arch = "x86_64")]
 const SYS_MMAP: i64 = 9;
+#[cfg(target_arch = "x86_64")]
 const SYS_MPROTECT: i64 = 10;
+#[cfg(target_arch = "x86_64")]
 const SYS_MUNMAP: i64 = 11;
 const SYS_ARCH_PRCTL: i64 = 158;
+#[cfg(target_arch = "x86_64")]
 const SYS_OPENAT: i64 = 257;
+#[cfg(target_arch = "x86_64")]
 const SYS_EXIT: i64 = 60;
 const AT_FDCWD: i64 = -100;
 const PROT_READ: i64 = 1;
@@ -653,6 +680,7 @@ pub extern "C" fn rust_eh_personality() {}
 // link-time ELF-header symbol through RIP-relative addressing instead. The
 // validated routine below performs the complete self-relocation transaction;
 // `_start` only decodes the initial stack, AT_BASE and PT_DYNAMIC.
+#[cfg(target_arch = "x86_64")]
 global_asm!(
     ".text",
     ".global __crabc_x86_64_self_relocate",
@@ -1122,7 +1150,7 @@ global_asm!(
     options(att_syntax),
 );
 
-#[cfg(not(test))]
+#[cfg(all(not(test), target_arch = "x86_64"))]
 global_asm!(
     ".global _start",
     ".hidden _start",
@@ -1210,6 +1238,10 @@ global_asm!(
     options(att_syntax),
 );
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_bootstrap.rs"]
+mod aarch64_bootstrap;
+
 /// The first general-runtime x86 slice owns arbitrary initial non-TLS
 /// `DT_NEEDED` topology plus dependency-only `DT_INIT_ARRAY` dispatch. It
 /// intentionally stops before TLS in this root, main-image/CRT lifecycle,
@@ -1222,11 +1254,17 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
 }
 
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_auxv.rs"]
+mod aarch64_auxv;
+
 unsafe fn auxv_main(sp: usize) -> Option<(*const u8, usize, u64)> {
     let argc = *(sp as *const usize);
     let mut cursor = (sp + 8 + (argc + 1) * 8) as *const usize;
     while !(*cursor).eq(&0) { cursor = cursor.add(1); }
     cursor = cursor.add(1);
+    #[cfg(target_arch = "aarch64")]
+    if !unsafe { aarch64_auxv::mask(cursor as *mut usize, 4096) } { return None; }
     let mut phdr = 0usize;
     let mut phnum = 0usize;
     let mut entry = 0u64;
@@ -1240,6 +1278,17 @@ unsafe fn auxv_main(sp: usize) -> Option<(*const u8, usize, u64)> {
         cursor = cursor.add(2);
     }
     if phdr == 0 || phnum == 0 || phnum > MAX_PHDRS || entry == 0 { None } else { Some((phdr as *const u8, phnum, entry)) }
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+#[test]
+fn startup_masks_unsupported_aarch64_hwcap() {
+    let mut stack = [0usize, 0, 0, 3, 1, 5, 1, 9, 1, 16, usize::MAX,
+        26, usize::MAX, 29, usize::MAX, 30, usize::MAX, 0, 0];
+    assert!(unsafe { auxv_main(stack.as_mut_ptr() as usize) }.is_some());
+    assert_eq!(stack[10], (1usize << 42) - 1);
+    assert_eq!(stack[12], !((0xffusize << 23) | (0x3fusize << 37) | (0x3fusize << 57)));
+    assert_eq!(&stack[13..17], &[1, 0, 1, 0]);
 }
 
 unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
@@ -1264,7 +1313,7 @@ unsafe fn hardened_main_identity(base: u64, phdr: *const u8, phnum: usize) -> bo
         let Some(address) = base.checked_add(read_u64(load.add(16))) else { return false; };
         let header = address as *const u8;
         if core::slice::from_raw_parts(header, 7) != b"\x7fELF\x02\x01\x01"
-            || read_u16(header.add(16)) != 3 || read_u16(header.add(18)) != 62
+            || read_u16(header.add(16)) != 3 || read_u16(header.add(18)) != ELF_MACHINE
             || read_u32(header.add(20)) != 1 || read_u16(header.add(52)) != 64
             || read_u16(header.add(54)) != 56 || read_u16(header.add(56)) as usize != phnum { return false; }
         let offset = read_u64(header.add(32));
@@ -2014,7 +2063,7 @@ const ENOEXEC: i32 = 8;
 const EISDIR: i32 = 21;
 const S_IFMT: u32 = 0o170000;
 const S_IFDIR: u32 = 0o040000;
-const X86_64_STAT_MODE_OFFSET: usize = 24;
+const X86_64_STAT_MODE_OFFSET: usize = if cfg!(target_arch = "aarch64") { 16 } else { 24 };
 
 fn syscall_error(result: i64) -> Result<i64, i32> {
     if is_linux_error(result) { Err((-result) as i32) } else { Ok(result) }
@@ -2065,7 +2114,7 @@ unsafe fn map_elf_with_status(
     let header = header_bytes.as_ptr();
     let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
-        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
+        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (!cfg!(crabc_hardened) && role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == ELF_MACHINE
         && read_u16(header.add(54)) == 56 && (!cfg!(crabc_hardened)
             || (*header.add(6) == 1 && read_u32(header.add(20)) == 1 && read_u16(header.add(52)) == 64));
     let phoff = usize::try_from(read_u64(header.add(32))).map_err(|_| ENOEXEC)?;
@@ -2262,12 +2311,16 @@ unsafe fn install_initial_tls(
 ) -> Option<InstalledInitialTls> {
     let builtin = BUILTIN_INITIAL_TLS.0.get().cast::<u8>();
     let installed = unsafe { materialize_tls_in(objects, 0, Some((builtin, BUILTIN_INITIAL_TLS_BYTES))) }?;
+    #[cfg(target_arch = "x86_64")]
     if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, installed.thread_pointer as i64) < 0 {
         if installed.mapping != builtin {
             let _ = syscall2(SYS_MUNMAP, installed.mapping as i64, installed.mapping_byte_len as i64);
         }
         return None;
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: The just-materialized record is valid for this initial thread.
+    unsafe { core::arch::asm!("msr tpidr_el0, {}", in(reg) installed.thread_pointer, options(nostack)); }
     Some(installed)
 }
 
@@ -2303,7 +2356,14 @@ struct InitialTlsBlockLayout {
     mapping_size: usize,
 }
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_initial_tls.rs"]
+mod aarch64_initial_tls;
+#[cfg(target_arch = "aarch64")]
+use aarch64_initial_tls::{initial_tls_block_layout, materialize_tls_in_layout};
+
 /// Validate one initial TLS population and compute its complete page span.
+#[cfg(target_arch = "x86_64")]
 unsafe fn initial_tls_block_layout(
     objects: &[Object],
     ownership_prefix: usize,
@@ -2371,6 +2431,7 @@ unsafe fn materialize_tls_in(
 /// A caller that owns a long-lived immutable population may reuse the layout
 /// across allocations instead of validating every object again. `layout` must
 /// designate one readable layout for the whole call.
+#[cfg(target_arch = "x86_64")]
 unsafe fn materialize_tls_in_layout(
     objects: &[Object],
     ownership_prefix: usize,
@@ -2471,12 +2532,20 @@ mod tls_zero_tail_tests {
 
     #[test]
     fn initial_tls_keeps_file_prefix_and_zero_tail_in_both_backing_choices() {
+        #[cfg(target_arch = "x86_64")]
         let prefixes = [[0x5au8, 0x6b], [0xa5, 0xc3]];
+        #[cfg(target_arch = "aarch64")]
+        #[repr(align(16))]
+        struct Prefix([u8; 2]);
+        #[cfg(target_arch = "aarch64")]
+        let aligned = [Prefix([0x5a, 0x6b]), Prefix([0xa5, 0xc3])];
+        #[cfg(target_arch = "aarch64")]
+        let prefixes = [&aligned[0].0, &aligned[1].0];
         let objects: [Object; 2] = core::array::from_fn(|index| Object {
             tls_image: prefixes[index].as_ptr(),
             tls_filesz: prefixes[index].len(),
             tls_memsz: 16,
-            tls_align: 8,
+            tls_align: if cfg!(target_arch = "aarch64") { 16 } else { 8 },
             tls_module_id: index + 1,
             tls_offset_below_tp: (index + 1) * 16,
             ..EMPTY_OBJECT
@@ -2488,9 +2557,16 @@ mod tls_zero_tail_tests {
             let installed = unsafe { materialize_tls_in(&objects, 0, backing) }.unwrap();
             let module_sizes = unsafe { installed.dtv.add(installed.dtv_words) };
             for (index, prefix) in prefixes.iter().enumerate() {
-                let destination = unsafe { installed.thread_pointer.sub((index + 1) * 16) };
+                let destination = if cfg!(target_arch = "aarch64") {
+                    unsafe { installed.thread_pointer.add((index + 1) * 16) }
+                } else {
+                    unsafe { installed.thread_pointer.sub((index + 1) * 16) }
+                };
                 let image = unsafe { core::slice::from_raw_parts(destination, 16) };
+                #[cfg(target_arch = "x86_64")]
                 assert_eq!(&image[..2], prefix);
+                #[cfg(target_arch = "aarch64")]
+                assert_eq!(&image[..2], &prefix[..]);
                 assert!(image[2..].iter().all(|byte| *byte == 0));
                 assert_eq!(unsafe { core::ptr::read_unaligned(installed.dtv.add(index + 1)) }, destination as usize);
                 assert_eq!(unsafe { core::ptr::read_unaligned(module_sizes.add(index + 1)) }, 16);
@@ -2557,15 +2633,17 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
             return unsafe { x86_64_runtime_tls_view::resolve(view, module_id, offset) };
         }
     }
-    let dtv = core::ptr::read_unaligned(
-        (thread_pointer as *const u8).add(core::mem::size_of::<usize>()) as *const usize,
-    ) as *const usize;
+    #[cfg(target_arch = "x86_64")]
+    let dtv = core::ptr::read_unaligned((thread_pointer as *const u8).add(8).cast::<usize>()) as *const usize;
+    #[cfg(target_arch = "aarch64")]
+    let dtv = core::ptr::read_unaligned((thread_pointer as *const u8).sub(8).cast::<usize>()) as *const usize;
     if dtv.is_null() {
         return core::ptr::null_mut();
     }
-    let module_sizes = core::ptr::read_unaligned(
-        (thread_pointer as *const u8).add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET) as *const usize,
-    ) as *const usize;
+    #[cfg(target_arch = "x86_64")]
+    let module_sizes = core::ptr::read_unaligned((thread_pointer as *const u8).add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<usize>()) as *const usize;
+    #[cfg(target_arch = "aarch64")]
+    let module_sizes = core::ptr::read_unaligned(thread_pointer as *const usize) as *const usize;
     if module_sizes.is_null() {
         return core::ptr::null_mut();
     }
@@ -3288,7 +3366,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
     let header = base as *const u8;
     if *header != 0x7f || *header.add(1) != b'E' || *header.add(2) != b'L' || *header.add(3) != b'F'
         || *header.add(4) != 2 || *header.add(5) != 1 || read_u16(header.add(16)) != 3
-        || read_u16(header.add(18)) != 62 || read_u16(header.add(54)) != 56
+        || read_u16(header.add(18)) != ELF_MACHINE || read_u16(header.add(54)) != 56
     {
         return None;
     }
@@ -3848,6 +3926,7 @@ fn align_up_usize(value: usize, align: usize) -> Option<usize> {
 fn add_signed(value: u64, addend: i64) -> Option<u64> { if addend >= 0 { value.checked_add(addend as u64) } else { value.checked_sub(addend.unsigned_abs()) } }
 fn is_linux_error(value: i64) -> bool { (-4_095..=-1).contains(&value) }
 
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn read_thread_pointer() -> usize {
     let thread_pointer: usize;
@@ -3859,12 +3938,28 @@ unsafe fn read_thread_pointer() -> usize {
     thread_pointer
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn read_thread_pointer() -> usize {
+    let thread_pointer: usize;
+    // SAFETY: Reading the current thread pointer does not alter machine state.
+    unsafe { core::arch::asm!("mrs {thread_pointer}, tpidr_el0", thread_pointer = out(reg) thread_pointer,
+        options(nomem, nostack, preserves_flags)); }
+    thread_pointer
+}
+
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall1(number: i64, one: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall2(number: i64, one: i64, two: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall3(number: i64, one: i64, two: i64, three: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall4(number: i64, one: i64, two: i64, three: i64, four: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+#[cfg(target_arch = "x86_64")]
 unsafe fn syscall6(number: i64, one: i64, two: i64, three: i64, four: i64, five: i64, six: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, in("r8") five, in("r9") six, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn jump(entry: usize, sp: usize) -> ! {
     core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
         target = in(reg) entry,
@@ -3873,6 +3968,17 @@ unsafe fn jump(entry: usize, sp: usize) -> ! {
     #[cfg(not(crabc_general_initial_lifecycle))]
     core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp,
         target = in(reg) entry, options(noreturn));
+}
+#[cfg(target_arch = "aarch64")]
+unsafe fn jump(entry: usize, sp: usize) -> ! {
+    // SAFETY: The loader supplies the admitted entry and initial stack. The
+    // AArch64 startup ABI passes the loader finalizer in x0.
+    unsafe {
+        core::arch::asm!("mov sp, {stack}", "br {target}", stack = in(reg) sp,
+            target = in(reg) entry,
+            in("x0") x86_64_general_initial_lifecycle::process_finalizer as *const () as usize,
+            options(noreturn));
+    }
 }
 fn fail(message: &[u8]) -> ! { unsafe { die(message) } }
 unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_ptr() as i64, message.len() as i64); let _ = syscall1(SYS_EXIT, 127); core::hint::unreachable_unchecked() }
@@ -3886,7 +3992,7 @@ mod readable_file_load_tests {
 
     #[test]
     fn mapper_rejects_program_headers_outside_file_backed_load() {
-        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-boundary\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0u8; PAGE as usize];
@@ -3895,7 +4001,7 @@ mod readable_file_load_tests {
         image[5] = 1;
         image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[52..54].copy_from_slice(&64u16.to_le_bytes());
@@ -3909,7 +4015,7 @@ mod readable_file_load_tests {
         phdr[32..40].copy_from_slice(&0x100u64.to_le_bytes());
         phdr[40..48].copy_from_slice(&0x100u64.to_le_bytes());
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
-        assert_eq!(unsafe { syscall3(8, fd, 0, 0) }, 0);
+        assert_eq!(unsafe { syscall3(if cfg!(target_arch = "aarch64") { 62 } else { 8 }, fd, 0, 0) }, 0);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
             ObjectRole::Library) }, Err(ENOEXEC)));
@@ -3918,8 +4024,8 @@ mod readable_file_load_tests {
 
     #[test]
     fn mapper_retains_first_file_backed_program_header_alias() {
-        const SYS_MEMFD_CREATE: i64 = 319;
-        const SYS_PWRITE64: i64 = 18;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
+        const SYS_PWRITE64: i64 = if cfg!(target_arch = "aarch64") { 68 } else { 18 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-alias\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0u8; PAGE as usize];
@@ -3928,7 +4034,7 @@ mod readable_file_load_tests {
         image[5] = 1;
         image[6] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[52..54].copy_from_slice(&64u16.to_le_bytes());
@@ -3964,7 +4070,7 @@ mod readable_file_load_tests {
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         // Production opens one descriptor per image; this probe reuses the
         // descriptor, so rewind the sequential header read before every map.
-        const SYS_LSEEK: i64 = 8;
+        const SYS_LSEEK: i64 = if cfg!(target_arch = "aarch64") { 62 } else { 8 };
         let rewind = || assert_eq!(unsafe { syscall3(SYS_LSEEK, fd, 0, 0) }, 0);
         rewind();
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
@@ -4032,8 +4138,8 @@ mod readable_file_load_tests {
 
     #[test]
     fn mapper_zeroes_only_the_declared_file_page_tail() {
-        const SYS_MEMFD_CREATE: i64 = 319;
-        const SYS_PWRITE64: i64 = 18;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
+        const SYS_PWRITE64: i64 = if cfg!(target_arch = "aarch64") { 68 } else { 18 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"load-tail\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0xa5u8; PAGE as usize];
@@ -4042,7 +4148,7 @@ mod readable_file_load_tests {
         image[4] = 2;
         image[5] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&2u16.to_le_bytes());
@@ -4070,7 +4176,7 @@ mod readable_file_load_tests {
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
         image[0x348..0x350].fill(0);
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
-        const SYS_LSEEK: i64 = 8;
+        const SYS_LSEEK: i64 = if cfg!(target_arch = "aarch64") { 62 } else { 8 };
         let rewind = || assert_eq!(unsafe { syscall3(SYS_LSEEK, fd, 0, 0) }, 0);
         rewind();
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
@@ -4108,7 +4214,7 @@ mod readable_file_load_tests {
     // its unaligned vaddr happens to reach.
     #[test]
     fn mapper_skips_zero_memory_load_without_overlaying_the_reservation() {
-        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_MEMFD_CREATE: i64 = if cfg!(target_arch = "aarch64") { 279 } else { 319 };
         let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"empty-load\0".as_ptr() as i64, 0) };
         assert!(fd >= 0);
         let mut image = [0xa5u8; PAGE as usize];
@@ -4117,7 +4223,7 @@ mod readable_file_load_tests {
         image[4] = 2;
         image[5] = 1;
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&3u16.to_le_bytes());
@@ -4150,7 +4256,7 @@ mod readable_file_load_tests {
         image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
         image[0x348..0x350].fill(0);
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
-        assert_eq!(unsafe { syscall3(8, fd, 0, 0) }, 0);
+        assert_eq!(unsafe { syscall3(if cfg!(target_arch = "aarch64") { 62 } else { 8 }, fd, 0, 0) }, 0);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
         assert_eq!(object.map_span_byte_len, 0x5000);
@@ -4194,7 +4300,7 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4..7].copy_from_slice(&[2, 1, 1]);
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[20..24].copy_from_slice(&1u32.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[52..54].copy_from_slice(&64u16.to_le_bytes());
@@ -4243,7 +4349,7 @@ mod readable_file_load_tests {
         image[..4].copy_from_slice(b"\x7fELF");
         image[4..6].copy_from_slice(&[2, 1]);
         image[16..18].copy_from_slice(&3u16.to_le_bytes());
-        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[18..20].copy_from_slice(&ELF_MACHINE.to_le_bytes());
         image[32..40].copy_from_slice(&64u64.to_le_bytes());
         image[54..56].copy_from_slice(&56u16.to_le_bytes());
         image[56..58].copy_from_slice(&4u16.to_le_bytes());
@@ -4703,7 +4809,7 @@ mod owned_dynamic_symbolic_tag_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod self_relocate_tests {
     extern crate std;
 
@@ -4973,6 +5079,284 @@ mod self_relocate_tests {
     fn relative_rela_with_a_symbol_index_is_rejected() {
         let mut fixture = Fixture::new();
         fixture.rela_at(0, TARGET_OFF as u64, 8 | (1u64 << 32), 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 0);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn relr_size_not_multiple_of_eight_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64, 3]);
+        fixture.dynamic(None, Some((12, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn relr_bitmap_target_outside_writable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[0xfe0, 1 | (1 << 5)]);
+        fixture.dynamic(None, Some((16, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+mod aarch64_self_relocate_tests {
+    extern crate std;
+
+    use std::vec;
+    use std::vec::Vec;
+
+    const RELA_OFF: usize = 0x100;
+    const RELR_OFF: usize = 0x300;
+    const DYNAMIC_OFF: usize = 0x500;
+    const TARGET_OFF: usize = 0x800;
+    const IMAGE_BYTES: usize = 0x1000;
+
+    struct Fixture {
+        words: Vec<u64>,
+        phdr: Vec<u8>,
+        dynamic: Vec<u64>,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                words: vec![0u64; IMAGE_BYTES / 8],
+                phdr: load_phdr(0, IMAGE_BYTES as u64, 6),
+                dynamic: Vec::new(),
+            }
+        }
+
+        fn rela(&mut self, offset: u64, addend: i64) {
+            self.rela_at(0, offset, 1027, addend);
+        }
+
+        fn rela_at(&mut self, index: usize, offset: u64, info: u64, addend: i64) {
+            let at = RELA_OFF / 8 + index * 3;
+            self.words[at] = offset;
+            self.words[at + 1] = info;
+            self.words[at + 2] = addend as u64;
+        }
+
+        fn relr(&mut self, entries: &[u64]) {
+            let at = RELR_OFF / 8;
+            for (index, entry) in entries.iter().enumerate() {
+                self.words[at + index] = *entry;
+            }
+        }
+
+        fn dynamic(&mut self, rela: Option<u64>, relr: Option<(u64, u64)>) {
+            let mut entries = Vec::new();
+            if let Some(size) = rela {
+                entries.push(7); // DT_RELA
+                entries.push(RELA_OFF as u64);
+                entries.push(8); // DT_RELASZ
+                entries.push(size);
+                entries.push(9); // DT_RELAENT
+                entries.push(24);
+            }
+            if let Some((size, ent)) = relr {
+                entries.push(0x24); // DT_RELR
+                entries.push(RELR_OFF as u64);
+                entries.push(0x23); // DT_RELRSZ
+                entries.push(size);
+                entries.push(0x25); // DT_RELRENT
+                entries.push(ent);
+            }
+            entries.push(0);
+            entries.push(0);
+            let at = DYNAMIC_OFF / 8;
+            self.words[at..at + entries.len()].copy_from_slice(&entries);
+            self.dynamic = entries;
+        }
+
+        fn run(&self) -> u32 {
+            let dynamic = unsafe { self.words.as_ptr().add(DYNAMIC_OFF / 8) } as *const u8;
+            let dynamic_end = unsafe { dynamic.add(self.dynamic.len() * 8) };
+            self.run_with_dynamic(dynamic, dynamic_end)
+        }
+
+        fn run_with_dynamic(&self, dynamic: *const u8, dynamic_end: *const u8) -> u32 {
+            let base = self.words.as_ptr() as usize;
+            unsafe {
+                if super::aarch64_bootstrap::relocate(
+                    base, self.phdr.as_ptr() as usize, 1, dynamic as usize, dynamic_end as usize,
+                ).is_some() { 0 } else { 1 }
+            }
+        }
+
+        fn set_dynamic_value(&mut self, tag: u64, value: u64) {
+            let at = DYNAMIC_OFF / 8;
+            for index in (0..self.dynamic.len()).step_by(2) {
+                if self.words[at + index] == tag {
+                    self.words[at + index + 1] = value;
+                }
+            }
+        }
+
+        fn word(&self, offset: usize) -> u64 {
+            self.words[offset / 8]
+        }
+    }
+
+    fn load_phdr(start: u64, memsz: u64, flags: u32) -> Vec<u8> {
+        let mut phdr = vec![0u8; 56];
+        phdr[0..4].copy_from_slice(&1u32.to_le_bytes());
+        phdr[4..8].copy_from_slice(&flags.to_le_bytes());
+        phdr[16..24].copy_from_slice(&start.to_le_bytes());
+        phdr[40..48].copy_from_slice(&memsz.to_le_bytes());
+        phdr[48..56].copy_from_slice(&8u64.to_le_bytes());
+        phdr
+    }
+
+    #[test]
+    fn valid_rela_and_relr_apply_the_load_bias() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.relr(&[0x810, 3]);
+        fixture.dynamic(Some(24), Some((16, 8)));
+        let base = fixture.words.as_ptr() as usize;
+        let result = fixture.run();
+        assert_eq!(result, 0);
+        assert_eq!(fixture.word(TARGET_OFF), (base as u64).wrapping_add(0x20));
+        assert_eq!(fixture.word(0x810), base as u64);
+        assert_eq!(fixture.word(0x818), base as u64);
+    }
+
+    #[test]
+    fn bitmap_first_relr_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[1]);
+        fixture.dynamic(None, Some((8, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn bad_relrent_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64]);
+        fixture.dynamic(None, Some((8, 4)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn target_outside_writable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(0x1200, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn target_overflow_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(u64::MAX - 7, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn unaligned_target_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64 + 1, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn duplicate_relr_target_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.relr(&[TARGET_OFF as u64, TARGET_OFF as u64]);
+        fixture.dynamic(None, Some((16, 8)));
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn overlapping_tables_are_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.dynamic(Some(24), Some((16, 8)));
+        // Move DT_RELR onto DT_RELA.
+        let at = DYNAMIC_OFF / 8;
+        for index in 0..fixture.dynamic.len() / 2 {
+            if fixture.words[at + index * 2] == 0x24 {
+                fixture.words[at + index * 2 + 1] = RELA_OFF as u64;
+            }
+        }
+        let entries = fixture.dynamic.clone();
+        fixture.dynamic = entries;
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn table_outside_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        // Point DT_RELA past the only PT_LOAD.
+        let at = DYNAMIC_OFF / 8;
+        fixture.words[at + 1] = 0x2000;
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn target_overlapping_a_table_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(RELA_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        assert_eq!(fixture.run(), 1);
+    }
+
+    #[test]
+    fn dynamic_table_outside_a_readable_load_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        let outside = unsafe { fixture.words.as_ptr().add(IMAGE_BYTES / 8) } as *const u8;
+        assert_eq!(fixture.run_with_dynamic(outside, unsafe { outside.add(16) }), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn wrong_rela_entry_size_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, 0x20);
+        fixture.dynamic(Some(24), None);
+        fixture.set_dynamic_value(9, 8);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn duplicate_rela_target_is_rejected_before_writing() {
+        let mut fixture = Fixture::new();
+        fixture.rela_at(0, TARGET_OFF as u64, 1027, 0x20);
+        fixture.rela_at(1, TARGET_OFF as u64, 1027, 0x30);
+        fixture.dynamic(Some(48), None);
+        assert_eq!(fixture.word(RELA_OFF), TARGET_OFF as u64);
+        assert_eq!(fixture.word(RELA_OFF + 24), TARGET_OFF as u64);
+        assert_eq!(fixture.run(), 1);
+        assert_eq!(fixture.word(TARGET_OFF), 0);
+    }
+
+    #[test]
+    fn negative_rela_addend_is_applied() {
+        let mut fixture = Fixture::new();
+        fixture.rela(TARGET_OFF as u64, -0x20);
+        fixture.dynamic(Some(24), None);
+        let base = fixture.words.as_ptr() as usize;
+        assert_eq!(fixture.run(), 0);
+        assert_eq!(fixture.word(TARGET_OFF), (base as u64).wrapping_sub(0x20));
+    }
+
+    #[test]
+    fn relative_rela_with_a_symbol_index_is_rejected() {
+        let mut fixture = Fixture::new();
+        fixture.rela_at(0, TARGET_OFF as u64, 1027 | (1u64 << 32), 0x20);
         fixture.dynamic(Some(24), None);
         assert_eq!(fixture.run(), 0);
         assert_eq!(fixture.word(TARGET_OFF), 0);

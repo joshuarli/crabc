@@ -89,7 +89,7 @@
 //! own private mapped list node; creation is limited by actual mapping/TLS
 //! allocation, not an artifact-local numeric registry ceiling.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x86-64");
 
 use core::ffi::{c_int, c_long, c_void};
@@ -720,6 +720,7 @@ unsafe extern "C" {
     ) -> i64;
 }
 
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -760,6 +761,37 @@ __crabc_x86_pthread_clone:
 "#
 );
 
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    r#"
+    .text
+    .global __crabc_x86_pthread_clone
+    .hidden __crabc_x86_pthread_clone
+    .type __crabc_x86_pthread_clone,%function
+__crabc_x86_pthread_clone:
+    // musl 1.2.6 src/thread/aarch64/clone.s
+    and x1, x1, #-16
+    stp x0, x3, [x1, #-16]!
+    uxtw x0, w2
+    mov x2, x4
+    mov x3, x5
+    mov x4, x6
+    mov x8, #220
+    svc #0
+    cbz x0, 1f
+    ret
+1:
+    mov x29, 0
+    ldp x1, x0, [sp], #16
+    blr x1
+    mov x8, #93
+    svc #0
+    brk #0
+    .size __crabc_x86_pthread_clone, .-__crabc_x86_pthread_clone
+    .section .note.GNU-stack,"",%progbits
+"#
+);
+
 #[inline]
 fn is_linux_error(result: i64) -> bool {
     result < 0 && result >= -LINUX_ERRNO_MAX
@@ -783,6 +815,7 @@ fn current_linux_thread_id() -> Option<c_int> {
     // instruction adjacent to that identity check avoids relying on a generic
     // raw-syscall wrapper's cross-item inlining in pthread_exit's audited
     // foreign-thread rejection path.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -792,6 +825,9 @@ fn current_linux_thread_id() -> Option<c_int> {
             options(nostack),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: gettid takes no arguments.
+    unsafe { result = raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
     if is_linux_error(result) || result <= 0 || result > i64::from(c_int::MAX) {
         return None;
     }
@@ -2442,6 +2478,7 @@ unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
     // SAFETY: this is the direct Linux x86-64 munmap register contract. Keep
     // it at the selected lifecycle release boundary so join/reaper auditing
     // cannot depend on cross-item inlining of the generic syscall wrapper.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -2453,6 +2490,9 @@ unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
             options(nostack),
         );
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the caller supplies the exact no-longer-used mapping.
+    unsafe { result = raw_syscall::syscall2(raw_syscall::SYS_MUNMAP, mapping as usize as i64, mapping_size as i64) };
     result
 }
 
@@ -2485,6 +2525,7 @@ unsafe fn exit_selected_linux_task() -> ! {
     // SAFETY: SYS_exit terminates exactly the calling Linux task and cannot
     // return. The selected lifecycle requires this only after the result
     // publication described by its caller.
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::asm!(
             "syscall",
@@ -2493,6 +2534,9 @@ unsafe fn exit_selected_linux_task() -> ! {
             options(noreturn, nostack),
         )
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: exit terminates the current task without returning.
+    unsafe { raw_syscall::syscall_noreturn1(raw_syscall::SYS_EXIT, 0) }
 }
 
 /// Attach the native allocator before a selected worker can run user code.
@@ -3124,7 +3168,7 @@ unsafe fn create_selected_worker_with_attributes(
     #[cfg(crabc_x86_owned_runtime)]
     let scheduler_result = if clone_result >= 0 && attributes.scheduler_requested {
         let result = unsafe { raw_syscall::syscall3(
-            144, clone_result, attributes.sched_policy as i64,
+            raw_syscall::SYS_SCHED_SETSCHEDULER, clone_result, attributes.sched_policy as i64,
             core::ptr::addr_of!(attributes.sched_priority) as i64,
         ) };
         unsafe {
@@ -3797,7 +3841,7 @@ unsafe fn join_selected_worker_inner(
         // boundary gives the lifecycle's wait-before-reclaim proof a direct
         // machine-code witness rather than depending on generic-wrapper
         // inlining after the worker attribute path grew.
-        #[cfg(not(crabc_x86_owned_runtime))]
+        #[cfg(all(not(crabc_x86_owned_runtime), target_arch = "x86_64"))]
         unsafe {
             core::arch::asm!(
                 "syscall",
@@ -3811,6 +3855,13 @@ unsafe fn join_selected_worker_inner(
                 lateout("r11") _,
                 options(nostack),
             );
+        }
+        #[cfg(all(not(crabc_x86_owned_runtime), target_arch = "aarch64"))]
+        // SAFETY: the child-TID word is live, and the null timeout and expected value satisfy FUTEX_WAIT.
+        unsafe {
+            wait_result = raw_syscall::syscall4(raw_syscall::SYS_FUTEX,
+                core::ptr::addr_of_mut!((*control).child_tid) as i64,
+                FUTEX_WAIT, i64::from(child_tid), 0);
         }
         if is_linux_error(wait_result) {
             let error = positive_linux_error(wait_result);

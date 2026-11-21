@@ -6,6 +6,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$#" -eq 1 ] || exit 2
 readonly installed="$1"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 case "$installed" in "$ROOT"/.work/*) ;; *) exit 2;; esac
 [ -d "$installed" ] && [ ! -L "$installed" ] || exit 2
 case "${TMPDIR:-}" in "$ROOT"/.work/*) ;; *) exit 2;; esac
@@ -79,7 +80,7 @@ receipt_products+=(
     "dynamic-libc-provenance=$installed/share/crabc/libc-shared.provenance.json"
     "dynamic-loader-provenance=$installed/share/crabc/loader.provenance.json"
     "dynamic-libc=$installed/usr/lib/libc.so"
-    "dynamic-loader=$installed/lib/ld-crabc-x86_64.so.1"
+    "dynamic-loader=$installed/lib/ld-crabc-${arch}.so.1"
     "dynamic-driver=$driver"
     "identity-source=$source"
 )
@@ -120,25 +121,25 @@ prepare_root() {
     cp -a "$installed/." "$root/"
     mkdir -p "$root/plugins" "$root/p" "$root/override" \
         "$root/prefix/lib" "$root/prefix/usr/lib"
-    cp "$root/lib/ld-crabc-x86_64.so.1" "$root/prefix/lib/loader"
+    cp "$root/lib/ld-crabc-${arch}.so.1" "$root/prefix/lib/loader"
 }
 
 root_aliases() {
     local root="$1"
-    rm -f "$root/lib/libc.musl-x86_64.so.1"
-    ln "$root/usr/lib/libc.so" "$root/lib/libc.musl-x86_64.so.1"
+    rm -f "$root/lib/libc.musl-${arch}.so.1"
+    ln "$root/usr/lib/libc.so" "$root/lib/libc.musl-${arch}.so.1"
 }
 
 prefix_aliases_copy() {
     local root="$1"
     cp "$root/usr/lib/libc.so" "$root/prefix/usr/lib/libc.so"
-    ln "$root/prefix/usr/lib/libc.so" "$root/prefix/lib/libc.musl-x86_64.so.1"
+    ln "$root/prefix/usr/lib/libc.so" "$root/prefix/lib/libc.musl-${arch}.so.1"
 }
 
 prefix_aliases_hardlink() {
     local root="$1"
     ln "$root/usr/lib/libc.so" "$root/prefix/usr/lib/libc.so"
-    ln "$root/usr/lib/libc.so" "$root/prefix/lib/libc.musl-x86_64.so.1"
+    ln "$root/usr/lib/libc.so" "$root/prefix/lib/libc.musl-${arch}.so.1"
 }
 
 assert_needed() {
@@ -159,8 +160,22 @@ build_consumer() {
     local root="$1" library_search_path="$2" consumer_search_path="$3"
     "$driver" --dynamic-shared-object -DIDENTITY_DSO --application-runpath "$library_search_path" \
         "$source" -o "$root/plugins/libcli.so"
-    "$driver" "--dynamic-$mode" --application-runpath "$consumer_search_path" \
-        "$source" --application-dso "$root/plugins/libcli.so" -o "$root/consumer"
+    local link_dso="$root/plugins/libcli.so"
+    if [ "$arch" = aarch64 ] && [ "$library_search_path" != /usr/lib ]; then
+        local link_directory="$work/$mode-$case_name-link"
+        mkdir -p "$link_directory"
+        link_dso="$link_directory/libcli.so"
+        "$driver" --dynamic-shared-object -DIDENTITY_DSO --application-runpath /usr/lib \
+            "$source" -o "$link_dso"
+        assert_needed "$link_dso" libc.so link-library
+    fi
+    if [ "$arch" = x86_64 ]; then
+        "$driver" "--dynamic-$mode" --application-runpath "$consumer_search_path" \
+            "$source" --application-dso "$root/plugins/libcli.so" -o "$root/consumer"
+    else
+        "$driver" "--dynamic-$mode" --application-runpath "$consumer_search_path" \
+            "$source" --application-dso "$link_dso" -o "$root/consumer"
+    fi
     assert_needed "$root/plugins/libcli.so" libc.so library
     assert_needed "$root/consumer" libcli.so consumer
     assert_needed "$root/consumer" libc.so consumer
@@ -219,8 +234,8 @@ record_case_evidence() {
     local root="$1" program="$2" expected="$3"
     local id="$mode-$case_name" relative entry
     local -a paths=(
-        prefix/lib/loader usr/lib/libc.so lib/libc.musl-x86_64.so.1
-        prefix/usr/lib/libc.so prefix/lib/libc.musl-x86_64.so.1
+        prefix/lib/loader usr/lib/libc.so lib/libc.musl-${arch}.so.1
+        prefix/usr/lib/libc.so prefix/lib/libc.musl-${arch}.so.1
         p/libc.so override/libc.so consumer consumer-mutated plugins/libcli.so
     )
     local -a logs=("$id.stdout" "$id.stderr" "$id.status" "$id.identity" "$(basename "$expected")")
@@ -276,7 +291,7 @@ for mode in pie non-pie; do
     prepare_root "$root"
     root_aliases "$root"
     build_consumer "$root" /usr/lib '$ORIGIN/plugins:/usr/lib'
-    assert_same_identity "$root/usr/lib/libc.so" "$root/lib/libc.musl-x86_64.so.1"
+    assert_same_identity "$root/usr/lib/libc.so" "$root/lib/libc.musl-${arch}.so.1"
     run_success "$root" /consumer /usr/lib/libc.so
 
     case_name=prefix-only-libc
@@ -294,9 +309,9 @@ for mode in pie non-pie; do
     root_aliases "$root"
     prefix_aliases_hardlink "$root"
     build_consumer "$root" /usr/lib '$ORIGIN/plugins:/usr/lib'
-    assert_same_identity "$root/usr/lib/libc.so" "$root/lib/libc.musl-x86_64.so.1"
+    assert_same_identity "$root/usr/lib/libc.so" "$root/lib/libc.musl-${arch}.so.1"
     assert_same_identity "$root/usr/lib/libc.so" "$root/prefix/usr/lib/libc.so"
-    assert_same_identity "$root/usr/lib/libc.so" "$root/prefix/lib/libc.musl-x86_64.so.1"
+    assert_same_identity "$root/usr/lib/libc.so" "$root/prefix/lib/libc.musl-${arch}.so.1"
     run_success "$root" /consumer /usr/lib/libc.so
 
     case_name=two-distinct-libc-identities
@@ -306,12 +321,12 @@ for mode in pie non-pie; do
     prefix_aliases_copy "$root"
     build_consumer "$root" /usr/lib '$ORIGIN/plugins:/usr/lib'
     cp "$root/prefix/usr/lib/libc.so" "$root/p/libc.so"
-    rm "$root/prefix/usr/lib/libc.so" "$root/prefix/lib/libc.musl-x86_64.so.1"
+    rm "$root/prefix/usr/lib/libc.so" "$root/prefix/lib/libc.musl-${arch}.so.1"
     ln "$root/p/libc.so" "$root/prefix/usr/lib/libc.so"
-    ln "$root/p/libc.so" "$root/prefix/lib/libc.musl-x86_64.so.1"
+    ln "$root/p/libc.so" "$root/prefix/lib/libc.musl-${arch}.so.1"
     assert_distinct_identity "$root/usr/lib/libc.so" "$root/p/libc.so"
     assert_same_identity "$root/p/libc.so" "$root/prefix/usr/lib/libc.so"
-    assert_same_identity "$root/p/libc.so" "$root/prefix/lib/libc.musl-x86_64.so.1"
+    assert_same_identity "$root/p/libc.so" "$root/prefix/lib/libc.musl-${arch}.so.1"
     mutate_cli_needed_to_second_libc "$root"
     run_identity_failure "$root" /consumer-mutated
 

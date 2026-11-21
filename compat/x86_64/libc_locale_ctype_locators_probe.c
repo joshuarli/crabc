@@ -1,9 +1,9 @@
 /* Fixed-C-locale musl ctype-locator ABI fixture shared by musl/crabc. */
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "this fixture requires native little-endian Linux/x86-64 LP64"
+#error "this fixture requires native little-endian Linux/x86-64 or Linux/AArch64 LP64"
 #endif
 
 #include <ctype.h>
@@ -85,6 +85,7 @@ static int check_locator_shape(const unsigned short **class_locator,
 
 static long raw_write_stdout(const void *bytes, long count)
 {
+#if defined(__x86_64__)
     long result = 1;
 
     __asm__ volatile (
@@ -94,6 +95,14 @@ static long raw_write_stdout(const void *bytes, long count)
         : "rcx", "r11", "memory"
     );
     return result;
+#elif defined(__aarch64__)
+    register long result __asm__("x0") = 1;
+    register const void *arg1 __asm__("x1") = bytes;
+    register long arg2 __asm__("x2") = count;
+    register long number __asm__("x8") = 64;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(arg1), "r"(arg2), "r"(number) : "memory", "cc");
+    return result;
+#endif
 }
 
 static int emit_fingerprint(uint64_t fingerprint)

@@ -1,6 +1,5 @@
-//! Linux/x86-64 evidence for the private PTY ownership and naming seam.
+//! Linux evidence for the private PTY ownership and naming seam.
 
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::MaybeUninit;
 

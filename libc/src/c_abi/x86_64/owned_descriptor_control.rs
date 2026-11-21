@@ -25,11 +25,12 @@ const F_SETFL: c_int = 4;
 const F_GETOWN: c_int = 9;
 const F_GETOWN_EX: c_int = 16;
 const F_OWNER_PGRP: c_int = 2;
-const O_LARGEFILE: c_int = 0x8_000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 
 // C fcntl has two fixed words. Tail branches preserve the variadic word only
 // for a command that defines one; the no-argument helper supplies syscall rdx=0.
 // Keep this public entry in its own section for archive garbage collection.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .section .text.fcntl,"ax",@progbits
@@ -109,6 +110,43 @@ fcntl:
     word = sym fcntl_word,
     record_lock = sym record_locks::fcntl_record_lock,
 );
+
+/// # Safety
+/// The descriptor and any command-specific variadic argument must satisfy the C fcntl contract.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub unsafe extern "C" fn fcntl(descriptor: c_int, command: c_int, mut arguments: ...) -> c_int {
+    match command {
+        // SAFETY: these commands take no variadic argument.
+        1 | 3 | 9 | 11 | 1025 | 1032 | 1034 => unsafe { fcntl_no_argument(descriptor, command) },
+        0 | 2 | 4 | 8 | 10 | 1024 | 1030 | 1031 | 1033 => {
+            // SAFETY: these fcntl commands require a promoted int argument.
+            let argument = unsafe { arguments.next_arg::<c_int>() };
+            // SAFETY: the caller supplied the command's scalar argument.
+            unsafe { fcntl_integer(descriptor, command, argument) }
+        }
+        5 | 6 | 7 => {
+            // SAFETY: these record-lock commands require a flock pointer.
+            let argument = unsafe { arguments.next_arg::<*mut c_void>() };
+            // SAFETY: the caller supplies the command's kernel-validated pointer.
+            unsafe { record_locks::fcntl_record_lock(descriptor, command, argument) }
+        }
+        15 | 16 | 17 | 36 | 37 | 38 | 1029 | 1035 | 1036 | 1037 | 1038 => {
+            // SAFETY: these fcntl commands require a pointer argument.
+            let argument = unsafe { arguments.next_arg::<*mut c_void>() };
+            // SAFETY: the caller supplies the command's kernel-validated pointer.
+            unsafe { fcntl_pointer(descriptor, command, argument) }
+        }
+        1026 => {
+            // SAFETY: F_NOTIFY requires an unsigned long mask.
+            let argument = unsafe { arguments.next_arg::<usize>() };
+            // SAFETY: the caller supplies the command's scalar argument.
+            unsafe { fcntl_word(descriptor, command, argument) }
+        }
+        // SAFETY: the no-argument path does not inspect an absent vararg.
+        _ => unsafe { fcntl_no_argument(descriptor, command) },
+    }
+}
 
 /// A Linux f_owner_ex has two adjacent signed int words on x86-64.
 #[repr(C)]

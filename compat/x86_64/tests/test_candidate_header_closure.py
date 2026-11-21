@@ -146,8 +146,7 @@ class CandidateHeaderClosureTests(unittest.TestCase):
         ):
             self.assertIn(phrase, dispatcher)
 
-    def test_utmpx_preserves_non_x86_include_route(self) -> None:
-        """The private direct alltypes route must not alter AArch64 inputs."""
+    def test_utmpx_uses_shared_alltypes_route(self) -> None:
         builtin_include = subprocess.check_output(
             ["gcc", "-print-file-name=include"], text=True
         ).strip()
@@ -180,8 +179,14 @@ class CandidateHeaderClosureTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(str(ROOT / "include" / "sys/types.h"), result.stderr)
-        self.assertIn(str(ROOT / "include" / "sys/time.h"), result.stderr)
+        self.assertIn(str(ROOT / "include" / "bits/alltypes.h"), result.stderr)
+        self.assertNotIn(str(ROOT / "include" / "sys/types.h"), result.stderr)
+        self.assertNotIn(str(ROOT / "include" / "sys/time.h"), result.stderr)
+        header = (ROOT / "include/utmpx.h").read_text(encoding="utf-8")
+        for request in ("pid_t", "time_t", "suseconds_t", "struct_timeval"):
+            self.assertIn(f"#define __NEED_{request}", header)
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
 
 
 if __name__ == "__main__":

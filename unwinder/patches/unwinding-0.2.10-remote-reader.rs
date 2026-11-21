@@ -3,16 +3,16 @@
 // The reader never dereferences target metadata directly. It copies exact
 // ranges through a kernel self-read and retains only a bounded value cache.
 use gimli::{NativeEndian, Pointer};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use core::convert::TryFrom;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use gimli::{Reader, ReaderOffsetId};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub type StaticSlice = RemoteSlice;
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub type StaticSlice = gimli::EndianSlice<'static, NativeEndian>;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteSlice {
     address: usize,
@@ -22,7 +22,7 @@ pub struct RemoteSlice {
     cache: [u8; 128],
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl RemoteSlice {
     pub fn new(address: usize, len: usize, maximum: usize) -> Result<Self, gimli::Error> {
         if address == 0 || len == 0 || len > maximum || address.checked_add(len).is_none() {
@@ -51,8 +51,12 @@ impl RemoteSlice {
             return Err(gimli::Error::UnexpectedEof(ReaderOffsetId(remote_address as u64)));
         }
         let mut pid = libc::SYS_getpid as isize;
+        // SAFETY: getpid has no arguments and only returns a scalar.
         unsafe {
+            #[cfg(target_arch = "x86_64")]
             asm!("syscall", inlateout("rax") pid, lateout("rcx") _, lateout("r11") _, options(nostack));
+            #[cfg(target_arch = "aarch64")]
+            asm!("svc 0", in("x8") pid, lateout("x0") pid, options(nostack));
         }
         if pid <= 0 {
             return Err(gimli::Error::OffsetOutOfBounds(remote_address as u64));
@@ -60,7 +64,9 @@ impl RemoteSlice {
         let local = libc::iovec { iov_base: bytes.as_mut_ptr().cast(), iov_len: bytes.len() };
         let remote = libc::iovec { iov_base: remote_address as *mut _, iov_len: bytes.len() };
         let mut copied = libc::SYS_process_vm_readv as isize;
+        // SAFETY: both iovecs describe live buffers for the duration of the self-read.
         unsafe {
+            #[cfg(target_arch = "x86_64")]
             asm!(
                 "syscall",
                 inlateout("rax") copied,
@@ -74,13 +80,17 @@ impl RemoteSlice {
                 lateout("r11") _,
                 options(nostack),
             );
+            #[cfg(target_arch = "aarch64")]
+            asm!("svc 0", in("x8") copied, inlateout("x0") pid => copied,
+                in("x1") &local, in("x2") 1usize, in("x3") &remote,
+                in("x4") 1usize, in("x5") 0usize, options(nostack));
         }
         if copied == bytes.len() as isize { Ok(()) }
         else { Err(gimli::Error::OffsetOutOfBounds(remote_address as u64)) }
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Reader for RemoteSlice {
     type Endian = NativeEndian;
     type Offset = usize;

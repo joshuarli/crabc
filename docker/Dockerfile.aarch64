@@ -1,0 +1,200 @@
+# Native Linux/AArch64 core-foundation evidence image.
+#
+# Same tool set and pins as docker/Dockerfile.x86_64, built natively for
+# arm64 inside the provisioned OrbStack Linux/arm64 VM. This image must never
+# be used through emulation. Build it natively on the aarch64 host:
+#   docker build --platform linux/arm64 --tag crabc-core-evidence:aarch64 \
+#     --file docker/Dockerfile.aarch64 .
+# scripts/dev-aarch64.sh does not exist yet; the A4 harness generalization
+# wires one. The Rust channel comes from rust-toolchain.toml; external source
+# pins remain in compat/upstreams.toml.
+#
+# Alpine digests: the first stage keeps the same manifest-list digest the
+# x86 file uses (it resolves per platform; the arm64 entry is
+# sha256:42d86a3173522de4786cfba0b5d631dbadb3d03a86d218dafb070dafd9809c7e,
+# alpine 20260805). The main stage uses the arm64 image of alpine:3.24.1,
+# which is the [environment] alpine_image pin in compat/upstreams.toml.
+# The Linux UAPI export pins differ from x86: arch headers are arm64, 909
+# files, manifest sha256 6bed459d713bc462619b7b5d79090faff2c63540814d5a8401397b49723df4f3.
+# upstreams.toml pins the x86 export only, and it is in the x86 product seal,
+# so the arm64 derived identities are pinned here as ARGs instead. The
+# aarch64 kache artifact is pinned here for the same reason; the kache
+# version (1.0.0) is unchanged.
+FROM alpine@sha256:020dfcbaaf4cc1078bf2d9c7ba31a8466e334061dcd2f248001d68f79e52c000 AS musl-clang
+RUN apk add --no-cache clang binutils make python3 curl git
+COPY compat/upstreams.toml /tmp/upstreams.toml
+COPY compat/x86_64/musl_oracle.py /tmp/musl_oracle.py
+RUN set -eu \
+    && MUSL_VERSION="$(python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml version)" \
+    && python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml --architecture aarch64 acquire "/tmp/musl-${MUSL_VERSION}" \
+    && test "$(clang --version | sed -n 's/.*clang version \([0-9]*\)\..*/\1/p' | head -1)" = "23" \
+    && cd "/tmp/musl-${MUSL_VERSION}" \
+    && CC=clang ./configure --prefix="/opt/musl-clang-${MUSL_VERSION}" --syslibdir="/opt/musl-clang-${MUSL_VERSION}/lib" \
+    && make -s -j"$(getconf _NPROCESSORS_ONLN)" \
+    && make -s install \
+    && cp config.mak "/opt/musl-clang-${MUSL_VERSION}/config.mak" \
+    && clang --version | head -1 > "/opt/musl-clang-${MUSL_VERSION}/.clang-version" \
+    && test -f "/opt/musl-clang-${MUSL_VERSION}/lib/libc.so" \
+    && test -f "/opt/musl-clang-${MUSL_VERSION}/lib/ld-musl-aarch64.so.1" \
+    && test "$(readlink -f "/opt/musl-clang-${MUSL_VERSION}/lib/ld-musl-aarch64.so.1")" = "/opt/musl-clang-${MUSL_VERSION}/lib/libc.so" \
+    && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
+FROM alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18
+
+COPY rust-toolchain.toml /tmp/rust-toolchain.toml
+ARG RUST_TARGET=aarch64-unknown-linux-musl
+ARG LINUX_UAPI_VERSION=5.10
+ARG LINUX_UAPI_SHA256=dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43
+# These pin the deterministic `make headers_install` output as well as its
+# upstream source archive.  The runtime verifier repeats both checks, so an
+# image cannot merely validate a manifest it generated during the same build.
+ARG LINUX_UAPI_HEADER_COUNT=909
+ARG LINUX_UAPI_HEADER_MANIFEST_SHA256=6bed459d713bc462619b7b5d79090faff2c63540814d5a8401397b49723df4f3
+# kache 1.0.0 (same version as the x86 pin); the x86_64 artifact cannot run on
+# aarch64. URL and archive sha256 pinned here.
+ARG KACHE_AARCH64_SOURCE=https://github.com/kunobi-ninja/kache/releases/download/v1.0.0/kache-aarch64-unknown-linux-musl.tar.gz
+ARG KACHE_AARCH64_SHA256=88abd848be7d300d4e30b8510ebdc45990dae3f96b6591e3498209639cf34701
+
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    RUSTC_WRAPPER=/usr/local/bin/kache \
+    KACHE_CONFIG=/dev/null \
+    KACHE_HOST_CONFIG="" \
+    KACHE_LOCAL_ONLY=1 \
+    KACHE_CACHE_DIR=/workspace/.work/aarch64/kache \
+    KACHE_AUTO_CLEAN_ORPHANED_TARGETS=0 \
+    KACHE_AUTO_CLEAN_UNUSED_UNITS_DAYS=0 \
+    KACHE_AUTO_SHARE_TARGET_FILES=0 \
+    KACHE_SEED_NEW_TARGETS=0 \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-aarch64-mold-gcc \
+    PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:${PATH}
+
+# Native runtime suites use this image's compiler and inspection tools.
+# Its pinned musl tree is an oracle-only
+# input: it cannot select a crabc libc artifact, runtime, sysroot, or allocator
+# profile.
+RUN test "$(uname -m)" = "aarch64" \
+    && apk add --no-cache \
+        bash \
+        binutils \
+        build-base \
+        clang \
+        ca-certificates \
+        coreutils \
+        curl \
+        git \
+        perf \
+        python3 \
+        mold \
+        rsync \
+        rustup \
+        strace \
+        tar \
+        xz \
+    # Alpine packages the bootstrap binary as rustup-init rather than rustup.
+    && RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' /tmp/rust-toolchain.toml)" \
+    && test -n "${RUST_TOOLCHAIN}" \
+    && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+    && rustup target add "${RUST_TARGET}" \
+    # Match rust-toolchain.toml so Cargo never mutates an ephemeral test
+    # container while resolving the workspace toolchain declaration.
+    && rustup component add rust-src llvm-tools
+
+COPY compat/upstreams.toml /tmp/upstreams.toml
+COPY docker/install-native-build-tools.py /tmp/install-native-build-tools.py
+COPY docker/aarch64-mold-gcc /usr/local/bin/crabc-aarch64-mold-gcc
+RUN python3 -B /tmp/install-native-build-tools.py \
+        --source "${KACHE_AARCH64_SOURCE}" \
+        --sha256 "${KACHE_AARCH64_SHA256}" \
+    && chmod 0755 /usr/local/bin/crabc-aarch64-mold-gcc
+COPY compat/x86_64/musl_oracle.py /tmp/musl_oracle.py
+RUN set -eu \
+    && MUSL_VERSION="$(python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml version)" \
+    && python3 -B /tmp/musl_oracle.py --pins /tmp/upstreams.toml --architecture aarch64 acquire "/tmp/musl-${MUSL_VERSION}" \
+    && cd "/tmp/musl-${MUSL_VERSION}" \
+    && CC=/usr/local/bin/crabc-aarch64-mold-gcc ./configure \
+        --prefix="/opt/musl-${MUSL_VERSION}" \
+        --syslibdir="/opt/musl-${MUSL_VERSION}/lib" \
+    && make -s -j"$(getconf _NPROCESSORS_ONLN)" \
+    && make -s install \
+    && sh tools/musl-gcc.specs.sh \
+        "/opt/musl-${MUSL_VERSION}/include" \
+        "/opt/musl-${MUSL_VERSION}/lib" \
+        "/opt/musl-${MUSL_VERSION}/lib/ld-musl-aarch64.so.1" \
+        > "/opt/musl-${MUSL_VERSION}/lib/musl-gcc.specs" \
+    && test -f "/opt/musl-${MUSL_VERSION}/lib/libc.so" \
+    && test -f "/opt/musl-${MUSL_VERSION}/lib/ld-musl-aarch64.so.1" \
+    && test "$(readlink -f "/opt/musl-${MUSL_VERSION}/lib/ld-musl-aarch64.so.1")" = \
+        "/opt/musl-${MUSL_VERSION}/lib/libc.so" \
+    # Alpine's GCC specs need this support archive even when the selected
+    # runtime is the pinned musl tree. Keeping it beneath /opt preserves the
+    # reference tree's library priority over the bootstrap system libc.
+    && cp /usr/lib/libssp_nonshared.a "/opt/musl-${MUSL_VERSION}/lib/" \
+    && cp .crabc-oracle "/opt/musl-${MUSL_VERSION}/.crabc-oracle" \
+    && sha256sum "/opt/musl-${MUSL_VERSION}/lib/musl-gcc.specs" \
+        > "/opt/musl-${MUSL_VERSION}/.crabc-musl-gcc-specs.sha256" \
+    && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
+
+COPY --from=musl-clang /opt/musl-clang-1.2.6 /opt/musl-clang-1.2.6
+COPY docker/aarch64-musl-oracle-gcc /usr/local/bin/crabc-aarch64-musl-gcc
+RUN chmod 0755 /usr/local/bin/crabc-aarch64-musl-gcc
+
+# Same parity manifest as x86, with aarch64 tool paths and a distinct format
+# name so the two image manifests never collide.
+RUN set -eu \
+    && mkdir -p /usr/local/share \
+    && { \
+        printf '%s\n' 'format=crabc-aarch64-performance-image-tools/v2'; \
+        for tool in /usr/local/bin/crabc-aarch64-musl-gcc /usr/bin/readelf /usr/bin/strace \
+            /opt/musl-1.2.6/lib/ld-musl-aarch64.so.1 /opt/musl-1.2.6/lib/libc.so; do \
+            printf '%s %s\n' "${tool}" "$(sha256sum "${tool}" | awk '{print $1}')"; \
+        done; \
+    } > /usr/local/share/crabc-aarch64-performance-image-tools.manifest \
+    && chmod 0444 /usr/local/share/crabc-aarch64-performance-image-tools.manifest
+
+# Public libc headers that include Linux UAPI declarations need a declared
+# target input.  Do not borrow Alpine's ambient /usr/include tree: export the
+# exact Linux 5.10 arm64 UAPI tree into its own hashed prefix and let header
+# evidence name that prefix explicitly.  This is a kernel-header input only;
+# it neither supplies a libc implementation nor changes the pinned musl
+# oracle.
+#
+# kernel.org's large release archives occasionally reset an HTTP/2 stream in
+# container builders. Resume the same checksum-pinned object over HTTP/1.1
+# rather than falling back to an ambient distro package.
+RUN set -eu \
+    && linux_uapi_root="/opt/linux-${LINUX_UAPI_VERSION}-uapi" \
+    && curl --fail --location --http1.1 --continue-at - --retry 5 \
+        --retry-all-errors --retry-delay 2 --output /tmp/linux-uapi.tar.xz \
+        "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-${LINUX_UAPI_VERSION}.tar.xz" \
+    && echo "${LINUX_UAPI_SHA256}  /tmp/linux-uapi.tar.xz" | sha256sum -c - \
+    && tar -C /tmp -xJf /tmp/linux-uapi.tar.xz \
+    && make -C "/tmp/linux-${LINUX_UAPI_VERSION}" ARCH=arm64 headers_install \
+        INSTALL_HDR_PATH="${linux_uapi_root}" \
+    && test -f "${linux_uapi_root}/include/linux/kd.h" \
+    && test -f "${linux_uapi_root}/include/linux/soundcard.h" \
+    && test -f "${linux_uapi_root}/include/linux/vt.h" \
+    && (cd "${linux_uapi_root}/include" \
+        && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) \
+        > "${linux_uapi_root}/.crabc-linux-uapi.headers.sha256" \
+    && rm -rf /tmp/linux-uapi.tar.xz "/tmp/linux-${LINUX_UAPI_VERSION}"
+
+# Check the fixed derived export identity in a separate ordinary Docker layer.
+# This intentionally needs no BuildKit-only cache mount: scripts/dev-x86_64.sh
+# builds the x86 image with ordinary `docker build`; the A4 harness will match.
+RUN set -eu \
+    && linux_uapi_root="/opt/linux-${LINUX_UAPI_VERSION}-uapi" \
+    && observed_header_count="$(wc -l < "${linux_uapi_root}/.crabc-linux-uapi.headers.sha256" | tr -d '[:space:]')" \
+    && test "${observed_header_count}" = "${LINUX_UAPI_HEADER_COUNT}" \
+    && echo "${LINUX_UAPI_HEADER_MANIFEST_SHA256}  ${linux_uapi_root}/.crabc-linux-uapi.headers.sha256" | sha256sum -c - \
+    && printf '%s\n' \
+        'format=crabc-linux-uapi-v1' \
+        "version=${LINUX_UAPI_VERSION}" \
+        "source_sha256=${LINUX_UAPI_SHA256}" \
+        'architecture=aarch64' \
+        'install_arch=arm64' \
+        "header_count=${LINUX_UAPI_HEADER_COUNT}" \
+        "header_manifest_sha256=${LINUX_UAPI_HEADER_MANIFEST_SHA256}" \
+        > "${linux_uapi_root}/.crabc-linux-uapi"
+
+WORKDIR /workspace
+CMD ["bash"]

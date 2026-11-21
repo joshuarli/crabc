@@ -4,11 +4,9 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_posix_timers_probe.c"
 readonly tls_source="$ROOT/compat/x86_64/owned_posix_timers_tls.c"
 readonly timer_evidence="$ROOT/compat/x86_64/owned_posix_timers_evidence.py"
-readonly interpreter=/lib/ld-crabc-x86_64.so.1
 declare -a link_identity_records=()
 application_compile_identity=''
 
@@ -44,7 +42,6 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
-. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(python3 -B -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$provided_static")"
 fi
@@ -69,6 +66,10 @@ for product, name in ((static_product, 'static'), (dynamic_product, 'dynamic')):
         raise SystemExit('posix-timers static product must be a physical checkout .work directory')
 PY
 
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
+readonly interpreter="/lib/ld-crabc-$arch.so.1"
+. "$(dirname "${BASH_SOURCE[0]}")/native_build_environment.sh"
 work="$(mktemp -d "$TMPDIR/owned-posix-timers.XXXXXX")"
 readonly work
 finish() { chmod -R a+rX "$work"; printf 'evidence: %s\n' "$work"; }

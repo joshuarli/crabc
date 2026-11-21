@@ -227,7 +227,7 @@ impl CleanupDescriptors {
     fn new() -> Self { Self { fds: core::array::from_fn(|_| Cell::new(-1)) } }
     fn close(&self, index: usize) {
         let fd = self.fds[index].replace(-1);
-        if fd >= 0 { unsafe { raw_syscall::syscall1(3, fd as i64); } }
+        if fd >= 0 { unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd as i64); } }
     }
 }
 
@@ -297,7 +297,7 @@ impl Batch<'_> {
         // Linux 5.10 supplies CLOCK_MONOTONIC.  The upstream ENOSYS realtime
         // fallback is intentionally omitted rather than adding pre-baseline
         // kernel behavior to this selected Linux runtime.
-        let result = unsafe { raw_syscall::syscall2(228, 1, &mut time as *mut Timespec as i64) };
+        let result = unsafe { raw_syscall::syscall2(raw_syscall::SYS_CLOCK_GETTIME, 1, &mut time as *mut Timespec as i64) };
         if self.record(result).is_err() { return 0; }
         (time.seconds as u64).wrapping_mul(1000).wrapping_add((time.nanoseconds / 1_000_000) as u64)
     }
@@ -322,7 +322,7 @@ impl Batch<'_> {
         let query = unsafe { self.slots[slot].query() };
         let address = self.servers[server];
         // Source ignores every UDP send result, including MASKED ECANCELED.
-        let _ = unsafe { self.cp(44, [self.pfd[self.count].fd as i64, query.as_ptr() as i64,
+        let _ = unsafe { self.cp(raw_syscall::SYS_SENDTO, [self.pfd[self.count].fd as i64, query.as_ptr() as i64,
             query.len() as i64, MSG_NOSIGNAL, address.bytes.as_ptr() as i64,
             address.length as i64]) };
     }
@@ -352,7 +352,7 @@ impl Batch<'_> {
         unsafe { pthread_cancel::pthread_setcancelstate(DISABLE, ptr::null_mut()); }
         self.resume_state = DISABLE;
         let address = self.servers[server];
-        let fd = match self.raw(41, [self.socket_family as i64, SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0,0,0,0]) {
+        let fd = match self.raw(raw_syscall::SYS_SOCKET, [self.socket_family as i64, SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0,0,0,0]) {
             Ok(fd) => fd as c_int,
             Err(_) => {
                 unsafe { pthread_cancel::pthread_setcancelstate(self.entry_state, ptr::null_mut()); }
@@ -364,7 +364,7 @@ impl Batch<'_> {
         self.pfd[slot] = PollFd { fd, events: POLLOUT, revents: 0 };
         let enabled: c_int = 1;
         let mut started = false;
-        if self.raw(54, [fd as i64, 6, TCP_FASTOPEN_CONNECT, &enabled as *const c_int as i64,
+        if self.raw(raw_syscall::SYS_SETSOCKOPT, [fd as i64, 6, TCP_FASTOPEN_CONNECT, &enabled as *const c_int as i64,
             core::mem::size_of::<c_int>() as i64, 0]).is_ok() {
             let query_pointer = self.slots[slot].query;
             let query_length = self.slots[slot].query_length;
@@ -374,7 +374,7 @@ impl Batch<'_> {
                 Iovec { base: query.as_ptr().cast_mut(), length: query.len() }];
             let mut message = Message::connected(&iovecs);
             message.name = address.bytes.as_ptr(); message.name_length = address.length;
-            match self.raw(46, [fd as i64, &message as *const Message as i64, MSG_FASTOPEN|MSG_NOSIGNAL,0,0,0]) {
+            match self.raw(raw_syscall::SYS_SENDMSG, [fd as i64, &message as *const Message as i64, MSG_FASTOPEN|MSG_NOSIGNAL,0,0,0]) {
                 Ok(length) => {
                     self.slots[slot].qpos = length;
                     if length == query_length + 2 { self.pfd[slot].events = POLLIN; }
@@ -385,7 +385,7 @@ impl Batch<'_> {
             }
         }
         if !started {
-            match self.raw(42, [fd as i64, address.bytes.as_ptr() as i64, address.length as i64,0,0,0]) {
+            match self.raw(raw_syscall::SYS_CONNECT, [fd as i64, address.bytes.as_ptr() as i64, address.length as i64,0,0,0]) {
                 Ok(_) => started = true,
                 Err(error) if error == Errno::INPROGRESS => started = true,
                 Err(_) => (),
@@ -409,7 +409,7 @@ impl Batch<'_> {
             // Unlike the strict core, input flags are zero.  The copied prefix
             // is bounded by the output buffer even when the kernel reports
             // MSG_TRUNC, and only then can selected C fall back to TCP.
-            let received = unsafe { self.cp(47, [self.pfd[self.count].fd as i64,
+            let received = unsafe { self.cp(raw_syscall::SYS_RECVMSG, [self.pfd[self.count].fd as i64,
                 &mut message as *mut Message as i64, 0,0,0,0]) };
             let received = match received { Cp::Complete(length) => length, Cp::Failed(_) | Cp::Masked => break };
             if received < 4 || received > length { continue; }
@@ -466,7 +466,7 @@ impl Batch<'_> {
             1
         };
         let message = Message::connected(&iovecs[..count]);
-        match unsafe { self.cp(46, [self.pfd[slot].fd as i64, &message as *const Message as i64, MSG_NOSIGNAL,0,0,0]) } {
+        match unsafe { self.cp(raw_syscall::SYS_SENDMSG, [self.pfd[slot].fd as i64, &message as *const Message as i64, MSG_NOSIGNAL,0,0,0]) } {
             Cp::Complete(length) => {
                 self.slots[slot].qpos += length;
                 if self.slots[slot].qpos == query_length+2 { self.pfd[slot].events = POLLIN; }
@@ -493,7 +493,7 @@ impl Batch<'_> {
             1
         };
         let mut message = Message::connected(&iovecs[..count]);
-        let received = match unsafe { self.cp(47, [self.pfd[slot].fd as i64, &mut message as *mut Message as i64, 0,0,0,0]) } {
+        let received = match unsafe { self.cp(raw_syscall::SYS_RECVMSG, [self.pfd[slot].fd as i64, &mut message as *mut Message as i64, 0,0,0,0]) } {
             Cp::Complete(length) if length != 0 => length,
             Cp::Complete(_) | Cp::Failed(_) | Cp::Masked => return false,
         };
@@ -530,7 +530,13 @@ impl Batch<'_> {
             }
             let wait = previous.wrapping_add(interval).wrapping_sub(time).min(c_int::MAX as u64) as i64;
             let pollfds = self.pfd.as_mut_ptr();
-            let polled = unsafe { self.cp(7, [pollfds as i64, (self.count+1) as i64, wait,0,0,0]) };
+            #[cfg(target_arch = "x86_64")]
+            let polled = unsafe { self.cp(raw_syscall::SYS_POLL, [pollfds as i64, (self.count+1) as i64, wait,0,0,0]) };
+            #[cfg(target_arch = "aarch64")]
+            let polled = {
+                let deadline = Timespec { seconds: wait / 1000, nanoseconds: (wait % 1000) * 1_000_000 };
+                unsafe { self.cp(raw_syscall::SYS_PPOLL, [pollfds as i64, (self.count+1) as i64, &deadline as *const Timespec as i64,0,0,0]) }
+            };
             let positive = matches!(polled, Cp::Complete(count) if count != 0);
             if !positive { time = self.time_ms(); continue; }
             let events: [i16; 3] = core::array::from_fn(|index| self.pfd[index].revents);
@@ -621,7 +627,7 @@ pub(super) unsafe fn exchange(config: &CResolverBatchConfig, requests: BatchRequ
     unsafe { pthread_cancel::pthread_setcancelstate(DISABLE, &mut entry_state); }
     let descriptors = core::pin::pin!(CleanupDescriptors::new());
     let descriptors = descriptors.as_ref().get_ref();
-    let mut open = |family: c_int| unsafe { raw_syscall::syscall3(41, family as i64, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0) };
+    let mut open = |family: c_int| unsafe { raw_syscall::syscall3(raw_syscall::SYS_SOCKET, family as i64, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0) };
     let mut fd = open(family);
     if fd < 0 && family == AF_INET6 && fd == -(Errno::AFNOSUPPORT.raw() as i64) {
         let Some(first_v4) = config.nameservers[..server_count].iter().position(|server| server.family as c_int == AF_INET) else {
@@ -640,13 +646,13 @@ pub(super) unsafe fn exchange(config: &CResolverBatchConfig, requests: BatchRequ
     }
     if family == AF_INET6 {
         let disabled: c_int = 0;
-        let _ = unsafe { raw_syscall::syscall5(54, fd, 41, IPV6_V6ONLY, &disabled as *const c_int as i64, core::mem::size_of::<c_int>() as i64) };
+        let _ = unsafe { raw_syscall::syscall5(raw_syscall::SYS_SETSOCKOPT, fd, 41, IPV6_V6ONLY, &disabled as *const c_int as i64, core::mem::size_of::<c_int>() as i64) };
     }
     let mut bound = [0u8;28]; bound[..2].copy_from_slice(&(family as u16).to_ne_bytes());
     let bound_length = if family == AF_INET6 { 28 } else { 16 };
-    let bound_result = unsafe { raw_syscall::syscall3(49, fd, bound.as_ptr() as i64, bound_length) };
+    let bound_result = unsafe { raw_syscall::syscall3(raw_syscall::SYS_BIND, fd, bound.as_ptr() as i64, bound_length) };
     if bound_result < 0 {
-        unsafe { raw_syscall::syscall1(3, fd); pthread_cancel::pthread_setcancelstate(entry_state, ptr::null_mut()); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, fd); pthread_cancel::pthread_setcancelstate(entry_state, ptr::null_mut()); }
         let error = Errno::from_raw((-bound_result) as c_int).unwrap_or(Errno::IO);
         return BatchOutcome { result: Err(ExchangeError::Setup(error)), last_errno: None, masked_errno: None };
     }

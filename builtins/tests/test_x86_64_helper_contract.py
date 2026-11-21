@@ -83,6 +83,17 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
             definitions,
         )
 
+    def test_source_scan_excludes_only_aarch64_configured_definitions(self) -> None:
+        source = (
+            '#[cfg(target_arch = "aarch64")]\n#[no_mangle]\npub extern "C" fn __multc3(a: f128) -> ComplexQuad {}\n'
+            '#[no_mangle]\npub extern "C" fn __extra(a: u64) -> u64 {}\n'
+            '#[cfg(target_arch = "aarch64")]\nmod aarch64_complex;\n#[no_mangle]\npub extern "C" fn __after(a: u64) -> u64 {}\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "lib.rs"
+            path.write_text(source)
+            self.assertEqual(set(BUILDER.native_source_definitions(path)), {"__extra", "__after"})
+
     def test_builder_rejects_an_extra_public_archive_definition(self) -> None:
         with self.assertRaisesRegex(BUILDER.BuildError, "unexpected"):
             BUILDER.require_exact_defined_symbols(set(BUILDER.REQUIRED_SYMBOLS) | {"unexpected_helper"})

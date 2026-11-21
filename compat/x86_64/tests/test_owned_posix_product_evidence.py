@@ -205,6 +205,41 @@ def incongruent_dynamic_elf() -> bytes:
     return bytes(data)
 
 
+class SourcePinnedProducerToolsTests(unittest.TestCase):
+    def test_arm_linker_receipts_require_the_source_pin_without_live_tools(self) -> None:
+        expected = {"path": "/usr/bin/mold", "sha256": "a" * 64}
+        with mock.patch.object(evidence, "ARCH", "aarch64"), \
+             mock.patch.object(evidence.native_build_tools, "MOLD", Path(expected["path"])), \
+             mock.patch.object(evidence, "source_native_compiler_tool_records", return_value={"linker": expected}), \
+             mock.patch.object(evidence, "_physical_executable", side_effect=AssertionError("live tool accessed")), \
+             mock.patch.object(evidence, "_recorded_file", side_effect=AssertionError("live tool accessed")):
+            self.assertEqual(evidence._check_linker(expected, ROOT / "receipt"), expected["path"])
+            self.assertEqual(evidence._retained_linker(expected, expected), expected["path"])
+            forged = {**expected, "sha256": "b" * 64}
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence._check_linker(forged, ROOT / "receipt")
+            with self.assertRaises(evidence.ProductEvidenceError):
+                evidence._retained_linker(forged, forged)
+
+    def test_retained_tools_use_source_pins_without_live_image_tools(self) -> None:
+        for arch in ("x86_64", "aarch64"):
+            with self.subTest(arch=arch), \
+                 mock.patch.object(evidence, "TARGET", f"{arch}-unknown-linux-musl"), \
+                 mock.patch.object(evidence, "SOURCE_NATIVE_IMAGE_MANIFEST", ROOT / "compat/x86_64" / (
+                     "owned_resolver_alias_image_inputs_aarch64.json" if arch == "aarch64"
+                     else "owned_resolver_alias_image_inputs.json")), \
+                 mock.patch.object(evidence.native_build_tools, "CARGO_LINKER", Path(f"/usr/local/bin/crabc-{arch}-mold-gcc")), \
+                 mock.patch.object(evidence.native_rustc, "compiler_path", side_effect=AssertionError("live compiler accessed")), \
+                 mock.patch.object(evidence, "_physical_executable", side_effect=AssertionError("live tool accessed")):
+                expected = evidence.source_native_compiler_tool_records()
+                self.assertEqual(evidence.validate_native_compiler_tool_records(expected), expected)
+                for name in expected:
+                    altered = copy.deepcopy(expected)
+                    altered[name]["sha256"] = "0" * 64
+                    with self.subTest(tool=name), self.assertRaises(evidence.ProductEvidenceError):
+                        evidence.validate_native_compiler_tool_records(altered)
+
+
 class OwnedPosixProductEvidenceTests(unittest.TestCase):
     """Use files with injected ELF inspections; this is not a native build test."""
 
@@ -293,7 +328,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def test_retained_elf_reader_parses_rehashed_dynamic_metadata_without_a_host_tool(self) -> None:
         path = self.put("shared", sealed_shared_elf("libfixture.so"))
         with mock.patch.object(evidence.subprocess, "run", side_effect=AssertionError("host ELF tool ran")):
-            facts = evidence.retained_elf_facts(path)
+            facts = evidence.retained_elf_facts(path, machine_id=62)
         self.assertEqual(
             facts,
             {"type": 3, "machine": 62, "interpreters": ["/lib/ld-crabc-x86_64.so.1"],
@@ -301,9 +336,18 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
              "sonames": ["libfixture.so"], "textrel": False},
         )
 
+    def test_retained_elf_reader_defaults_to_the_native_machine(self) -> None:
+        native, foreign = (183, 62) if evidence.ARCH == "aarch64" else (62, 183)
+        image = bytearray(sealed_shared_elf("libfixture.so"))
+        struct.pack_into("<H", image, 18, native)
+        self.assertEqual(evidence.retained_elf_facts(self.put("native", bytes(image)))["machine"], native)
+        struct.pack_into("<H", image, 18, foreign)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "architecture or header"):
+            evidence.retained_elf_facts(self.put("foreign", bytes(image)))
+
     def test_retained_elf_reader_uses_pt_dynamic_over_a_forged_dynamic_section(self) -> None:
         path = self.put("forged-section", loader_dynamic_elf(flags=4))
-        facts = evidence.retained_elf_facts(path)
+        facts = evidence.retained_elf_facts(path, machine_id=62)
         self.assertEqual(facts["needed"], ["libforeign.so"])
         self.assertEqual(facts["rpaths"], ["/bad"])
         self.assertEqual(facts["runpaths"], [])
@@ -314,7 +358,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
     def test_retained_elf_reader_uses_pt_dynamic_without_section_headers(self) -> None:
         path = self.put("sectionless", loader_dynamic_elf(section_headers=False, interpreter=True))
-        facts = evidence.retained_elf_facts(path)
+        facts = evidence.retained_elf_facts(path, machine_id=62)
         self.assertEqual(facts["needed"], ["libforeign.so"])
         self.assertEqual(facts["rpaths"], ["/bad"])
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "foreign DT_NEEDED"):
@@ -326,11 +370,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             ("flags", loader_dynamic_elf(flags=4)),
         ):
             with self.subTest(name=name):
-                self.assertTrue(evidence.retained_elf_facts(self.put(name, payload))["textrel"])
+                self.assertTrue(evidence.retained_elf_facts(self.put(name, payload), machine_id=62)["textrel"])
 
     def test_retained_elf_reader_rejects_nonzero_dynamic_entries_after_dt_null(self) -> None:
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "terminator"):
-            evidence.retained_elf_facts(self.put("post-null", loader_dynamic_elf(post_null=True)))
+            evidence.retained_elf_facts(self.put("post-null", loader_dynamic_elf(post_null=True)), machine_id=62)
 
     def test_retained_elf_reader_rejects_missing_or_duplicate_pt_dynamic(self) -> None:
         for name, count in (("missing", 0), ("duplicate", 2)):
@@ -341,7 +385,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                         evidence._audit_retained_elf(path, "pie")
                 else:
                     with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC"):
-                        evidence.retained_elf_facts(path)
+                        evidence.retained_elf_facts(path, machine_id=62)
 
     def test_retained_elf_reader_rejects_dynamic_string_tables_without_one_load_mapping(self) -> None:
         cases = {
@@ -350,17 +394,17 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         }
         for name, payload in cases.items():
             with self.subTest(name=name), self.assertRaisesRegex(evidence.ProductEvidenceError, "string table"):
-                evidence.retained_elf_facts(self.put(name, payload))
+                evidence.retained_elf_facts(self.put(name, payload), machine_id=62)
 
     def test_retained_elf_reader_rejects_pt_dynamic_offset_not_mapped_from_its_virtual_address(self) -> None:
         path = self.put("incongruent-dynamic", incongruent_dynamic_elf())
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC.*mapping"):
-            evidence.retained_elf_facts(path)
+            evidence.retained_elf_facts(path, machine_id=62)
 
     def test_retained_static_pie_allows_self_relocation_dynamic_metadata(self) -> None:
         path = self.put("static-pie-self-relocation", loader_dynamic_elf(self_relocation_only=True))
         self.assertEqual(
-            evidence.retained_elf_facts(path),
+            evidence.retained_elf_facts(path, machine_id=62),
             {"type": 3, "machine": 62, "interpreters": [], "dynamic": True,
              "needed": [], "runpaths": [], "rpaths": [], "sonames": [], "textrel": False},
         )
@@ -468,6 +512,23 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 self.write_json(manifest_path, manifest)
                 with self.assertRaises(evidence.ProductEvidenceError):
                     evidence._validate_static_product(self.static)
+
+    def test_arm_static_links_do_not_require_a_dynamic_profile(self) -> None:
+        receipt = self.put("static-link.json", b"{}")
+        manifest = self.static / "share/crabc/manifest.json"
+        with (mock.patch.object(evidence, "ARCH", "aarch64"),
+              mock.patch.object(evidence, "_validate_static_product", return_value=(manifest, {})),
+              mock.patch.object(evidence, "_validate_static_link_mode"),
+              mock.patch.object(evidence, "_validate_static_receipt", return_value="digest"),
+              mock.patch.object(evidence, "_validate_retained_static_receipt", return_value="digest"),
+              mock.patch.object(evidence, "_audit_elf") as audit,
+              mock.patch.object(evidence, "_audit_retained_elf") as retained_audit):
+            for linkage in ("static", "static-pie"):
+                self.assertEqual(evidence.validate_link(self.static, self.workload, self.executable, receipt, linkage)["linkage"], linkage)
+                self.assertEqual(evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                                                  self.executable, receipt, linkage, {})["linkage"], linkage)
+            self.assertEqual(audit.call_count, 2)
+            self.assertEqual(retained_audit.call_count, 2)
 
     def test_hardened_static_product_rejects_non_pie_link_evidence(self) -> None:
         path = self.static / "share/crabc/crt.provenance.json"
@@ -670,6 +731,62 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "trace": {"path": str(trace_path), "sha256": digest(trace_path)},
         })
         return receipt
+
+    def test_retained_static_link_uses_product_machine(self) -> None:
+        receipt = self.static_receipt()
+        manifest = self.static / "share/crabc/manifest.json"
+        value = json.loads(manifest.read_text())
+        value["target"] = "aarch64-unknown-linux-musl"
+        self.write_json(manifest, value)
+        image = bytearray(sealed_elf("static"))
+        struct.pack_into("<H", image, 18, 183)
+        self.executable.write_bytes(image)
+        with mock.patch.object(evidence, "_validate_static_product", return_value=(manifest, {})), \
+                mock.patch.object(evidence, "_validate_static_link_mode"), \
+                mock.patch.object(evidence, "_validate_retained_static_receipt", return_value="a" * 64):
+            evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                            self.executable, receipt, "static", {})
+            struct.pack_into("<H", image, 18, 62)
+            self.executable.write_bytes(image)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "architecture or header"):
+                evidence.validate_retained_link(self.root, "/workspace", self.static, self.workload,
+                                                self.executable, receipt, "static", {})
+
+    def test_arm_static_link_plan_binds_archive_group(self) -> None:
+        import crabc_cc_static
+        with mock.patch.object(evidence, "ARCH", "aarch64"):
+            plan = evidence._static_link_plan(self.static, "static")
+            self.assertEqual(plan, crabc_cc_static.owned_link_plan(self.static, crabc_cc_static.STATIC_ET_EXEC,
+                                                                   architecture="aarch64"))
+            direct, libc, conditional = evidence._declared_static_inputs(plan, str(self.workload))
+            self.assertNotIn("--start-group", direct)
+            self.assertNotIn("--end-group", direct)
+            self.assertEqual(libc, str(self.static / "usr/lib/libc.a"))
+            self.assertEqual(conditional, {str(self.static / "usr/lib/libcrabc-builtins.a")})
+
+    def test_arm_non_pie_receipt_binds_attachment_object(self) -> None:
+        receipt = self.dynamic_receipt("non-pie")
+        record = json.loads(receipt.read_text())
+        record["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        record["resolved_linker"] = dict(self.compiler_tools["linker"])
+        command = record["link_command"]
+        command[command.index("--dynamic-linker") + 1] = "/lib/ld-crabc-aarch64.so.1"
+        attach = str(self.dynamic / "usr/lib/crabc-dynamic-attach.o")
+        crti = str(self.dynamic / "usr/lib/crti.o")
+        attach_index, crti_index = command.index(attach), command.index(crti)
+        command[attach_index], command[crti_index] = crti, attach
+        self.write_json(receipt, record)
+        manifest = self.dynamic / "share/crabc/manifest.json"
+        with mock.patch.object(evidence, "_dynamic_profile", return_value=evidence.NativeRuntimeProfile.COMPATIBILITY), \
+                mock.patch.object(evidence, "ARCH", "aarch64"), \
+                mock.patch.object(evidence, "DYNAMIC_PRODUCT_FORMAT", "crabc-aarch64-owned-dynamic-sysroot-v1"):
+            evidence._validate_dynamic_receipt_for_workloads(self.dynamic, (self.workload,), self.executable,
+                                                             receipt, "non-pie", manifest)
+            record["owned_runtime_inputs"].remove("usr/lib/crabc-dynamic-attach.o")
+            self.write_json(receipt, record)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "owned runtime roster differs"):
+                evidence._validate_dynamic_receipt_for_workloads(self.dynamic, (self.workload,), self.executable,
+                                                                 receipt, "non-pie", manifest)
 
     def static_plan(self, crt: str, pie: bool) -> list[str]:
         library = self.static / "usr/lib"
@@ -1265,6 +1382,17 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.write_json(path, manifest)
         with self.assertRaises(evidence.ProductEvidenceError):
             evidence._validate_dynamic_product(product)
+
+    def test_arm_release_source_uses_materialization_state(self) -> None:
+        state = self.dynamic / "share/crabc/dynamic-product-state.json"
+        self.write_json(state, {"schema": "crabc.x86_64-owned-dynamic-materialization/v1", "source_sha256": "a" * 64})
+        manifest = self.dynamic / "share/crabc/manifest.json"
+        record = {"format": "crabc-aarch64-owned-dynamic-sysroot-v1", "build_profile": "release"}
+        with (mock.patch.object(evidence, "_validate_dynamic_product"),
+              mock.patch.object(evidence, "_product_manifest", return_value=(manifest, record, None))):
+            evidence.validate_dynamic_product_source(self.dynamic, "a" * 64)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "source differs"):
+                evidence.validate_dynamic_product_source(self.dynamic, "b" * 64)
 
     def test_release_product_source_uses_sealed_materialization_state(self) -> None:
         state_path = self.dynamic / "share/crabc/dynamic-product-state.json"

@@ -27,6 +27,7 @@ class HeaderDeclarationInventoryDispatcherTests(unittest.TestCase):
         shutil.copy2(ROOT / 'scripts/dev-x86_64.sh', scripts / 'dev-x86_64.sh')
         (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
+        shutil.copy2(ROOT / "compat/x86_64/native_arch.py", self.checkout / "compat/x86_64/native_arch.py")
         self.work = self.checkout / '.work/x86_64'
         self.evidence = self.work / 'header-declaration-inventory'
         self.evidence.mkdir(parents=True)

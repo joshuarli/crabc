@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use crabc_rs::{fs, io, pipe, Errno};
 
@@ -18,17 +17,32 @@ fn x86_64_fcntl_status_flags_match_the_native_abi() {
     assert_eq!(fs::OFlags::NONBLOCK.bits(), 0x0000_0800);
     assert_eq!(fs::OFlags::DSYNC.bits(), 0x0000_1000);
     assert_eq!(fs::OFlags::ASYNC.bits(), 0x0000_2000);
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(fs::OFlags::DIRECT.bits(), 0x0000_4000);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(fs::OFlags::DIRECT.bits(), 0x0001_0000);
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(fs::OFlags::LARGEFILE.bits(), 0x0000_8000);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(fs::OFlags::LARGEFILE.bits(), 0x0002_0000);
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(fs::OFlags::DIRECTORY.bits(), 0x0001_0000);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(fs::OFlags::DIRECTORY.bits(), 0x0000_4000);
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(fs::OFlags::NOFOLLOW.bits(), 0x0002_0000);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(fs::OFlags::NOFOLLOW.bits(), 0x0000_8000);
     assert_eq!(fs::OFlags::NOATIME.bits(), 0x0004_0000);
     assert_eq!(fs::OFlags::CLOEXEC.bits(), 0x0008_0000);
     assert_eq!(fs::OFlags::SYNC.bits(), 0x0010_1000);
     assert_eq!(fs::OFlags::FSYNC, fs::OFlags::SYNC);
     assert_eq!(fs::OFlags::RSYNC, fs::OFlags::SYNC);
     assert_eq!(fs::OFlags::PATH.bits(), 0x0020_0000);
+    #[cfg(target_arch = "x86_64")]
     assert_eq!(fs::OFlags::TMPFILE.bits(), 0x0041_0000);
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(fs::OFlags::TMPFILE.bits(), 0x0040_4000);
 }
 
 #[test]

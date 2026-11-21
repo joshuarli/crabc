@@ -50,7 +50,7 @@ import qualification_gates as GATES  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 FAMILY = "compat.loader-corpus"
 PASS_MARKER = "x86 compat.loader-corpus loader/corpus roster: PASS (non-promoting)"
-WORK_PARENT = ROOT / ".work/x86_64/loader-corpus-qualification"
+WORK_PARENT = ROOT / f".work/{PRODUCT.ARCH['work_name']}/loader-corpus-qualification"
 FROZEN_BASELINE = ROOT / "compat/x86_64/aarch64_frozen_baseline.json"
 CORPUS_WORKLOADS = "compat/corpus/manifest.toml"
 MUSL_ROOT = Path("/opt/musl-1.2.6")

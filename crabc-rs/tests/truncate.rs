@@ -1,8 +1,5 @@
 use crabc_rs::fs::{self, Mode, OFlags, SeekFrom};
 use crabc_rs::io;
-#[cfg(not(target_arch = "x86_64"))]
-use crabc_rs::path::Arg;
-#[cfg(target_arch = "x86_64")]
 use crabc_rs::fs::PathArg as Arg;
 use crabc_rs::{Errno, Result};
 

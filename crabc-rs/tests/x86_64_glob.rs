@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use std::fs;
 use std::os::unix::ffi::OsStrExt;

@@ -8,7 +8,8 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly PROFILE="$ROOT/compat/x86_64/owned_atomic_addressable_profile.py"
 
 fail() { printf 'owned atomic addressable profile: %s\n' "$*" >&2; exit 1; }
-[ "$(uname -sm)" = 'Linux x86_64' ] || fail 'requires native Linux/x86-64'
+[ "$(uname -s)" = Linux ] || fail 'requires native Linux'
+python3 -B "$ROOT/compat/x86_64/native_arch.py" >/dev/null
 [ -n "${TMPDIR:-}" ] || fail 'TMPDIR must be checkout-local'
 
 python3 -B - "$ROOT" "$TMPDIR" "${1:-}" <<'PY'

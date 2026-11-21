@@ -46,18 +46,18 @@ WORKLOAD_ROUTES = (
 )
 ROUTE_SOURCES = (
     ROOT / "crabc-core/src/error.rs",
-    ROOT / "crabc-core/src/event_x86_64.rs",
+    ROOT / "crabc-core/src/event.rs",
     ROOT / "crabc-core/src/fs.rs",
     ROOT / "crabc-core/src/io.rs",
     ROOT / "crabc-core/src/pipe.rs",
     ROOT / "crabc-core/src/process.rs",
-    ROOT / "crabc-core/src/syscall_x86_64.rs",
-    ROOT / "crabc-rs/src/event_x86_64.rs",
+    ROOT / "crabc-core/src/syscall.rs",
+    ROOT / "crabc-rs/src/event.rs",
     ROOT / "crabc-rs/src/fd.rs",
-    ROOT / "crabc-rs/src/fs_x86_64.rs",
+    ROOT / "crabc-rs/src/fs.rs",
     ROOT / "crabc-rs/src/io.rs",
     ROOT / "crabc-rs/src/pipe.rs",
-    ROOT / "crabc-rs/src/process_x86_64.rs",
+    ROOT / "crabc-rs/src/process.rs",
 )
 
 

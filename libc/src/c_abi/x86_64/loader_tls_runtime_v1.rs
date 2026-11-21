@@ -11,8 +11,12 @@
 //! TLS module, resize a DTV, install `%fs`, expose `__tls_get_addr`, or select
 //! a general dynamic libc/loader runtime.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 loader/libc TLS RuntimeV1 consumer requires little-endian Linux/x86-64");
+
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64_tls_layout.rs"]
+mod aarch64_tls_layout;
 
 use core::arch::{asm, global_asm};
 use core::ffi::c_int;
@@ -65,7 +69,7 @@ const _: () = {
 // The static-mode variant must contain no weak loader import at all. It is
 // used only by the no-PT_INTERP negative fixture and returns null before any
 // `%fs`-relative memory access can occur.
-#[cfg(crabc_loader_libc_tls_runtime_v1_static_mode)]
+#[cfg(all(target_arch = "x86_64", crabc_loader_libc_tls_runtime_v1_static_mode))]
 global_asm!(
     ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",@progbits",
     ".hidden __crabc_x86_loader_tls_runtime_v1_record",
@@ -77,11 +81,23 @@ global_asm!(
     ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
 );
 
+#[cfg(all(target_arch = "aarch64", crabc_loader_libc_tls_runtime_v1_static_mode))]
+global_asm!(
+    ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",%progbits",
+    ".hidden __crabc_x86_loader_tls_runtime_v1_record",
+    ".global __crabc_x86_loader_tls_runtime_v1_record",
+    ".type __crabc_x86_loader_tls_runtime_v1_record,%function",
+    "__crabc_x86_loader_tls_runtime_v1_record:",
+    "mov x0, xzr",
+    "ret",
+    ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
+);
+
 // The dynamic test keeps exactly one weak GOT import. The x86 loader
 // recognizes that record only for the main image and only for weak undefined
 // data; DSOs and strong/defined imports remain fail-closed in ldso before any
 // pointer reaches this consumer.
-#[cfg(not(crabc_loader_libc_tls_runtime_v1_static_mode))]
+#[cfg(all(target_arch = "x86_64", not(crabc_loader_libc_tls_runtime_v1_static_mode)))]
 global_asm!(
     ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_loader_tls_runtime_v1",
@@ -92,6 +108,19 @@ global_asm!(
     "mov rax, qword ptr [rip + __crabc_x86_64_loader_tls_runtime_v1@GOTPCREL]",
     "ret",
     ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
+);
+
+#[cfg(all(target_arch = "aarch64", not(crabc_loader_libc_tls_runtime_v1_static_mode)))]
+global_asm!(
+    ".section .text.__crabc_x86_loader_tls_runtime_v1_record,\"ax\",%progbits",
+    ".weak __crabc_x86_64_loader_tls_runtime_v1",
+    ".hidden __crabc_x86_loader_tls_runtime_v1_record",
+    ".global __crabc_x86_loader_tls_runtime_v1_record",
+    ".type __crabc_x86_loader_tls_runtime_v1_record,%function",
+    "__crabc_x86_loader_tls_runtime_v1_record:",
+    "adrp x0, :got:__crabc_x86_64_loader_tls_runtime_v1",
+    "ldr x0, [x0, :got_lo12:__crabc_x86_64_loader_tls_runtime_v1]",
+    "ret",
 );
 
 unsafe extern "C" {
@@ -166,7 +195,10 @@ unsafe fn validate_loader_tls_runtime_v1() -> Option<&'static LoaderLibcTlsRunti
 unsafe fn current_thread_pointer() -> Option<usize> {
     let thread_pointer: usize;
     unsafe {
+        #[cfg(target_arch = "x86_64")]
         asm!("mov {}, fs:[0]", out(reg) thread_pointer, options(nostack, readonly));
+        #[cfg(target_arch = "aarch64")]
+        asm!("mrs {}, tpidr_el0", out(reg) thread_pointer, options(nostack));
     }
     (thread_pointer != 0).then_some(thread_pointer)
 }
@@ -185,14 +217,21 @@ unsafe fn observe_validated_loader_tls(record: &LoaderLibcTlsRuntimeV1) -> bool 
     if thread_pointer != record.thread_pointer as usize {
         return false;
     }
-    let dtv_slot = match (record.thread_pointer as usize).checked_add(core::mem::size_of::<usize>()) {
+    #[cfg(target_arch = "x86_64")]
+    let slot = (record.thread_pointer as usize).checked_add(core::mem::size_of::<usize>());
+    #[cfg(target_arch = "aarch64")]
+    let slot = (record.thread_pointer as usize).checked_sub(aarch64_tls_layout::DTV_OFFSET_BELOW_TP);
+    let dtv_slot = match slot {
         Some(address) => address as *const usize,
         None => return false,
     };
     // SAFETY: `record` passed every metadata and alignment check, and the
     // loader's release publication occurs only after it has mapped this TCB
     // and DTV. These are the contract's exact `%fs:0` and `%fs:8` words.
+    #[cfg(target_arch = "x86_64")]
     let self_word = unsafe { core::ptr::read_volatile(record.thread_pointer.cast::<usize>()) };
+    #[cfg(target_arch = "aarch64")]
+    let self_word = thread_pointer;
     let dtv_word = unsafe { core::ptr::read_volatile(dtv_slot) };
     let dtv_count = unsafe { core::ptr::read_volatile(record.dtv) };
     self_word == thread_pointer

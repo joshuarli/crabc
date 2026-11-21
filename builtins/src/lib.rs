@@ -9,6 +9,7 @@
 //! helpers exported below.
 
 #![no_std]
+#![cfg_attr(target_arch = "aarch64", feature(f128))]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 // Rust has no binary80 scalar ABI. These reviewed assembly entries receive
@@ -109,6 +110,74 @@ fn multiply_complex_double(mut a: f64, mut b: f64, mut c: f64, mut d: f64) -> Co
         }
     }
     ComplexDouble { real, imaginary }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct ComplexQuad {
+    pub real: f128,
+    pub imaginary: f128,
+}
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64_complex;
+
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// LLVM compiler-rt 22.1.3 lib/builtins/multc3.c.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn __multc3(mut a: f128, mut b: f128, mut c: f128, mut d: f128) -> ComplexQuad {
+    let ac = a * c;
+    let bd = b * d;
+    let ad = a * d;
+    let bc = b * c;
+    let mut real = ac - bd;
+    let mut imaginary = ad + bc;
+    if real.is_nan() && imaginary.is_nan() {
+        let mut recalculate = false;
+        if a.is_infinite() || b.is_infinite() {
+            a = (if a.is_infinite() { 1.0_f128 } else { 0.0_f128 }).copysign(a);
+            b = (if b.is_infinite() { 1.0_f128 } else { 0.0_f128 }).copysign(b);
+            if c.is_nan() {
+                c = 0.0_f128.copysign(c);
+            }
+            if d.is_nan() {
+                d = 0.0_f128.copysign(d);
+            }
+            recalculate = true;
+        }
+        if c.is_infinite() || d.is_infinite() {
+            c = (if c.is_infinite() { 1.0_f128 } else { 0.0_f128 }).copysign(c);
+            d = (if d.is_infinite() { 1.0_f128 } else { 0.0_f128 }).copysign(d);
+            if a.is_nan() {
+                a = 0.0_f128.copysign(a);
+            }
+            if b.is_nan() {
+                b = 0.0_f128.copysign(b);
+            }
+            recalculate = true;
+        }
+        if !recalculate && (ac.is_infinite() || bd.is_infinite() || ad.is_infinite() || bc.is_infinite()) {
+            if a.is_nan() {
+                a = 0.0_f128.copysign(a);
+            }
+            if b.is_nan() {
+                b = 0.0_f128.copysign(b);
+            }
+            if c.is_nan() {
+                c = 0.0_f128.copysign(c);
+            }
+            if d.is_nan() {
+                d = 0.0_f128.copysign(d);
+            }
+            recalculate = true;
+        }
+        if recalculate {
+            real = f128::INFINITY * (a * c - b * d);
+            imaginary = f128::INFINITY * (a * d + b * c);
+        }
+    }
+    ComplexQuad { real, imaginary }
 }
 
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -807,7 +876,6 @@ pub extern "C" fn __popcountti2(value: Uint128) -> i32 {
 ///
 /// Keep this in the owned helper archive so baseline CPUs without POPCNT do
 /// not import libgcc. The existing 128-bit helper uses the same LLVM primitive.
-#[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __popcountdi2(value: u64) -> i32 {
     value.count_ones() as i32
@@ -1199,3 +1267,6 @@ mod tests {
         assert!(infinite.imaginary.is_infinite());
     }
 }
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64_binary128;

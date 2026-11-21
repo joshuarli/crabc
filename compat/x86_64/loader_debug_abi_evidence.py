@@ -14,10 +14,13 @@ import struct
 import subprocess
 import sys
 
+from native_arch import native_arch
+
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = native_arch()['arch'] if sys.platform == 'linux' else 'x86_64'
 ORACLE = Path('/opt/musl-1.2.6/lib/libc.so')
-CC = '/usr/local/bin/crabc-x86_64-musl-gcc'
-INTERPRETER = '/lib/ld-crabc-x86_64.so.1'
+CC = f'/usr/local/bin/crabc-{ARCH}-musl-gcc'
+INTERPRETER = f'/lib/ld-crabc-{ARCH}.so.1'
 SCHEMA = 'crabc.x86_64-loader-debug-crt-abi/v1'
 PUBLIC = {'_dl_debug_addr': ('OBJECT', 'GLOBAL', 8),
           '_dl_debug_state': ('FUNC', 'WEAK', None),
@@ -27,7 +30,7 @@ OUTPUTS = {'debug': 'loader-debug-abi-ok\n', 'copy': 'loader-debug-abi-ok\n', 'i
            'archive-default': '', 'archive-override': ''}
 WORKLOADS = [
     ('debug', 'loader_debug_abi_probe.c', ['-fPIC']),
-    ('copy', 'loader_debug_abi_probe.c', ['-fPIE', '-DDEBUG_COPY_REFERENCE']),
+    ('copy', 'loader_debug_abi_probe.c', ['-fno-pic' if ARCH == 'aarch64' else '-fPIE', '-DDEBUG_COPY_REFERENCE']),
     ('crt', 'loader_crt_abi_probe.c', ['-fPIC']),
     ('lifecycle', 'loader_crt_lifecycle_probe.c', ['-fPIC']),
     ('plugin', 'loader_debug_abi_plugin.c', ['-fPIC']),
@@ -65,7 +68,8 @@ class Elf:
         self.data = data
         require(self.data[:7] == b'\x7fELF\x02\x01\x01', 'expected ELF64 little endian')
         self.elf_type = self.unpack('<H', 16)[0]
-        require(self.unpack('<H', 18)[0] == 62, 'expected native x86-64 ELF')
+        require(self.unpack('<H', 18)[0] == {'x86_64': 62, 'aarch64': 183}[ARCH],
+                f'expected native {ARCH} ELF')
         self.entry = self.unpack('<Q', 24)[0]
         phoff = self.unpack('<Q', 32)[0]
         phsize, phcount = self.unpack('<HH', 54)
@@ -126,7 +130,7 @@ class Elf:
             require(section[9] == 24 and section[5] % 24 == 0, 'malformed RELA table')
             for offset in range(0, section[5], 24):
                 destination, info, addend = self.unpack('<QQq', section[4] + offset)
-                if info & 0xffffffff == 5 and self.symbol_row(section[6], info >> 32)['name'] == name:
+                if info & 0xffffffff == (1024 if ARCH == 'aarch64' else 5) and self.symbol_row(section[6], info >> 32)['name'] == name:
                     rows.append({'destination': destination, 'addend': addend})
         return rows
 
@@ -134,7 +138,7 @@ class Elf:
 def loader_hook_metadata(dynamic_product):
     """Read the public libc hook and, for the merged image, the loader's local hook."""
     libc_path = dynamic_product / 'usr/lib/libc.so'
-    loader_path = dynamic_product / 'lib/ld-crabc-x86_64.so.1'
+    loader_path = dynamic_product / INTERPRETER.lstrip('/')
     public = Elf(libc_path).symbol('_dl_debug_state')
     require(public['type'] == 'FUNC' and public['binding'] == 'WEAK'
             and public['visibility'] == 'DEFAULT' and public['version_index'] in (0, 1),
@@ -204,6 +208,11 @@ def trace_events(text):
     return [list(row) for row in events]
 
 
+def musl_dynamic_legacy_absence(name):
+    return (ARCH == 'aarch64' and name.startswith('oracle-')
+            and ('-kernel-' in name or '-direct-' in name) and name.endswith('-lifecycle'))
+
+
 def expected_cases():
     result = set()
     for lane in ('oracle', 'candidate'):
@@ -261,11 +270,15 @@ def _product_records(static, dynamic, mode):
             'static and dynamic product roots overlap')
     import crabc_cc_static
     import owned_dynamic_qualification as qualification
+    import owned_posix_product_evidence as product_evidence
 
     try:
-        crabc_cc_static.validate_installed_runtime(static)
+        if ARCH == "aarch64":
+            product_evidence._validate_static_product(static)
+        else:
+            crabc_cc_static.validate_installed_runtime(static)
         qualification.product_identity(dynamic)
-    except (crabc_cc_static.DriverError, qualification.QualificationError, OSError, ValueError) as error:
+    except (crabc_cc_static.DriverError, qualification.QualificationError, product_evidence.ProductEvidenceError, OSError, ValueError) as error:
         raise EvidenceError(f'current supplied product contract differs: {error}') from error
     require(mode in ('self-built', 'supplied'), 'loader-debug product mode differs')
     return {
@@ -279,7 +292,7 @@ def _product_records(static, dynamic, mode):
             'manifest': record(dynamic / 'share/crabc/manifest.json'),
             'state': record(dynamic / 'share/crabc/dynamic-product-state.json'),
             'libc': record(dynamic / 'usr/lib/libc.so'),
-            'loader': record(dynamic / 'lib/ld-crabc-x86_64.so.1'),
+            'loader': record(dynamic / INTERPRETER.lstrip('/')),
         },
     }
 
@@ -307,7 +320,9 @@ def validate_report(path):
     require(set(report['executions']) == expected_cases(), 'incomplete execution roster')
     commands = json.loads(artifact(report['artifacts']['commands']).read_text())
     for command in commands:
-        require(command['status'] == 0, 'failed retained build/link command')
+        name = Path(command['stdout']['path']).name.removesuffix('.stdout')
+        require(command['status'] == (42 if musl_dynamic_legacy_absence(name) else 0),
+                'failed retained build/link command')
         artifact(command['stdout'])
         artifact(command['stderr'])
     for probe, source_name, flags in WORKLOADS:
@@ -324,7 +339,8 @@ def validate_report(path):
     for name, execution in report['executions'].items():
         observed = {key: value for key, value in execution.items() if key not in ('events', 'linked_input')}
         require(commands.count(observed) == 1, 'execution does not match retained command')
-        require(execution['status'] == 0, f'failed execution: {name}')
+        musl_without_legacy = musl_dynamic_legacy_absence(name)
+        require(execution['status'] == (42 if musl_without_legacy else 0), f'failed execution: {name}')
         parts = name.split('-')
         lane = parts[0]
         mode = 'non-pie' if parts[1:3] == ['non', 'pie'] else ('static-pie' if parts[1:3] == ['static', 'pie'] else parts[1])
@@ -349,7 +365,8 @@ def validate_report(path):
                     'trace does not observe the inspected loader export and libc pointer')
         else:
             probe = next(key for key in OUTPUTS if name.endswith('-' + key))
-            require(stdout == OUTPUTS[probe] and stderr == '', f'changed observable result: {name}')
+            require(stdout == ('' if musl_without_legacy else OUTPUTS[probe]) and stderr == '',
+                    f'changed observable result: {name}')
     static_root = artifact(report['artifacts']['static-manifest']).parents[2]
     override_object = artifact(report['artifacts']['override-object'])
     for archive in (static_root / 'usr/lib/libc.a', artifact(report['artifacts']['oracle-libc.a'])):
@@ -435,8 +452,10 @@ class Collector:
         return row
 
     def execute(self, name, command, probe, binary):
-        row = self.run(name, command)
-        require(artifact(row['stdout']).read_text() == OUTPUTS[probe], f'{name}: wrong output')
+        musl_without_legacy = probe == 'lifecycle' and musl_dynamic_legacy_absence(name)
+        row = self.run(name, command, expected=42 if musl_without_legacy else 0)
+        require(artifact(row['stdout']).read_text() == ('' if musl_without_legacy else OUTPUTS[probe]),
+                f'{name}: wrong output')
         if name.endswith('-trace'):
             row['events'] = trace_events(artifact(row['stderr']).read_text())
         else:
@@ -470,8 +489,8 @@ class Collector:
             self.keep('oracle-' + name, saved)
         if self.supplied_products is None:
             static, dynamic = [self.output / value for value in ('static-product', 'dynamic-product')]
-            self.run('build-static', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_sysroot.py', '--output', static])
-            self.run('build-dynamic', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_dynamic_sysroot.py', '--output', dynamic])
+            self.run('build-static', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_sysroot.py', *(['--architecture', 'aarch64'] if ARCH == 'aarch64' else []), '--output', static])
+            self.run('build-dynamic', ['python3', '-B', ROOT / 'scripts/build_x86_64_owned_dynamic_sysroot.py', *(['--architecture', 'aarch64'] if ARCH == 'aarch64' else []), '--output', dynamic])
             products = _product_records(static, dynamic, 'self-built')
         else:
             static = ROOT / self.supplied_products['static']['path']
@@ -488,7 +507,7 @@ class Collector:
         self.keep('static-manifest', static / 'share/crabc/manifest.json')
         self.keep('dynamic-manifest', dynamic / 'share/crabc/manifest.json')
         self.keep('dynamic-state', dynamic / 'share/crabc/dynamic-product-state.json')
-        self.keep('candidate-loader', dynamic / 'lib/ld-crabc-x86_64.so.1')
+        self.keep('candidate-loader', dynamic / INTERPRETER.lstrip('/'))
         objects = {}
         for probe, source_name, flags in WORKLOADS:
             objects[probe] = self.output / (probe + '.o')
@@ -514,7 +533,7 @@ class Collector:
                 provider = execution_root / ORACLE.relative_to('/')
                 provider.parent.mkdir(parents=True)
                 shutil.copy2(ORACLE, provider)
-                interpreter = '/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1'
+                interpreter = f'/opt/musl-1.2.6/lib/ld-musl-{ARCH}.so.1'
                 loader = execution_root / interpreter.lstrip('/')
                 loader.symlink_to('libc.so')
                 hook = Elf(provider).symbol('_dl_debug_state')

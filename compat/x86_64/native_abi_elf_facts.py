@@ -24,7 +24,7 @@ import header_callable_inventory as header_authority
 import header_abi_matrix as header_matrix
 
 ROOT = inventory.ROOT
-SCHEMA = 'crabc.x86_64-native-abi-elf-facts/v1'
+SCHEMA = f'crabc.{inventory.ARCH}-native-abi-elf-facts/v1'
 BASE_REPORT = Path('/inputs/base-inventory/report.json')
 SOURCE_FILES = (*inventory.SOURCE_FILES, 'compat/x86_64/native_abi_elf_facts.py',
                 'compat/x86_64/header_callable_inventory.py', 'compat/x86_64/header_abi_matrix.py')
@@ -69,7 +69,7 @@ ARTIFACTS = (
     Artifact('reference-shared', 'reference', 'lib/libc.so', 'elf', 'DYN'),
     Artifact('candidate-static', 'candidate-static', 'usr/lib/libc.a', 'archive', 'REL'),
     Artifact('candidate-shared', 'candidate-dynamic', 'usr/lib/libc.so', 'elf', 'DYN'),
-    Artifact('candidate-loader', 'candidate-dynamic', 'lib/ld-crabc-x86_64.so.1', 'elf', 'DYN'),
+    Artifact('candidate-loader', 'candidate-dynamic', f'lib/ld-crabc-{inventory.ARCH}.so.1', 'elf', 'DYN'),
     *(Artifact('static-' + name, 'candidate-static', 'usr/lib/' + name, 'elf', 'REL')
       for name in ('crt1.o', 'Scrt1.o', 'rcrt1.o', 'crti.o', 'crtn.o')),
     Artifact('static-builtins', 'candidate-static', 'usr/lib/libcrabc-builtins.a', 'archive', 'REL'),
@@ -105,6 +105,13 @@ NON_ELF_METADATA = {
 }
 
 
+if inventory.ARCH == 'aarch64':
+    NON_ELF_METADATA = {**NON_ELF_METADATA, 'candidate-dynamic': (
+        *NON_ELF_METADATA['candidate-dynamic'], 'share/crabc/headers.provenance.json',
+        'share/crabc/crabc_cc_owned_dynamic.py',
+    )}
+
+
 def _installed_header_placements(payload_files: Mapping[str, str]) -> set[str]:
     """Classify project headers and the exact authenticated kernel export tree.
 
@@ -118,7 +125,8 @@ def _installed_header_placements(payload_files: Mapping[str, str]) -> set[str]:
     exported = {name[len(prefix):]: digest for name, digest in payload_files.items() if name.startswith(prefix)}
     manifest = ''.join(f'{digest}  ./{name}\n' for name, digest in sorted(exported.items()))
     require(hashlib.sha256(manifest.encode('utf-8')).hexdigest()
-            == header_authority.LINUX_UAPI_HEADER_MANIFEST_SHA256,
+            == (header_authority.LINUX_UAPI_MARKER["header_manifest_sha256"]
+                if inventory.ARCH == "aarch64" else header_authority.LINUX_UAPI_HEADER_MANIFEST_SHA256),
             'installed Linux UAPI export roster or bytes differ from pinned manifest')
     return {'usr/' + row['path'] for row in tree['files']} | {prefix + name for name in exported}
 

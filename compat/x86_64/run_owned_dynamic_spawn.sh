@@ -3,6 +3,7 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 readonly CHROOT="$(command -v chroot)"
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -54,7 +55,7 @@ readonly work="$(mktemp -d "$TMPDIR/owned-dynamic-spawn.XXXXXX")"
 chmod a+rx "$work"
 printf 'dynamic spawn evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_spawn_probe.c"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 
 run_in_root() {
     local root="$1" output="$2" status=0
@@ -326,7 +327,7 @@ for mode in pie non-pie; do
     cp "$work/consumer-$mode" "$work/$mode-root/consumer"
     for entry in kernel direct; do
         command=(/consumer)
-        if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 /consumer); fi
+        if [ "$entry" = direct ]; then command=("/lib/ld-crabc-$arch.so.1" /consumer); fi
         run_in_root "$work/$mode-root" "$work/$mode-$entry.stdout" "${command[@]}" /spawn-state
         compare_oracle "$mode-$entry"
     done

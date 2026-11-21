@@ -32,9 +32,10 @@ sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
 from compat.x86_64.native_runtime_profile import NativeRuntimeProfile
+from compat.x86_64.native_arch import native_arch
 CRT_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = CRT_ROOT / "src"
-TARGET = "x86_64-unknown-linux-musl"
+TARGET = native_arch("x86_64")["target_triple"]
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
 DEFAULT_OUTPUT = ROOT / "target" / "crt-x86_64-static"
 
@@ -238,6 +239,7 @@ class ElfObject:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--llvm-objdump", default="llvm-objdump")
     parser.add_argument("--profile", choices=("release", "debug"), default="release")
@@ -328,7 +330,7 @@ def default_rustc_command() -> list[str]:
 
 
 def selected_nightly_sysroot(version: dict[str, Any], sysroot: dict[str, Any],
-                             environment: dict[str, str]) -> Path:
+                             environment: dict[str, str], expected_host: str = TARGET) -> Path:
     """Require rustup's exact selected nightly and the expected x86 host."""
 
     release = next(
@@ -341,7 +343,7 @@ def selected_nightly_sysroot(version: dict[str, Any], sysroot: dict[str, Any],
          if line.startswith("host: ")),
         "",
     )
-    if version["returncode"] != 0 or not release.endswith("-nightly") or host != TARGET:
+    if version["returncode"] != 0 or not release.endswith("-nightly") or host != expected_host:
         raise BuildError("x86-64 CRT builder requires the selected nightly x86 toolchain")
     if sysroot["returncode"] != 0:
         raise BuildError(f"unable to locate selected Rust sysroot: {sysroot['stderr']}")
@@ -430,7 +432,7 @@ def c_string(data: bytes, offset: int, context: str) -> str:
     return data[offset:end].decode("utf-8", errors="replace")
 
 
-def parse_elf_object(path: Path) -> ElfObject:
+def parse_elf_object(path: Path, *, machine: int = EM_X86_64) -> ElfObject:
     data = path.read_bytes()
     if len(data) < 64:
         raise BuildError(f"{path}: too short for ELF64 header")
@@ -438,11 +440,11 @@ def parse_elf_object(path: Path) -> ElfObject:
     if ident[:4] != ELF_MAGIC or ident[4] != ELFCLASS64 or ident[5] != ELFDATA2LSB:
         raise BuildError(f"{path}: expected little-endian ELF64")
     header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
-    elf_type, machine = header[1], header[2]
+    elf_type = header[1]
     section_offset, header_size = header[6], header[8]
     section_entry_size, section_count, string_index = header[11], header[12], header[13]
-    if elf_type != ET_REL or machine != EM_X86_64:
-        raise BuildError(f"{path}: expected ELFREL/x86-64, got type={elf_type} machine={machine}")
+    if elf_type != ET_REL or header[2] != machine:
+        raise BuildError(f"{path}: expected ELFREL/x86-64, got type={elf_type} machine={header[2]}")
     if header_size != 64 or section_entry_size != 64 or section_count == 0 or string_index >= section_count:
         raise BuildError(f"{path}: malformed ELF64 section-header table")
 
@@ -546,8 +548,9 @@ def portable_rustc_command(command: list[str], source: Path, destination: Path) 
 
 
 def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset(),
-                   *, hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY) -> dict[str, object]:
-    elf = parse_elf_object(path)
+                   *, hardening_profile: NativeRuntimeProfile = NativeRuntimeProfile.COMPATIBILITY,
+                   machine: int = EM_X86_64) -> dict[str, object]:
+    elf = parse_elf_object(path, machine=machine)
     sections = {section.name: section for section in elf.sections}
     metadata_sections = sorted(section.name for section in elf.sections if section.name.startswith(".rustc"))
     if metadata_sections:
@@ -878,9 +881,119 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     return report
 
 
+def audit_aarch64_entry(spec: ObjectSpec, path: Path) -> dict[str, object]:
+    elf = parse_elf_object(path, machine=183)
+    starts = [item for item in elf.symbols if item.name == "_start" and item.section_index != SHN_UNDEF]
+    if len(starts) != 1 or not starts[0].size:
+        raise BuildError(f"{path}: expected one bounded _start")
+    start = starts[0]
+    section = elf.sections[start.section_index]
+    entry = checked_range(path.read_bytes(), section.offset + start.value, start.size, f"{path}: _start")
+    relocations = [item for item in elf.relocations if item.target_section_index == start.section_index
+                   and start.value <= item.offset < start.value + start.size]
+    handoff = "__crabc_x86_64_static_pie_start" if spec.name == "rcrt1.o" else (
+        "__crabc_x86_64_exec_start" if spec.name == "crt1.o" else "__crabc_x86_64_dynamic_start")
+    if len(relocations) != 1 or relocations[0].relocation_type not in (282, 283) or relocations[0].symbol_name != handoff or relocations[0].symbol_section_index == SHN_UNDEF:
+        raise BuildError(f"{path}: entry lacks its direct startup handoff")
+    if spec.name == "crt1.o":
+        expected = bytes.fromhex("1d0080d21e0080d2e10300aae00300911fec7c9200000014")
+        if entry != expected:
+            raise BuildError(f"{path}: conventional entry register handoff differs")
+    elif spec.name == "Scrt1.o":
+        expected = bytes.fromhex("e10300aae0030091e903009129ed7c923f010091fd031faa00000094000020d4")
+        if entry != expected:
+            raise BuildError(f"{path}: dynamic entry register handoff differs")
+    elif (not entry.startswith(bytes.fromhex("ef030091fd031faafe031faaffed7c92"))
+          or bytes.fromhex("010000d4") not in entry):
+        raise BuildError(f"{path}: static PIE entry lacks aligned stack or syscall")
+    return {"status": "verified", "entry_contract": spec.entry_contract,
+            "entry_symbol_size": start.size, "entry_relocation_types": [relocations[0].relocation_type],
+            "direct_handoff_symbol": handoff, "no_early_got_or_tls_relocation": True,
+            "stack_alignment_before_direct_handoff": True}
+
+
+def build_aarch64(args: argparse.Namespace) -> dict[str, object]:
+    if args.profile != "release":
+        raise BuildError("aarch64 CRT currently supports release builds only")
+    output = output_directory(args.out_dir)
+    environment = deterministic_environment()
+    rustc = default_rustc_command()
+    version = run_command(rustc + ["-Vv"], environment)
+    sysroot = run_command(rustc + ["--print", "sysroot"], environment)
+    target = native_arch("aarch64")["target_triple"]
+    physical_sysroot = selected_nightly_sysroot(version, sysroot, environment, target)
+    compiler = native_build_tools.compile_command(physical_sysroot / "bin/rustc")
+    records = [{"kind": "toolchain", **version}, {"kind": "sysroot", **sysroot}]
+    compiler_tools = {
+        "wrapper": {"path": compiler[0], "sha256": sha256_file(Path(compiler[0]))},
+        "rustc": {"path": compiler[1], "sha256": sha256_file(Path(compiler[1]))},
+    }
+    objdump = physical_sysroot / "lib/rustlib" / target / "bin/llvm-objdump"
+    objects = {}
+    names = ("crt1", "rcrt1", "crti", "crtn", "Scrt1")
+    for name in names:
+        source_name = ("aarch64_rcrt1.rs" if name == "rcrt1" else
+                       "x86_64_" + name + ".rs")
+        source = source_path(source_name)
+        destination = output / (name + ".o")
+        command = compiler + ["--edition=2021", "--crate-type=lib", "--emit=obj", "--target", target, "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "opt-level=2", "-C", "relocation-model=static", "-C", "code-model=small", str(source), "-o", str(destination)]
+        if name == "crt1":
+            command[command.index("-C"):command.index("-C")] = [argument for cfg in CONVENTIONAL_EXEC_CFGS for argument in ("--cfg", cfg)]
+        if name == "Scrt1" and args.owned_dynamic_sysroot:
+            command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_owned_dynamic_runtime", "--cfg", "crabc_general_dynamic_lifecycle"]
+        if name in ("Scrt1", "rcrt1") and args.hardening_profile is NativeRuntimeProfile.HARDENED:
+            command[command.index("-C"):command.index("-C")] = ["--cfg", "crabc_hardened"]
+        if name in ("Scrt1", "rcrt1"):
+            command[command.index("relocation-model=static")] = "relocation-model=pic"
+        result = run_command(command, environment)
+        records.append({"kind": "compile", "object": destination.name, **result,
+                        "command": portable_rustc_command(command, source, destination)})
+        if result["returncode"]:
+            raise BuildError(f"aarch64 CRT {name} failed: {result['stderr']}")
+        spec = next(item for item in selected_objects(args) if item.name == destination.name)
+        if name == "Scrt1" and args.owned_dynamic_sysroot:
+            spec = replace(spec, undefined_symbols=tuple(
+                "__crabc_x86_64_loader_tls_runtime_v1" if symbol == X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY else symbol
+                for symbol in spec.undefined_symbols))
+        inspection = inspect_object(spec, destination, hardening_profile=args.hardening_profile, machine=183)
+        if name in ("crt1", "rcrt1", "Scrt1"):
+            machine = audit_aarch64_entry(spec, destination)
+            disassembly_command = [str(objdump), "-d", "--disassemble-symbols=_start", str(destination)]
+            disassembly = run_command(disassembly_command, environment)
+            if disassembly["returncode"] != 0:
+                raise BuildError(f"{destination}: llvm-objdump could not disassemble _start")
+            normalized = disassembly["stdout"].replace(str(destination), f"$CRABC_CRT_AARCH64_OUT/{destination.name}")
+            normalized_stderr = disassembly["stderr"].replace(str(destination), f"$CRABC_CRT_AARCH64_OUT/{destination.name}")
+            machine["disassembly_sha256"] = hashlib.sha256(normalized.encode()).hexdigest()
+            machine["required_instructions"] = (["mov x15, sp", "and sp, x15, -16", "svc"] if name == "rcrt1"
+                                                  else ["mov x1, x0", "mov x0, sp", "align sp"])
+            if name != "rcrt1":
+                machine["loader_finalizer"] = "authenticated-owned-x0-or-kernel-null" if name == "crt1" else "authenticated-owned-x0"
+            records.append({"kind": "machine_entry_audit", "object": destination.name,
+                "command": [objdump.name, "-d", "--disassemble-symbols=_start", f"$CRABC_CRT_AARCH64_OUT/{destination.name}"],
+                "returncode": disassembly["returncode"], "stdout_sha256": machine["disassembly_sha256"],
+                "stderr_sha256": hashlib.sha256(normalized_stderr.encode()).hexdigest()})
+            inspection["entry_machine_contract"] = machine
+        inspection.update({"source": "/crabc/crt/src/" + source.name, "source_languages": ["Rust"],
+                           "compiler_tools": compiler_tools, "producer": portable_rustc_command(command, source, destination)})
+        objects[destination.name] = inspection
+    if len({objects[name]["sha256"] for name in ("crt1.o", "rcrt1.o", "Scrt1.o")}) != 3:
+        raise BuildError("CRT entry objects must differ")
+    write_json(output / "commands.json", records)
+    report = {"schema": 1, "target": target, "scope": "bounded-static-and-private-dynamic-startup",
+              "profile": args.profile, "hardening_profile": args.hardening_profile.value,
+              "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
+              "general_dynamic_lifecycle": args.general_dynamic_lifecycle,
+              "owned_dynamic_sysroot": args.owned_dynamic_sysroot, "toolchain": PINNED_TOOLCHAIN,
+              "objects": objects, "commands": {"name": "commands.json", "sha256": sha256_file(output / "commands.json")}}
+    write_json(output / "objects.json", report)
+    return report
+
+
 def main() -> int:
     try:
-        report = build(parse_args())
+        args = parse_args()
+        report = build_aarch64(args) if args.architecture == "aarch64" else build(args)
     except BuildError as error:
         print(f"crabc x86-64 static CRT build failed: {error}", file=sys.stderr)
         return 1

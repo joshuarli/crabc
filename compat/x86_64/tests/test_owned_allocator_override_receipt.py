@@ -14,9 +14,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt  # noqa: E402
+from native_arch import native_arch  # noqa: E402
+
+ARCH = native_arch()["arch"]
 
 RUNNER = "owned-allocator-override"
-EVIDENCE = re.compile(r"^allocator-override evidence: (/workspace/\.work/x86_64/tmp/owned-allocator-override\.[^\s]+)$", re.M)
+EVIDENCE = re.compile(rf"^allocator-override evidence: (/workspace/\.work/{ARCH}/tmp/owned-allocator-override\.[^\s]+)$", re.M)
 
 
 class OwnedAllocatorOverrideReceiptTests(unittest.TestCase):
@@ -34,13 +37,14 @@ class OwnedAllocatorOverrideReceiptTests(unittest.TestCase):
         if static or dynamic:
             self.assertTrue(static and dynamic)
             command.extend(("--static-sysroot", static, dynamic))
-        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900)
+        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=900,
+                                   env={**os.environ, "TMPDIR": str(ROOT / f".work/{ARCH}/tmp")})
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         match = EVIDENCE.search(completed.stdout)
         self.assertIsNotNone(match, completed.stdout)
         work = Path(match.group(1))
         self.assertTrue(work.is_dir() and not work.is_symlink()
-                        and work.is_relative_to(ROOT / ".work/x86_64/tmp"))
+                        and work.is_relative_to(ROOT / f".work/{ARCH}/tmp"))
 
         published = receipt.read_receipt(ROOT, RUNNER, case_prefix="kernel-")
         executed = {path.stem for path in work.glob("*.status")}

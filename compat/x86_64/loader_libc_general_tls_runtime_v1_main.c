@@ -36,6 +36,19 @@ struct crabc_tls_index {
 
 extern void *__tls_get_addr(const struct crabc_tls_index *index);
 
+#if defined(__aarch64__)
+static unsigned long fs_self(void) {
+    unsigned long value;
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(value));
+    return value;
+}
+static unsigned long *fs_dtv(void) {
+    unsigned long *value;
+    __asm__ volatile("mrs %0, tpidr_el0\n\tldr %0, [%0, #-8]" : "=r"(value));
+    return value;
+}
+static int read_thread_base(unsigned long *base) { *base = fs_self(); return 0; }
+#else
 static long syscall2(long number, long one, long two) {
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(one), "S"(two)
@@ -55,8 +68,10 @@ static unsigned long *fs_dtv(void) {
     return value;
 }
 
+static int read_thread_base(unsigned long *base) { return syscall2(158, 0x1003, (long)base); }
+#endif
+
 static int exact_general_initial_dtv(void) {
-#if defined(CRABC_PRODUCT_TLS_LAYOUT)
     unsigned long fs_base = 0;
     unsigned long *dtv = fs_dtv();
     void *images[4] = {
@@ -65,13 +80,13 @@ static int exact_general_initial_dtv(void) {
         general_shared_tls_address(),
         general_right_tls_address(),
     };
-    if (syscall2(158, 0x1003, (long)&fs_base) != 0) return 2;
+    if (read_thread_base(&fs_base) != 0) return 2;
     if (fs_base == 0 || fs_base != fs_self()) return 3;
     if (dtv == 0) return 4;
-    if (dtv[0] < 5) return 5;
+    if (dtv[0] < 4) return 5;
     unsigned long modules[4] = { 0, 0, 0, 0 };
     for (int image = 0; image < 4; image++) {
-        for (unsigned long slot = 1; slot < dtv[0]; slot++) {
+        for (unsigned long slot = 1; slot <= dtv[0]; slot++) {
             if ((void *)dtv[slot] == images[image]) {
                 modules[image] = slot;
                 break;
@@ -84,39 +99,8 @@ static int exact_general_initial_dtv(void) {
         const struct crabc_tls_index index = { modules[image], 0 };
         if (__tls_get_addr(&index) != images[image]) return 14 + image;
     }
-    const struct crabc_tls_index absent_tls = { dtv[0], 0 };
+    const struct crabc_tls_index absent_tls = { dtv[0] + 1, 0 };
     return __tls_get_addr(&absent_tls) == 0 ? 0 : 18;
-#else
-    unsigned long fs_base = 0;
-    unsigned long *dtv = fs_dtv();
-    const struct crabc_tls_index main_tls = { 1, 0 };
-    const struct crabc_tls_index left_tls = { 2, 0 };
-    const struct crabc_tls_index shared_tls = { 3, 0 };
-    const struct crabc_tls_index right_tls = { 4, 0 };
-    const struct crabc_tls_index absent_tls = { 5, 0 };
-    void *resolved_main = __tls_get_addr(&main_tls);
-    void *resolved_left = __tls_get_addr(&left_tls);
-    void *resolved_shared = __tls_get_addr(&shared_tls);
-    void *resolved_right = __tls_get_addr(&right_tls);
-
-    if (syscall2(158, 0x1003, (long)&fs_base) != 0
-        || fs_base == 0
-        || fs_base != fs_self()
-        || dtv == 0
-        || dtv[0] != 4
-        || resolved_main != &general_runtime_v1_main_tls
-        || (void *)dtv[1] != resolved_main
-        || resolved_left != general_left_tls_address()
-        || (void *)dtv[2] != resolved_left
-        || resolved_shared != general_shared_tls_address()
-        || (void *)dtv[3] != resolved_shared
-        || resolved_right != general_right_tls_address()
-        || (void *)dtv[4] != resolved_right
-        || __tls_get_addr(&absent_tls) != 0) {
-        return 0;
-    }
-    return 1;
-#endif
 }
 #endif
 

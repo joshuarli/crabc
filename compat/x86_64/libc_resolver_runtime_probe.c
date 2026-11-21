@@ -11,7 +11,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -57,9 +57,15 @@ static int bytes_equal(const unsigned char *left, const unsigned char *right,
 
 static long raw_syscall1(long number, long argument)
 {
+#if defined(__aarch64__)
+    register long call __asm__("x8") = number;
+    register long result __asm__("x0") = argument;
+    __asm__ volatile("svc 0" : "+r"(result) : "r"(call) : "memory", "cc");
+#else
     long result;
     __asm__ volatile ("syscall" : "=a"(result) : "a"(number), "D"(argument)
         : "rcx", "r11", "memory");
+#endif
     return result;
 }
 
@@ -68,8 +74,13 @@ static int enter_fixture_root(const char *root)
     /* Linux/x86-64 chroot=161 and chdir=80. This harness-only transition
      * makes the library's fixed /etc paths hermetic; it is not an archive API
      * dependency. */
+#if defined(__aarch64__)
+    if (raw_syscall1(51, (long)(uintptr_t)root) < 0) return -1;
+    return raw_syscall1(49, (long)(uintptr_t)"/") < 0 ? -1 : 0;
+#else
     if (raw_syscall1(161, (long)(uintptr_t)root) < 0) return -1;
     return raw_syscall1(80, (long)(uintptr_t)"/") < 0 ? -1 : 0;
+#endif
 }
 
 static size_t question_end(const unsigned char *packet, size_t length)

@@ -21,12 +21,24 @@
 /* A legal two-argument caller deliberately leaves a hostile third register.
  * The public ABI must not turn this into a required Rust argument. */
 extern int poisoned_query(int, int);
+#if defined(__aarch64__)
+__asm__(".text\n.globl poisoned_query\n.hidden poisoned_query\n.type poisoned_query,%function\npoisoned_query:\nmovz x2, #0xa5a5\nmovk x2, #0xa5a5, lsl #16\nmovk x2, #0xa5a5, lsl #32\nmovk x2, #0xa5a5, lsl #48\nb fcntl\n.size poisoned_query,.-poisoned_query\n");
+static long raw_fcntl(int fd,int cmd,uintptr_t word) {
+    register long x0 __asm__("x0") = fd;
+    register long x1 __asm__("x1") = cmd;
+    register long x2 __asm__("x2") = word;
+    register long x8 __asm__("x8") = SYS_fcntl;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory", "cc");
+    return x0;
+}
+#else
 __asm__(".text\n.globl poisoned_query\n.hidden poisoned_query\n.type poisoned_query,@function\npoisoned_query:\nmovabs $0xa5a5a5a5a5a5a5a5,%rdx\njmp fcntl\n.size poisoned_query,.-poisoned_query\n");
 static long raw_fcntl(int fd,int cmd,uintptr_t word) {
     long result;
     __asm__ volatile("syscall" : "=a"(result) : "a"(SYS_fcntl),"D"((long)fd),"S"((long)cmd),"d"(word) : "rcx","r11","memory","cc");
     return result;
 }
+#endif
 static void raw_equivalent(long raw,int result) {
     if(result!=(raw<0 ? -1 : raw)) fprintf(stderr,"raw=%ld result=%d\n",raw,result);
     CHECK(result==(raw<0 ? -1 : raw));

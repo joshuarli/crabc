@@ -10,7 +10,6 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly SOURCE="$ROOT_DIR/compat/x86_64/libc_bootstrap_primitives_probe.c"
 static_input=''
@@ -32,6 +31,9 @@ else
     usage
 fi
 
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+
 fail() {
     printf 'ERROR: x86 static libc bootstrap primitives: %s\n' "$*" >&2
     exit 1
@@ -39,10 +41,6 @@ fail() {
 
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
-    case "$(uname -m)" in
-        x86_64|amd64) ;;
-        *) fail "refuses emulation on $(uname -m)" ;;
-    esac
 }
 
 require_tool() {
@@ -52,11 +50,11 @@ require_tool() {
 require_scratch_root() {
     local scratch="${TMPDIR:-}"
     case "$scratch" in
-        "$ROOT_DIR"/.work/x86_64/*) ;;
-        *) fail "TMPDIR must be a physical checkout .work/x86_64 directory" ;;
+        "$ROOT_DIR"/.work/"$work_name"/*) ;;
+        *) fail "TMPDIR must be a physical checkout .work/$work_name directory" ;;
     esac
     [ -d "$scratch" ] && [ "$(realpath "$scratch")" = "$scratch" ] \
-        || fail "TMPDIR must be a physical checkout .work/x86_64 directory"
+        || fail "TMPDIR must be a physical checkout .work/$work_name directory"
 }
 
 assert_selected_c_abi_surface() {
@@ -295,7 +293,7 @@ PY
         compare_bootstrap_run "run-$mode-kernel"
         step="run-$mode-direct"
         run_recorded "run-$mode-direct" - "${runtime_env[@]}" /usr/sbin/chroot "$root" \
-            /lib/ld-crabc-x86_64.so.1 /consumer
+            "/lib/ld-crabc-$arch.so.1" /consumer
         compare_bootstrap_run "run-$mode-direct"
     done
 
@@ -321,7 +319,9 @@ observations.collect_bootstrap_primitives(
     work, static_product=static, dynamic_product=dynamic,
 )
 PY
-    printf 'x86 installed crabc-libc bootstrap primitives: PASS (four sealed links, six execution modes); evidence: %s\n' "$work_dir"
+    label=x86
+    [ "$arch" = x86_64 ] || label="$arch"
+    printf '%s installed crabc-libc bootstrap primitives: PASS (four sealed links, six execution modes); evidence: %s\n' "$label" "$work_dir"
     exit 0
 fi
 

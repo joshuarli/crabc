@@ -1,0 +1,41 @@
+{
+  "files": {
+    "/opt/rustup/toolchains/nightly-2026-09-15-aarch64-unknown-linux-musl/bin/rustc": {
+      "mode": 493,
+      "path": "/opt/rustup/toolchains/nightly-2026-09-15-aarch64-unknown-linux-musl/bin/rustc",
+      "sha256": "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b",
+      "size": 72288
+    },
+    "/usr/bin/gcc": {
+      "mode": 493,
+      "path": "/usr/bin/gcc",
+      "sha256": "0e56242014fe7ce934e73b2495b801785fcf7d78ad7131e8ec086b1884ee1d07",
+      "size": 2102032
+    },
+    "/usr/bin/mold": {
+      "mode": 493,
+      "path": "/usr/bin/mold",
+      "sha256": "2f694c9ecbfe99aad11d0ef00a15708cf74b82a0a8dfc9760037fa2917263b28",
+      "size": 19471864
+    },
+    "/usr/bin/nm": {
+      "mode": 493,
+      "path": "/usr/bin/nm",
+      "sha256": "99f38b2f59d3019fc0578cc3ee0427cd22bc717dab6e67f48d1dc6867399a882",
+      "size": 68624
+    },
+    "/usr/bin/readelf": {
+      "mode": 493,
+      "path": "/usr/bin/readelf",
+      "sha256": "05a494b0257cd2ec3a0e2ffec6e0ab29922c97854614e3cbd35626ce1ca7ae4d",
+      "size": 797552
+    },
+    "/usr/local/bin/crabc-aarch64-musl-gcc": {
+      "mode": 493,
+      "path": "/usr/local/bin/crabc-aarch64-musl-gcc",
+      "sha256": "6d0cd1906d9df0c0a54867d779aa8b1133ed5fb7af6ce286ca3c8ff19201e837",
+      "size": 579
+    }
+  },
+  "schema": "crabc.aarch64-owned-classic-netdb-image-inputs/v1"
+}

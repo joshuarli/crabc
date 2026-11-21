@@ -44,7 +44,7 @@ HEADERS = (
     "features.h", "bits/alltypes.h",
 )
 ORACLE_STDOUT = b"owned-numeric-calendar-products-ok\n"
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+INTERPRETER = f"/lib/ld-crabc-{qualification.ARCH['arch']}.so.1"
 SOURCE_PATHS = {
     "probe": "compat/x86_64/owned_numeric_calendar_probe.c",
     "runner": "compat/x86_64/run_owned_numeric_calendar.sh",
@@ -169,16 +169,16 @@ def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[
         dynamic_manifest, _ = products._validate_dynamic_product(dynamic)
     except products.ProductEvidenceError as error:
         raise NumericCalendarReceiptError(f"dynamic numeric calendar product validation failed: {error}") from error
+    try:
+        current_source = source_seal.product_source_digest(qualification.ROOT)
+    except Exception as error:
+        raise NumericCalendarReceiptError("current numeric calendar source digest is unreadable") from error
     state_path = physical_file(dynamic / "share/crabc/dynamic-product-state.json", "dynamic numeric calendar product state")
     state = read_json(state_path, "dynamic numeric calendar product state")
     require(isinstance(state, dict) and
             state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
             state.get("status") == "materialized-unqualified",
             "dynamic numeric calendar product state differs")
-    try:
-        current_source = source_seal.product_source_digest(qualification.ROOT)
-    except Exception as error:
-        raise NumericCalendarReceiptError("current numeric calendar source digest is unreadable") from error
     require(state.get("source_sha256") == current_source,
             "dynamic numeric calendar product source differs from current checkout")
     result: dict[str, object] = {
@@ -216,7 +216,7 @@ def tool_roster(root: Path, dynamic: Path, static: Path | None) -> dict[str, obj
     try:
         spec.loader.exec_module(module)
         result = {
-            "oracle": recorded_tool_identity(root, Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler"),
+            "oracle": recorded_tool_identity(root, Path(qualification.ARCH["oracle"]), "pinned musl compiler"),
             "dynamic_driver": recorded_tool_identity(root, dynamic / "bin/crabc-cc-dynamic", "dynamic compiler driver"),
             "compiler": recorded_tool_identity(root, Path(module.compiler()), "resolved compiler"),
             "linker": recorded_tool_identity(root, Path(module.linker(dynamic)), "resolved linker"),
@@ -314,8 +314,8 @@ def parse_argv(raw: bytes, label: str) -> list[str]:
 def check_elf_rel(path: Path) -> None:
     data = path.read_bytes()
     require(len(data) >= 20 and data[:7] == b"\x7fELF\x02\x01\x01" and
-            data[16:18] == b"\x01\x00" and data[18:20] == b">\x00",
-            "installed-header workload is not an x86-64 ELF relocatable object")
+            data[16:18] == b"\x01\x00" and data[18:20] == (b"\xb7\x00" if qualification.ARCH["arch"] == "aarch64" else b">\x00"),
+            "installed-header workload is not a native ELF relocatable object")
 
 
 def check_source_object_checks(root: Path, work: Path, sources: Mapping[str, object], workload: Path,

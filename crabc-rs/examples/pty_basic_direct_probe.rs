@@ -12,6 +12,7 @@ use core::mem::MaybeUninit;
 use crabc_rs::io;
 use crabc_rs::pty::{self, OpenptFlags, PtyPair};
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

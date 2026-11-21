@@ -39,6 +39,11 @@ from typing import Any, Iterator, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from native_arch import native_arch
+
+ARCHITECTURE = native_arch()
+ARCH = ARCHITECTURE["arch"]
 LUA_ROOT = Path(__file__).resolve().parent
 MANIFEST = LUA_ROOT / "manifest.toml"
 FIXTURES = LUA_ROOT / "fixtures"
@@ -53,7 +58,7 @@ DEFAULT_X86_STATIC_WORK_ROOT = ROOT / ".work/x86_64/lua-static-source-build"
 # products (the Rust mimalloc port) are allocator-promotion evidence: a run on
 # them keeps its private report and never replaces an accepted-C latest report.
 X86_ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
-X86_MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+X86_MUSL_COMPILER = Path(ARCHITECTURE["oracle"])
 # Mold otherwise reports link completion before its worker exits.
 X86_MUSL_LINK_FLAGS = ("-Wl,--no-fork",)
 DEFAULT_JOBS = 4
@@ -1122,8 +1127,8 @@ def run_workloads(graph: Mapping[str, object], work: Path, timeout: float) -> di
 def require_native_x86_64() -> None:
     """Refuse a source-build result produced through emulation."""
 
-    if platform.system() != "Linux" or platform.machine() not in {"x86_64", "amd64"}:
-        raise RunnerError("native Lua static source-build gate requires native Linux/x86-64")
+    if platform.system() != "Linux" or platform.machine() not in ({"x86_64", "amd64"} if ARCH == "x86_64" else {"aarch64", "arm64"}):
+        raise RunnerError(f"native Lua static source-build gate requires native Linux/{'x86-64' if ARCH == 'x86_64' else 'aarch64'}")
 
 
 def selected_static_modes(requested: Sequence[str] | None) -> tuple[StaticLuaMode, ...]:
@@ -1230,9 +1235,11 @@ def owned_static_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict[
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RunnerError(f"invalid owned x86 static sysroot manifest: {manifest_path}") from error
+    static_format = "crabc-x86-64-owned-static-sysroot-v1" if ARCH == "x86_64" else "crabc-aarch64-owned-static-sysroot-v1"
+    driver_format = "crabc-x86-64-sealed-static-driver-v1" if ARCH == "x86_64" else "crabc-aarch64-sealed-static-driver-v1"
     if not isinstance(manifest, dict) or (
         manifest.get("schema"), manifest.get("format"), manifest.get("target")
-    ) != (1, "crabc-x86-64-owned-static-sysroot-v1", "x86_64-unknown-linux-musl"):
+    ) != (1, static_format, ARCHITECTURE["target_triple"]):
         raise RunnerError("manifest does not identify the owned x86 static sysroot")
     installed = manifest.get("installed")
     driver = manifest.get("sealed_static_driver")
@@ -1240,7 +1247,7 @@ def owned_static_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict[
         raise RunnerError("owned x86 static sysroot manifest lacks installed-driver records")
     if installed.get("sealed_static_driver") != "bin/crabc-cc" or driver.get("path") != "bin/crabc-cc":
         raise RunnerError("owned x86 static sysroot manifest does not bind crabc-cc")
-    if driver.get("format") != "crabc-x86-64-sealed-static-driver-v1":
+    if driver.get("format") != driver_format:
         raise RunnerError("owned x86 static sysroot driver format drifted")
     files = installed.get("files")
     if not isinstance(files, dict) or not files:
@@ -1357,7 +1364,7 @@ def static_driver_plan(
         selected.get("id"), selected.get("elf_type"), selected.get("crt_object"), selected.get("interpreter")
     ) != (mode.driver_id, f"ET_{mode.elf_type}", mode.crt_object, "absent"):
         raise RunnerError(f"sealed static driver selected the wrong {mode.identifier} plan")
-    if plan.get("target") != "x86_64-unknown-linux-musl" or plan.get("headers") != str(sysroot / "usr/include"):
+    if plan.get("target") != ARCHITECTURE["target_triple"] or plan.get("headers") != str(sysroot / "usr/include"):
         raise RunnerError("sealed static driver plan escapes the installed x86 target headers")
     linker = plan.get("linker")
     if not isinstance(linker, list):
@@ -1447,7 +1454,7 @@ def validate_inert_static_pie_pltgot(path: Path, address: int) -> None:
     try:
         data = path.read_bytes()
         header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
-        if (header[0][:7] != b"\x7fELF\x02\x01\x01" or header[1:3] != (3, 62)
+        if (header[0][:7] != b"\x7fELF\x02\x01\x01" or header[1:3] != (3, 62 if ARCH == "x86_64" else 183)
                 or header[8] != 64 or header[9] != 56 or header[11] != 64):
             raise ValueError
         programs = [struct.unpack_from("<IIQQQQQQ", data, header[5] + i * 56) for i in range(header[10])]
@@ -1472,8 +1479,9 @@ def validate_static_elf_facts(
 ) -> None:
     """Reject a static source-build result with an interpreter or dynamic import."""
 
-    if "Advanced Micro Devices X86-64" not in header:
-        raise RunnerError(f"{label} is not an x86-64 ELF")
+    machine = "Advanced Micro Devices X86-64" if ARCH == "x86_64" else "AArch64"
+    if machine not in header:
+        raise RunnerError(f"{label} is not an {'x86-64' if ARCH == 'x86_64' else 'aarch64'} ELF")
     if not re.search(rf"Type:\s+{mode.elf_type}\b", header):
         raise RunnerError(f"{label} has the wrong ELF type for {mode.identifier}")
     if "INTERP" in program_headers or "Requesting program interpreter" in program_headers:
@@ -1484,9 +1492,9 @@ def validate_static_elf_facts(
             raise RunnerError(f"{label} leaks a dynamic runtime marker: {marker}")
     if "PLTGOT" in combined and not (mode is STATIC_PIE and inert_pltgot):
         raise RunnerError(f"{label} leaks a dynamic runtime marker: PLTGOT")
-    relocations_seen = re.findall(r"R_X86_64_[A-Z0-9_]+", relocations)
+    relocations_seen = re.findall(r"R_(?:X86_64|AARCH64)_[A-Z0-9_]+", relocations)
     if mode is STATIC_PIE:
-        if any(relocation != "R_X86_64_RELATIVE" for relocation in relocations_seen):
+        if any(relocation != ("R_X86_64_RELATIVE" if ARCH == "x86_64" else "R_AARCH64_RELATIVE") for relocation in relocations_seen):
             raise RunnerError(f"{label} static PIE retains a non-relative relocation")
     elif relocations_seen:
         raise RunnerError(f"{label} static ET_EXEC retains a dynamic relocation")
@@ -1606,7 +1614,7 @@ def audit_static_link_receipt(
         raise RunnerError(f"sealed static Lua link receipt is unreadable: {receipt}") from error
     if not isinstance(decoded, dict) or (
         decoded.get("schema"), decoded.get("format"), decoded.get("target")
-    ) != (1, "crabc-x86-64-sealed-static-driver-v1", "x86_64-unknown-linux-musl"):
+    ) != (1, "crabc-x86-64-sealed-static-driver-v1" if ARCH == "x86_64" else "crabc-aarch64-sealed-static-driver-v1", ARCHITECTURE["target_triple"]):
         raise RunnerError("sealed static Lua link receipt schema drifted")
     selected = decoded.get("mode")
     if not isinstance(selected, dict) or (
@@ -2192,6 +2200,7 @@ def run_x86_static_dispatch(
     builder: Path | None = None,
     static_runner: Any | None = None,
     allocator_backend: str = "accepted-c",
+    architecture: str = "x86_64",
 ) -> tuple[dict[str, object], Path, Path | None]:
     """Materialize and qualify one isolated installed x86 Lua static product.
 
@@ -2230,7 +2239,7 @@ def run_x86_static_dispatch(
             "native Lua static sysroot builder",
         )
         producer = command_record(
-            [sys.executable, "-B", str(selected_builder), "--output", str(sysroot),
+            [sys.executable, "-B", str(selected_builder), *(('--architecture', architecture) if architecture != 'x86_64' else ()), "--output", str(sysroot),
              *(("--allocator-backend", allocator_backend) if allocator_backend != "accepted-c" else ())],
             cwd=ROOT,
             environment=static_environment(state / "producer"),
@@ -2279,47 +2288,12 @@ def run_x86_static_dispatch(
 
 def run_aarch64_dynamic(args: argparse.Namespace) -> dict[str, object]:
     require_native_aarch64()
-    manifest = load_manifest(args.manifest)
-    archive = fetch_archive(manifest, args.offline)
-    sysroot, wrapper, runtime, installed_manifest = owned_sysroot(args.sysroot)
-    report: dict[str, object] = {
-        "schema_version": 1,
-        "runner": "crabc-lua-owned-sysroot",
-        "result": "fail",
-        "passed": False,
-        "manifest": {"path": str(args.manifest), "sha256": sha256_file(args.manifest), "contents": manifest},
-        "source_archive": artifact_record(archive),
-        "environment": {
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "kernel": platform.release(),
-            "sysroot": str(sysroot),
-            "compiler_wrapper": str(wrapper),
-            "owned_runtime_inputs": {name: artifact_record(path) for name, path in runtime.items()},
-            "sysroot_manifest": installed_manifest,
-            "musl_root": str(MUSL_ROOT),
-            "musl_role": "pinned execution oracle only; never a candidate build or link input",
-            "timeout_seconds": args.timeout,
-        },
-    }
-    try:
-        with tempfile.TemporaryDirectory(prefix="crabc-lua-") as temporary:
-            graph = build_graph(manifest, sysroot, Path(temporary), args.timeout)
-            report["build"] = graph["records"]
-            workloads = run_workloads(graph, Path(temporary), args.timeout)
-            report["workloads"] = workloads
-            maps = workloads["candidate_maps"]
-            assert isinstance(maps, dict)
-            if maps.get("status") != "passed":
-                raise RunnerError(f"candidate runtime mapping isolation failed: {maps.get('errors')}")
-            source = workloads["source"]
-            bytecode = workloads["bytecode"]
-            assert isinstance(source, dict) and isinstance(bytecode, dict)
-            report["passed"] = source.get("passed") is True and bytecode.get("passed") is True
-            report["result"] = "pass" if report["passed"] else "fail"
-    except RunnerError as error:
-        report["error"] = str(error)
-    return report
+    import run_x86_dynamic as dynamic
+
+    return dynamic.run_dynamic_lane(
+        sysroot_path=args.sysroot, work_root=args.work_root, cache=CACHE,
+        offline=args.offline, jobs=args.jobs, timeout=args.timeout, manifest_path=args.manifest,
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -2348,9 +2322,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
         parser.error("--timeout must be > 0 and <= 300")
-    if args.target == "x86_64-static":
-        if args.jobs < 1 or args.jobs > MAX_JOBS:
-            parser.error(f"--jobs must be an integer from 1 through {MAX_JOBS}")
+    if args.jobs < 1 or args.jobs > MAX_JOBS:
+        parser.error(f"--jobs must be an integer from 1 through {MAX_JOBS}")
     if args.target == "aarch64-dynamic" and args.mode:
         parser.error("--mode is available only with --target x86_64-static")
     if args.target == "aarch64-dynamic" and args.build_profile != "release":

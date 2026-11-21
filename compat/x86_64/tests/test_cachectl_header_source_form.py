@@ -21,43 +21,13 @@ DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 # checked whitespace policy. The native runner permits only that exact
 # non-token normalization and compares every remaining source byte.
 X86_MUSL_NORMALIZED_SHA256 = "cd7adcc34c66a04704e940a602fd6e1e16d5820a9d03ab9839ebd505cc1f7489"
-LEGACY_SHA256 = "7967a76590f4bf8c82a8ced76124ad0b797453248c8f83172a7e64d451d02e08"
-
-
-def split_x86_branch(path: Path) -> tuple[bytes, bytes]:
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    if not lines or lines[0] != "#if defined(__x86_64__)\n":
-        raise AssertionError(f"{path} must begin with its x86 source-form branch")
-
-    depth = 1
-    x86: list[str] = []
-    legacy: list[str] = []
-    in_legacy = False
-    for line in lines[1:]:
-        if not in_legacy and line.startswith("#else") and depth == 1:
-            in_legacy = True
-            continue
-        if in_legacy and line.startswith("#endif") and depth == 1:
-            break
-        if in_legacy:
-            legacy.append(line)
-        else:
-            x86.append(line)
-        if line.startswith(("#if", "#ifdef", "#ifndef")):
-            depth += 1
-        elif line.startswith("#endif"):
-            depth -= 1
-    else:
-        raise AssertionError(f"{path} is missing its closing x86 source-form branch")
-    return "".join(x86).encode(), "".join(legacy).encode()
-
-
 class CachectlHeaderSourceFormTests(unittest.TestCase):
-    def test_x86_body_matches_normalized_pinned_musl_and_non_x86_body_stays_frozen(self) -> None:
-        x86, legacy = split_x86_branch(HEADER)
-        self.assertNotIn(b"\n \n", x86)
-        self.assertEqual(hashlib.sha256(x86).hexdigest(), X86_MUSL_NORMALIZED_SHA256)
-        self.assertEqual(hashlib.sha256(legacy).hexdigest(), LEGACY_SHA256)
+    def test_both_architectures_use_pinned_musl_source(self) -> None:
+        source = HEADER.read_bytes()
+        self.assertNotIn(b"\n \n", source)
+        self.assertEqual(hashlib.sha256(source).hexdigest(), X86_MUSL_NORMALIZED_SHA256)
+        self.assertNotIn(b"__x86_64__", source)
+        self.assertNotIn(b"__aarch64__", source)
 
     def test_direct_c_and_cpp_probes_keep_the_no_provider_declarations_visible(self) -> None:
         for probe_path in (C_PROBE, CXX_PROBE):

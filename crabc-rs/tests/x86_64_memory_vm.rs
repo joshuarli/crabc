@@ -1,6 +1,5 @@
-//! Linux/x86-64 evidence for the deliberately narrow VM-policy seam.
+//! Linux evidence for the deliberately narrow VM-policy seam.
 
-#![cfg(target_arch = "x86_64")]
 
 use std::process::Command;
 

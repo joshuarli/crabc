@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path, PurePosixPath
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -435,6 +436,8 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
             ],
         }
         reader.validate_shared_alias_link_policy(provenance, "fixture shared policy")
+        with patch.object(reader, "ARCH", "aarch64"):
+            reader.validate_shared_alias_link_policy(provenance, "arm64 fixture shared policy")
 
         wrong_members = {
             **provenance,

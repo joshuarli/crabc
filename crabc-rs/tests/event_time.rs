@@ -17,9 +17,6 @@ fn epoll_register_modify_delete_and_wait_preserve_event_data() {
     )
     .expect("register the pipe reader");
 
-    #[cfg(not(target_arch = "x86_64"))]
-    let timeout = time::Timespec::default();
-    #[cfg(target_arch = "x86_64")]
     let timeout = time::Timespec { tv_sec: 0, tv_nsec: 0 };
     let mut events = [MaybeUninit::uninit(); 4];
     let (ready, _) = event::epoll::wait(&epoll, &mut events, Some(&timeout))
@@ -30,13 +27,7 @@ fn epoll_register_modify_delete_and_wait_preserve_event_data() {
     let (ready, _) = event::epoll::wait(&epoll, &mut events, Some(&timeout))
         .expect("wait for the readable pipe");
     assert_eq!(ready.len(), 1);
-    #[cfg(not(target_arch = "x86_64"))]
-    assert!(ready[0].flags.contains(event::epoll::EventFlags::IN));
-    #[cfg(target_arch = "x86_64")]
     assert!(ready[0].flags().contains(event::epoll::EventFlags::IN));
-    #[cfg(not(target_arch = "x86_64"))]
-    assert_eq!(ready[0].data.u64(), 0x1234);
-    #[cfg(target_arch = "x86_64")]
     assert_eq!(ready[0].data().u64(), 0x1234);
 
     event::epoll::modify(
@@ -49,9 +40,6 @@ fn epoll_register_modify_delete_and_wait_preserve_event_data() {
     let (ready, _) = event::epoll::wait(&epoll, &mut events, Some(&timeout))
         .expect("modified registration remains readable");
     assert_eq!(ready.len(), 1);
-    #[cfg(not(target_arch = "x86_64"))]
-    assert_eq!(ready[0].data.u64(), 0x5678);
-    #[cfg(target_arch = "x86_64")]
     assert_eq!(ready[0].data().u64(), 0x5678);
 
     event::epoll::delete(&epoll, &reader).expect("delete the pipe registration");
@@ -74,9 +62,6 @@ fn timerfd_set_get_and_epoll_wait_use_direct_linux_layouts() {
         &timer,
         time::TimerfdTimerFlags::empty(),
         &time::Itimerspec {
-            #[cfg(not(target_arch = "x86_64"))]
-            it_interval: time::Timespec::default(),
-            #[cfg(target_arch = "x86_64")]
             it_interval: time::Timespec { tv_sec: 0, tv_nsec: 0 },
             it_value: time::Timespec {
                 tv_sec: 0,
@@ -109,13 +94,7 @@ fn timerfd_set_get_and_epoll_wait_use_direct_linux_layouts() {
     let (ready, _) = event::epoll::wait(&epoll, &mut events, Some(&timeout))
         .expect("timerfd should become readable before the timeout");
     assert_eq!(ready.len(), 1);
-    #[cfg(not(target_arch = "x86_64"))]
-    assert!(ready[0].flags.contains(event::epoll::EventFlags::IN));
-    #[cfg(target_arch = "x86_64")]
     assert!(ready[0].flags().contains(event::epoll::EventFlags::IN));
-    #[cfg(not(target_arch = "x86_64"))]
-    assert_eq!(ready[0].data.u64(), 0xa11);
-    #[cfg(target_arch = "x86_64")]
     assert_eq!(ready[0].data().u64(), 0xa11);
 
     let mut expirations = [0_u8; 8];

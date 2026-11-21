@@ -87,7 +87,12 @@ unsafe extern "C" fn runtime_stderr_output(message: *const c_char) {
 /// the allocator engine, performs the read, preserving the exact symbol the
 /// source observes. Each call returns the current vector; a later lazy option
 /// retry therefore follows a coordinated `setenv` just as the source does.
+/// Secure execution always returns a permanent empty environment vector.
 unsafe fn runtime_source_environment() -> *const *const c_char {
+    static EMPTY_ENVIRONMENT: [usize; 1] = [0];
+    if super::startup_security::is_secure() {
+        return EMPTY_ENVIRONMENT.as_ptr().cast();
+    }
     unsafe extern "C" {
         static mut environ: *mut *mut c_char;
     }

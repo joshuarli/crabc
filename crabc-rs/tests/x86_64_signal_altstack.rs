@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::arch::global_asm;
 use core::ffi::c_void;
@@ -10,12 +9,22 @@ static STACK_END: AtomicUsize = AtomicUsize::new(0);
 static OBSERVED: AtomicUsize = AtomicUsize::new(0);
 static VALUE: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_arch = "x86_64")]
 global_asm!(
     ".global signal_altstack_test_restorer",
     ".type signal_altstack_test_restorer,@function",
     "signal_altstack_test_restorer:",
     "mov rax, 15",
     "syscall",
+);
+
+#[cfg(target_arch = "aarch64")]
+global_asm!(
+    ".global signal_altstack_test_restorer",
+    ".type signal_altstack_test_restorer,%function",
+    "signal_altstack_test_restorer:",
+    "mov x8, #139",
+    "svc #0",
 );
 
 unsafe extern "C" {
@@ -127,13 +136,20 @@ fn x86_64_signal_altstack_action_suspend_composition() {
 
         let mut handler_mask = signal::SignalSet::EMPTY;
         handler_mask.insert(signal::Signal::USR2);
+        #[cfg(target_arch = "x86_64")]
         let action = signal::SigAction::with_mask(signal::SigHandler::SigInfo(info_handler),
+            handler_mask, signal::SigActionFlags::ONSTACK);
+        #[cfg(target_arch = "aarch64")]
+        let action = signal::SigAction::new(signal::SigHandler::SigInfo(info_handler),
             handler_mask, signal::SigActionFlags::ONSTACK);
         assert!(action.flags().contains(signal::SigActionFlags::SIGINFO));
         assert_eq!(action.mask(), handler_mask);
         let original_action = signal::sigaction(signal::Signal::USR1, Some(&action)).unwrap();
         let queried = signal::sigaction(signal::Signal::USR1, None).unwrap();
+        #[cfg(target_arch = "x86_64")]
         assert!(matches!(queried.handler(), Some(signal::SigHandler::SigInfo(_))));
+        #[cfg(target_arch = "aarch64")]
+        assert!(matches!(queried.handler(), signal::SigHandler::SigInfo(_)));
         assert_eq!(queried.mask(), handler_mask);
 
         // A queried action must retain the restorer and reserved mask bits
@@ -164,7 +180,11 @@ fn x86_64_signal_altstack_action_suspend_composition() {
         assert!(!signal::pending().unwrap().contains(signal::Signal::USR1));
         assert!(signal::sigaltstack(None).unwrap().flags().is_empty());
 
+        #[cfg(target_arch = "x86_64")]
         let simple = signal::SigAction::with_mask(signal::SigHandler::Simple(simple_handler),
+            handler_mask, signal::SigActionFlags::ONSTACK | signal::SigActionFlags::SIGINFO);
+        #[cfg(target_arch = "aarch64")]
+        let simple = signal::SigAction::new(signal::SigHandler::Simple(simple_handler),
             handler_mask, signal::SigActionFlags::ONSTACK | signal::SigActionFlags::SIGINFO);
         assert!(!simple.flags().contains(signal::SigActionFlags::SIGINFO));
         signal::sigaction(signal::Signal::USR1, Some(&simple)).unwrap();

@@ -235,9 +235,13 @@ static void deny_process_syscalls(void) {
     struct program { unsigned short length; struct instruction *instructions; };
     struct instruction instructions[] = {
         {0x20, 0, 0, 0},
+#if defined(__aarch64__)
+        {0x15, 1, 0, SYS_clone},
+#else
         {0x15, 3, 0, SYS_clone},
         {0x15, 2, 0, SYS_vfork},
         {0x15, 1, 0, SYS_fork},
+#endif
         {0x06, 0, 0, 0x7fff0000},
         {0x06, 0, 0, 0x00050000 | EAGAIN},
     };

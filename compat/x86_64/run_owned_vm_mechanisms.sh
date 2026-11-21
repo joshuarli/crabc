@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_vm_mechanisms_probe.c"
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 
@@ -123,7 +124,7 @@ assert_dynamic_vm_imports() {
     local binary="$1" symbols="$2" relocations="$3"
     readelf --wide --dyn-syms "$binary" >"$symbols"
     readelf --wide --relocs "$binary" >"$relocations"
-    python3 -B - "$symbols" "$relocations" <<'PYTHON'
+    python3 -B - "$symbols" "$relocations" "$arch" <<'PYTHON'
 from pathlib import Path
 import sys
 
@@ -134,11 +135,12 @@ for line in Path(sys.argv[1]).read_text().splitlines():
     if len(fields) == 8 and fields[7] in requested:
         assert fields[7] not in symbols, (fields[7], symbols[fields[7]], fields)
         symbols[fields[7]] = fields
+relocation = 'R_X86_64_JUMP_SLOT' if sys.argv[3] == 'x86_64' else 'R_AARCH64_JUMP_SLOT'
 for name in requested:
     entry = symbols[name]
     assert entry[3:6] == ["FUNC", "GLOBAL", "DEFAULT"] and entry[6] == "UND", entry
-    assert f"R_X86_64_JUMP_SLOT" in Path(sys.argv[2]).read_text() and any(
-        f"{name} + 0" in line and "R_X86_64_JUMP_SLOT" in line
+    assert relocation in Path(sys.argv[2]).read_text() and any(
+        f"{name} + 0" in line and relocation in line
         for line in Path(sys.argv[2]).read_text().splitlines()
     ), name
 PYTHON
@@ -148,11 +150,13 @@ assert_owned_vm_wait() {
     local binary="$1" symbol="$2" disassembly
     disassembly="$work/${symbol}-owned-vmlock-disassembly.txt"
     objdump -d --disassemble="$symbol" "$binary" >"$disassembly"
-    grep -Eq '\$0xca(,|[[:space:]]|$)' "$disassembly" || {
+    local futex_pattern='\$0xca(,|[[:space:]]|$)' syscall_pattern='[[:space:]]syscall([[:space:]]|$)'
+    if [ "$arch" = aarch64 ]; then futex_pattern='(0x62|#98)'; syscall_pattern='[[:space:]]svc[[:space:]]'; fi
+    grep -Eq "$futex_pattern" "$disassembly" || {
         printf 'owned VM mechanisms: %s lacks the selected vmlock futex syscall\n' "$symbol" >&2
         return 1
     }
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" || {
+    grep -Eq "$syscall_pattern" "$disassembly" || {
         printf 'owned VM mechanisms: %s lacks a selected VM wait syscall instruction\n' "$symbol" >&2
         return 1
     }
@@ -202,7 +206,7 @@ for mode in pie non-pie; do
         cp -a "$installed" "$root"
         cp "$work/consumer-$mode" "$root/consumer"
         if [ "$entry" = direct ]; then
-            run_in_root "$root" "$work/$mode-$entry.stdout" /lib/ld-crabc-x86_64.so.1 /consumer
+            run_in_root "$root" "$work/$mode-$entry.stdout" "/lib/ld-crabc-$arch.so.1" /consumer
         else
             run_in_root "$root" "$work/$mode-$entry.stdout" /consumer
         fi

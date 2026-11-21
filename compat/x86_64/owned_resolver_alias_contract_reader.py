@@ -34,13 +34,15 @@ import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
 import source_seal
 import core_image
+from native_arch import native_arch
 
+ARCH = native_arch()['arch']
 SCHEMA = 'crabc.x86_64-owned-resolver-alias-contract/v1'
 COLLECTION_BEGIN_SCHEMA = 'crabc.x86_64-owned-resolver-alias-collection-begin/v1'
 STATUS = 'component-verified'
 COMPONENT = 'resolver-alias-private-bodies'
-IMAGE = core_image.CORE_IMAGE_REFERENCE
-IMAGE_MANIFEST = MODULE_DIR / 'owned_resolver_alias_image_inputs.json'
+IMAGE = 'crabc-core-evidence@' + core_image.core_image_id(ARCH)
+IMAGE_MANIFEST = MODULE_DIR / ('owned_resolver_alias_image_inputs' + ('' if ARCH == 'x86_64' else '_aarch64') + '.json')
 MUSL_SOURCE_COMMIT = '9fa28ece75d8a2191de7c5bb53bed224c5947417'
 IMAGE_MARKER = 'CRABC_RESOLVER_ALIAS_IMAGE_ID'
 IMAGE_INPUTS = {
@@ -48,11 +50,11 @@ IMAGE_INPUTS = {
     'readelf': '/usr/bin/readelf',
     'timeout': '/usr/bin/timeout',
     'chroot': '/usr/sbin/chroot',
-    'oracle_compiler': '/usr/local/bin/crabc-x86_64-musl-gcc',
+    'oracle_compiler': f'/usr/local/bin/crabc-{ARCH}-musl-gcc',
     'oracle_archive': '/opt/musl-1.2.6/lib/libc.a',
     'oracle_shared': '/opt/musl-1.2.6/lib/libc.so',
 }
-TOOLCHAIN_ROOT = Path('/opt/rustup/toolchains') / f'{pinned_toolchain(ROOT)}-x86_64-unknown-linux-musl'
+TOOLCHAIN_ROOT = Path('/opt/rustup/toolchains') / f'{pinned_toolchain(ROOT)}-{ARCH}-unknown-linux-musl'
 TOOLCHAIN_INPUTS = {
     str(TOOLCHAIN_ROOT / 'bin/rustc'),
     str(product_evidence.native_build_tools.KACHE),
@@ -100,7 +102,7 @@ COLLECTOR_PATHS = (
     'compat/x86_64/owned_resolver_alias_override_probe.c',
     'compat/x86_64/owned_resolver_alias_override_caller.c',
     'compat/x86_64/owned-resolver-alias-contract.md',
-    'compat/x86_64/owned_resolver_alias_image_inputs.json',
+    IMAGE_MANIFEST.relative_to(ROOT).as_posix(),
     'compat/x86_64/core_image.py',
     'rust-toolchain.toml',
     'scripts/rust_toolchain.py',
@@ -213,10 +215,10 @@ def read_json(path: Path, description: str) -> Any:
 
 def trusted_image_manifest(root: Path) -> dict[str, Any]:
     """Validate the tool and toolchain roster expected inside the pinned core image."""
-    value = read_json(root / 'compat/x86_64/owned_resolver_alias_image_inputs.json', 'resolver image manifest')
+    value = read_json(root / IMAGE_MANIFEST.relative_to(ROOT).as_posix(), 'resolver image manifest')
     expected_inputs = set(IMAGE_INPUTS.values()) | TOOLCHAIN_INPUTS
     exact(value, {'schema', 'files'}, 'resolver current image manifest')
-    require(value['schema'] == 'crabc.x86_64-owned-resolver-alias-image-inputs/v1'
+    require(value['schema'] == f'crabc.{ARCH}-owned-resolver-alias-image-inputs/v1'
             and type(value['files']) is dict and set(value['files']) == expected_inputs,
             'resolver current image manifest differs')
     for invocation, record in value['files'].items():
@@ -575,7 +577,7 @@ def _source_paths(root: Path) -> dict[str, Path]:
         'static_authority': root / 'compat/x86_64/owned_static_link_authority.py',
         'elf_reader': root / 'compat/x86_64/loader_debug_abi_evidence.py',
         'product_authority': root / 'compat/x86_64/owned_posix_product_evidence.py',
-        'image_manifest': root / 'compat/x86_64/owned_resolver_alias_image_inputs.json',
+        'image_manifest': root / IMAGE_MANIFEST.relative_to(ROOT).as_posix(),
     }
 
 
@@ -599,7 +601,7 @@ def _product_paths(static_product: Path, dynamic_product: Path, product_report: 
         'static_builtins': static_product / 'usr/lib/libcrabc-builtins.a',
         'dynamic_driver': dynamic_product / 'bin/crabc-cc-dynamic',
         'dynamic_libc': dynamic_product / 'usr/lib/libc.so',
-        'dynamic_loader': dynamic_product / 'lib/ld-crabc-x86_64.so.1',
+        'dynamic_loader': dynamic_product / f'lib/ld-crabc-{ARCH}.so.1',
         'dynamic_crt1': dynamic_product / 'usr/lib/crt1.o',
         'dynamic_scrt1': dynamic_product / 'usr/lib/Scrt1.o',
         'dynamic_crti': dynamic_product / 'usr/lib/crti.o',
@@ -773,7 +775,7 @@ def _expected_command_argvs(inputs: Mapping[str, Any], origin_root: Path, origin
         'dynamic-normal-pie-runtime': [path['chroot'], f'{roots}/dynamic-pie', '/contract', '/fixture'],
         'dynamic-normal-nopie-link': [dynamic, '--dynamic-non-pie', '-pthread', '-rdynamic', f'{objects}/public-probe.o', '-o', f'{outputs}/dynamic-non-pie-contract'],
         'dynamic-normal-nopie-dynsym': [path['readelf'], '--dyn-syms', '--wide', f'{outputs}/dynamic-non-pie-contract'],
-        'dynamic-normal-nopie-runtime': [path['chroot'], f'{roots}/dynamic-non-pie', '/lib/ld-crabc-x86_64.so.1', '/contract', '/fixture'],
+        'dynamic-normal-nopie-runtime': [path['chroot'], f'{roots}/dynamic-non-pie', f'/lib/ld-crabc-{ARCH}.so.1', '/contract', '/fixture'],
     }
     for alias, number, public in (('mkquery', '1', 'res_mkquery'), ('send', '2', 'res_send'), ('search', '3', 'res_search')):
         definition = f'{objects}/override-{alias}-definition.o'
@@ -874,7 +876,7 @@ def _validate_source_objects(root: Path, receipt_root: Path, origin_root: Path, 
     for alias in ('mkquery', 'send', 'search'):
         commands[f'{alias}_definition'] = f'compile-override-{alias}'
         commands[f'{alias}_caller'] = f'compile-override-{alias}-caller'
-    scratch = root / '.work/x86_64/tmp'
+    scratch = root / f'.work/{ARCH}/tmp'
     scratch.mkdir(parents=True, exist_ok=True)
     for name, command in commands.items():
         _validate_source_object(receipt_root, origin_work, objects[name], expected[command], name,
@@ -922,7 +924,7 @@ def _validate_linked_executables(root: Path, receipt_root: Path, origin_root: Pa
         'dynamic_pie': 'dynamic-normal-pie-link',
         'dynamic_non_pie': 'dynamic-normal-nopie-link',
     }
-    scratch = root / '.work/x86_64/tmp'
+    scratch = root / f'.work/{ARCH}/tmp'
     for name, command in commands.items():
         _validate_linked_executable(receipt_root, origin_work, artifacts['normal'][name], expected[command],
                                     name, scratch_root=scratch)
@@ -1026,7 +1028,7 @@ def _validate_before_runtime_tree(name: str, tree: Mapping[str, Any], inputs: Ma
     artifact = (artifacts['normal'][artifact_name] if artifact_name in {'dynamic_pie', 'dynamic_non_pie'}
                 else artifacts['overrides'][artifact_name])
     expected_files = {
-        'lib/ld-crabc-x86_64.so.1': {key: inputs['dynamic_loader'][key] for key in ('sha256', 'size', 'mode')},
+        f'lib/ld-crabc-{ARCH}.so.1': {key: inputs['dynamic_loader'][key] for key in ('sha256', 'size', 'mode')},
         'usr/lib/libc.so': {key: inputs['dynamic_libc'][key] for key in ('sha256', 'size', 'mode')},
         'contract': {key: artifact[key] for key in ('sha256', 'size', 'mode')},
         **_fixture_tree_files('fixture/'),
@@ -1249,7 +1251,7 @@ def _validate_product_cohort_links(root: Path, source: Mapping[str, Any], static
         'dynamic-manifest': (dynamic_product / 'share/crabc/manifest.json', True),
         'dynamic-state': (dynamic_product / 'share/crabc/dynamic-product-state.json', True),
         'candidate-libc': (dynamic_product / 'usr/lib/libc.so', True),
-        'candidate-loader': (dynamic_product / 'lib/ld-crabc-x86_64.so.1', True),
+        'candidate-loader': (dynamic_product / f'lib/ld-crabc-{ARCH}.so.1', True),
     }
     for name, (path, exact_path) in expected.items():
         record = artifacts.get(name)
@@ -1379,8 +1381,8 @@ def _validate_static_link_authority(receipt_root: Path, origin_work: Path, artif
         receipt = read_json(_retained_record(receipt_root, sidecars['receipt'], f'{mode} link receipt'),
                             f'{mode} link receipt')
         require(type(receipt) is dict and receipt.get('schema') == 1
-                and receipt.get('format') == 'crabc-x86-64-sealed-static-driver-v1'
-                and receipt.get('target') == 'x86_64-unknown-linux-musl',
+                and receipt.get('format') == ('crabc-x86-64-sealed-static-driver-v1' if ARCH == 'x86_64' else 'crabc-aarch64-sealed-static-driver-v1')
+                and receipt.get('target') == f'{ARCH}-unknown-linux-musl',
                 f'{mode} static link receipt identity differs')
         expected_mode = {
             'static_et_exec': {'id': 'static-et-exec', 'elf_type': 'ET_EXEC', 'crt_object': 'crt1.o', 'interpreter': 'absent'},

@@ -177,14 +177,14 @@ class AArch64ParityInventoryTests(unittest.TestCase):
                 row for row in report["capabilities"] if row["id"] == identifier
             )
             self.assertEqual(crypt_capability["x86_family"], "libc.c-abi-compat")
-            self.assertEqual(crypt_capability["contract_state"], "selected-private")
+            self.assertEqual(crypt_capability["contract_state"], "implemented-foundation")
         allocator_basic = next(
             row
             for row in report["capabilities"]
             if row["id"] == "memory.allocator-basic"
         )
         self.assertEqual(allocator_basic["x86_family"], "libc.c-abi-compat")
-        self.assertEqual(allocator_basic["contract_state"], "selected-private")
+        self.assertEqual(allocator_basic["contract_state"], "implemented-foundation")
         for identifier in (
             "stdio.path-stream",
             "stdio.stream-io",
@@ -195,18 +195,18 @@ class AArch64ParityInventoryTests(unittest.TestCase):
                 row for row in report["capabilities"] if row["id"] == identifier
             )
             self.assertEqual(stdio_capability["x86_family"], "libc.text-math-locale-stdio")
-            self.assertEqual(stdio_capability["contract_state"], "selected-private")
+            self.assertEqual(stdio_capability["contract_state"], "implemented-foundation")
         locale_core = next(
             row for row in report["capabilities"] if row["id"] == "locale.core"
         )
         self.assertEqual(locale_core["x86_family"], "libc.text-math-locale-stdio")
-        self.assertEqual(locale_core["contract_state"], "selected-private")
+        self.assertEqual(locale_core["contract_state"], "implemented-foundation")
         for identifier in ("text.wide-multibyte", "text.iconv"):
             text_capability = next(
                 row for row in report["capabilities"] if row["id"] == identifier
             )
             self.assertEqual(text_capability["x86_family"], "libc.text-math-locale-stdio")
-            self.assertEqual(text_capability["contract_state"], "selected-private")
+            self.assertEqual(text_capability["contract_state"], "implemented-foundation")
         elementary_fenv_sensitive = next(
             row
             for row in report["capabilities"]
@@ -217,7 +217,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             "libc.text-math-locale-stdio",
         )
         self.assertEqual(
-            elementary_fenv_sensitive["contract_state"], "selected-private"
+            elementary_fenv_sensitive["contract_state"], "implemented-foundation"
         )
         environment_mutation = next(
             row
@@ -226,7 +226,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(environment_mutation["x86_family"], "libc.posix-runtime")
         self.assertEqual(
-            environment_mutation["contract_state"], "selected-private"
+            environment_mutation["contract_state"], "implemented-foundation"
         )
         filesystem_directory = next(
             row
@@ -235,7 +235,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(filesystem_directory["x86_family"], "libc.posix-runtime")
         self.assertEqual(
-            filesystem_directory["contract_state"], "selected-private"
+            filesystem_directory["contract_state"], "implemented-foundation"
         )
         filesystem_extensions = next(
             row
@@ -244,7 +244,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(filesystem_extensions["x86_family"], "libc.posix-runtime")
         self.assertEqual(
-            filesystem_extensions["contract_state"], "selected-private"
+            filesystem_extensions["contract_state"], "implemented-foundation"
         )
         for identifier, family in (
             ("legacy.misc", "libc.c-abi-compat"),
@@ -255,26 +255,26 @@ class AArch64ParityInventoryTests(unittest.TestCase):
                 row for row in report["capabilities"] if row["id"] == identifier
             )
             self.assertEqual(capability["x86_family"], family)
-            self.assertEqual(capability["contract_state"], "selected-private")
+            self.assertEqual(capability["contract_state"], "implemented-foundation")
         process_globals = next(
             row for row in report["capabilities"] if row["id"] == "process.globals"
         )
         self.assertEqual(process_globals["x86_family"], "libc.c-abi-compat")
-        self.assertEqual(process_globals["contract_state"], "selected-private")
+        self.assertEqual(process_globals["contract_state"], "implemented-foundation")
         runtime_loader = next(
             row for row in report["capabilities"] if row["id"] == "runtime.loader"
         )
         self.assertEqual(runtime_loader["x86_family"], "ldso.dynamic-runtime")
-        self.assertEqual(runtime_loader["contract_state"], "selected-private")
+        self.assertEqual(runtime_loader["contract_state"], "implemented-foundation")
         private_facades = next(
             row for row in report["capabilities"] if row["id"] == "runtime.private-facades"
         )
         self.assertEqual(private_facades["x86_family"], "ldso.dynamic-runtime")
-        self.assertEqual(private_facades["contract_state"], "selected-private")
+        self.assertEqual(private_facades["contract_state"], "implemented-foundation")
         dynamic_runtime = next(
             row for row in report["families"] if row["id"] == "ldso.dynamic-runtime"
         )
-        self.assertEqual(dynamic_runtime["contract_state"], "selected-private")
+        self.assertEqual(dynamic_runtime["contract_state"], "implemented-foundation")
         text_math = next(
             row for row in report["families"]
             if row["id"] == "libc.text-math-locale-stdio"
@@ -321,7 +321,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         pthread_tls = next(
             row for row in report["families"] if row["id"] == "libc.pthread-tls"
         )
-        self.assertEqual(pthread_tls["contract_state"], "selected-private")
+        self.assertEqual(pthread_tls["contract_state"], "implemented-foundation")
         self.assertIn(
             {"family": "libc.pthread-tls", "id": "static-c-pthread-barrier"},
             report["selected_private_artifacts"],
@@ -519,7 +519,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["contract_state"], "selected-private")
+        self.assertEqual(posix_runtime["contract_state"], "implemented-foundation")
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

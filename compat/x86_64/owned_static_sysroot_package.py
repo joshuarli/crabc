@@ -38,10 +38,12 @@ from typing import Iterable, Mapping
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from compat.x86_64 import source_seal
+from compat.x86_64.native_arch import native_arch
 
 
 PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
-ARCHIVE_ROOT = "crabc-x86_64-owned-static-sysroot"
+ARCH = native_arch()
+ARCHIVE_ROOT = f"crabc-{ARCH['arch']}-owned-static-sysroot"
 SYSROOT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 TARGET = "x86_64-unknown-linux-musl"
 DRIVER_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
@@ -137,8 +139,11 @@ def publish_noreplace(staged: Path, destination: Path, description: str) -> None
     """
 
     system = os.uname()
-    if system.sysname != "Linux" or system.machine not in {"x86_64", "amd64"}:
-        raise PackageError("atomic package publication requires Linux/x86-64 renameat2")
+    syscalls = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}
+    if system.sysname != "Linux" or system.machine not in syscalls:
+        message = ("atomic package publication requires Linux/x86-64 renameat2"
+                   if ARCH["arch"] == "x86_64" else "atomic package publication requires Linux/aarch64 renameat2")
+        raise PackageError(message)
     try:
         libc = ctypes.CDLL(None, use_errno=True)
         syscall = libc.syscall
@@ -147,7 +152,7 @@ def publish_noreplace(staged: Path, destination: Path, description: str) -> None
     syscall.restype = ctypes.c_long
     ctypes.set_errno(0)
     result = syscall(
-        ctypes.c_long(LINUX_X86_64_SYS_RENAMEAT2),
+        ctypes.c_long(syscalls[system.machine]),
         ctypes.c_long(AT_FDCWD),
         ctypes.c_char_p(os.fsencode(staged)),
         ctypes.c_long(AT_FDCWD),
@@ -179,16 +184,23 @@ def manifest_payload_hashes(manifest: object) -> dict[str, str]:
 
     if not isinstance(manifest, Mapping):
         raise PackageError("installed manifest is not an object")
-    if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
-        raise PackageError("installed manifest does not identify the x86 owned static sysroot")
+    arm = ARCH["arch"] == "aarch64"
+    expected_format = "crabc-aarch64-owned-static-sysroot-v1" if arm else SYSROOT_FORMAT
+    if manifest.get("format") != expected_format or manifest.get("target") != ARCH["target_triple"]:
+        label = "aarch64" if arm else "x86"
+        raise PackageError(f"installed manifest does not identify the {label} owned static sysroot")
     source_sha256 = manifest.get("source_sha256")
     if (not isinstance(source_sha256, str) or len(source_sha256) != 64
             or any(character not in "0123456789abcdef" for character in source_sha256)):
         raise PackageError("installed manifest source seal is missing or invalid")
     if source_sha256 != source_seal.product_source_digest(ROOT):
         raise PackageError("installed manifest source seal differs from the current checkout")
+    if arm and (manifest.get("schema"), manifest.get("build_profile")) != (1, "release"):
+        raise PackageError("aarch64 static product identity differs")
     package = manifest.get("package")
-    if package != {"format": PACKAGE_FORMAT, "archive_root": ARCHIVE_ROOT}:
+    archive_root = "crabc-aarch64-owned-static-sysroot" if arm else ARCHIVE_ROOT
+    package_format = "crabc-aarch64-owned-static-sysroot-package/v1" if arm else PACKAGE_FORMAT
+    if package != {"format": package_format, "archive_root": archive_root}:
         raise PackageError("installed manifest private package contract drifted")
     installed = manifest.get("installed")
     if not isinstance(installed, Mapping):
@@ -204,7 +216,8 @@ def manifest_payload_hashes(manifest: object) -> dict[str, str]:
         if installed.get(key) != expected:
             raise PackageError(f"installed manifest {key} record drifted")
     driver = manifest.get("sealed_static_driver")
-    if not isinstance(driver, Mapping) or driver.get("format") != DRIVER_FORMAT:
+    driver_format = "crabc-aarch64-sealed-static-driver-v1" if arm else DRIVER_FORMAT
+    if not isinstance(driver, Mapping) or driver.get("format") != driver_format:
         raise PackageError("installed manifest sealed static driver record drifted")
     if driver.get("path") != "bin/crabc-cc":
         raise PackageError("installed manifest sealed static driver path drifted")

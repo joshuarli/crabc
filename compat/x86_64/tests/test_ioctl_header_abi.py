@@ -28,10 +28,7 @@ class IoctlHeaderAbiTests(unittest.TestCase):
     def test_direct_header_and_static_forwarder_keep_the_selected_boundary(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
         bits_header = BITS_HEADER.read_text(encoding="utf-8")
-        x86_bits_header = bits_header.split("#if defined(__x86_64__)\n", 1)[1].split(
-            "\n#else\n/* Linux generic ioctl ABI used by musl's x86-64 public headers. */",
-            1,
-        )[0]
+        x86_bits_header = bits_header
         ioctl_surface = header + x86_bits_header
         self.assertIn('#ifdef __cplusplus\nextern "C" {\n#endif', header)
         self.assertIn("int ioctl(int, int, ...);", header)
@@ -67,9 +64,7 @@ class IoctlHeaderAbiTests(unittest.TestCase):
 
     def test_direct_header_retains_pinned_macro_source_forms(self) -> None:
         header = HEADER.read_text(encoding="utf-8")
-        x86_literals = header.split("#if defined(__x86_64__)\n", 1)[1].split(
-            "#else\n", 1
-        )[0]
+        x86_literals = header
         for phrase in (
             "#define SIOCSIFBRDADDR     0x891a",
             "#define SIOCGIFNETMASK     0x891b",

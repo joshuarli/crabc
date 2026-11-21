@@ -49,7 +49,11 @@ int main(int argc, char **argv) {
     #endif
     #ifdef SEARCH_PATH_CACHE
     if (!dlopen("libcache_seed.so", RTLD_NOW | RTLD_LOCAL)) return 4;
+    #if defined(__aarch64__)
+    if (unlink("/etc/ld-musl-aarch64.path")) return 5;
+    #else
     if (unlink("/etc/ld-musl-x86_64.path")) return 5;
+    #endif
     #endif
     #ifndef SEARCH_INITIAL
     void *handle = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);

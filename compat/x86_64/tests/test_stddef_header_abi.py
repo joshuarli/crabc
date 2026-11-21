@@ -17,10 +17,11 @@ STDDEF_HEADER = ROOT / "include" / "stddef.h"
 
 
 class StddefHeaderAbiTests(unittest.TestCase):
-    def test_x86_header_uses_musl_request_body_and_preserves_aarch64_fallback(self) -> None:
+    def test_shared_header_uses_musl_request_body(self) -> None:
         header = STDDEF_HEADER.read_text(encoding="utf-8")
 
-        self.assertTrue(header.startswith("#if defined(__x86_64__)\n"))
+        self.assertNotIn("__x86_64__", header)
+        self.assertNotIn("__aarch64__", header)
         for phrase in (
             "#ifndef _STDDEF_H\n",
             "#define NULL ((void*)0)\n",
@@ -34,11 +35,11 @@ class StddefHeaderAbiTests(unittest.TestCase):
         ):
             self.assertIn(phrase, header)
 
-        self.assertIn("#else\n\n#ifndef _CRABC_STDDEF_H\n", header)
-        self.assertIn("typedef __SIZE_TYPE__ size_t;\n", header)
-        self.assertIn("typedef __PTRDIFF_TYPE__ ptrdiff_t;\n", header)
-        self.assertIn("typedef __WCHAR_TYPE__ wchar_t;\n", header)
-        self.assertIn("__max_align_ll", header)
+        alltypes = (ROOT / "include/bits/alltypes.h").read_text(encoding="utf-8")
+        for phrase in ("#define _Addr long", "typedef unsigned _Addr size_t;",
+                       "typedef _Addr ptrdiff_t;", "typedef unsigned wchar_t;",
+                       "typedef struct { long long __ll; long double __ld; } max_align_t;"):
+            self.assertIn(phrase, alltypes)
 
     def test_probes_cover_c_and_cpp_stddef_contract(self) -> None:
         c_probe = C_PROBE.read_text(encoding="utf-8")

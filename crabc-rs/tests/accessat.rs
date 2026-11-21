@@ -1,19 +1,7 @@
-#[cfg(target_arch = "x86_64")]
 use crabc_rs::fs::AccessAtFlags as AccessFlags;
-#[cfg(not(target_arch = "x86_64"))]
-use crabc_rs::fs::AtFlags as AccessFlags;
-#[cfg(target_arch = "x86_64")]
 const UNLINK_FILE: crabc_rs::fs::UnlinkAtFlags = crabc_rs::fs::UnlinkAtFlags::empty();
-#[cfg(not(target_arch = "x86_64"))]
-const UNLINK_FILE: crabc_rs::fs::AtFlags = crabc_rs::fs::AtFlags::empty();
-#[cfg(target_arch = "x86_64")]
 const ACCESS_REMOVEDIR: AccessFlags = AccessFlags::EACCESS;
-#[cfg(not(target_arch = "x86_64"))]
-const ACCESS_REMOVEDIR: AccessFlags = AccessFlags::REMOVEDIR;
-#[cfg(target_arch = "x86_64")]
 const ACCESS_SYMLINK_FOLLOW: AccessFlags = AccessFlags::from_bits_retain(0x400);
-#[cfg(not(target_arch = "x86_64"))]
-const ACCESS_SYMLINK_FOLLOW: AccessFlags = AccessFlags::SYMLINK_FOLLOW;
 
 use crabc_rs::fs::{self, Access, Mode, OFlags};
 

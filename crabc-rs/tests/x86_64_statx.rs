@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, offset_of, size_of};
 use std::ffi::OsStr;
@@ -121,7 +120,7 @@ fn x86_64_statx_observes_descriptor_relative_metadata_only_when_masked_in() {
         assert_eq!(observed.stx_mode as u32 & 0o777, 0o640);
     }
     if has(observed.stx_mask, StatxFlags::NLINK) {
-        assert_eq!(observed.stx_nlink as u64, legacy.st_nlink);
+        assert_eq!(observed.stx_nlink as u64, u64::from(legacy.st_nlink));
     }
     if has(observed.stx_mask, StatxFlags::UID) {
         assert_eq!(observed.stx_uid, legacy.st_uid);

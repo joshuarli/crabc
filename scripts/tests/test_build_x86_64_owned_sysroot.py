@@ -34,8 +34,16 @@ DRIVER_SPEC.loader.exec_module(driver)
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_x86_64_owned_combined_sysroot as combined  # noqa: E402
 
+ARCH = combined.ARCH["arch"]
+
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
+    def test_arm64_link_plan_names_the_installed_runtime_paths(self):
+        root = Path("/owned")
+        plan = driver.plan_record(root, driver.STATIC_ET_EXEC, architecture="aarch64")
+        self.assertEqual(plan["owned_target_inputs"],
+                         [str(root / name) for name in driver.REQUIRED_RUNTIME_PATHS])
+
     def test_crt_profile_and_object_must_match_product(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -221,6 +229,32 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         )
         return installed
 
+    def test_arm_static_driver_validates_crt_and_required_runtime_before_planning(self):
+        for mutation in ("crt", "header", "runtime"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / "product"
+                self.materialize_static_driver_sysroot(root)
+                manifest_path = root / "share/crabc/manifest.json"
+                manifest = json.loads(manifest_path.read_text())
+                manifest["format"] = "crabc-aarch64-owned-static-sysroot-v1"
+                manifest["target"] = "aarch64-unknown-linux-musl"
+                manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
+                if mutation == "crt":
+                    path = root / "share/crabc/crt.provenance.json"
+                    receipt = json.loads(path.read_text())
+                    receipt["objects"]["rcrt1.o"]["sha256"] = "0" * 64
+                    builder.write_json(path, receipt)
+                elif mutation == "header":
+                    (root / "usr/include/stdint.h").unlink()
+                    (root / "usr/include").rmdir()
+                else:
+                    (root / "usr/lib/libc.a").unlink()
+                manifest["installed"]["files"] = builder.regular_file_hashes(
+                    root, exclude=frozenset({driver.MANIFEST_RELATIVE_PATH}))
+                builder.write_json(manifest_path, manifest)
+                with self.assertRaises(driver.DriverError):
+                    driver.validate_installed_runtime(root, architecture="aarch64")
+
     def test_static_c_abi_root_uses_complete_complex_leaf_without_legacy_projection(self) -> None:
         """The installed libc build must not define cproj* from two x86 leaves."""
 
@@ -270,6 +304,15 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 "45c91108d938afe8-addvdi3.o",
             ),
         )
+
+    def test_aarch64_compiler_rt_members_are_excluded_only_for_aarch64(self) -> None:
+        members = ("c.one.rcgu.o", "compiler_builtins-abc.rcgu.o", "45c91108d938afe8-addvdi3.o",
+                   "7fe4ddd815fa1580-lse_cas1_acq_rel.o", "e487abff90d50251-aarch64.o")
+        selected, excluded = builder.classify_libc_members(members, architecture="aarch64")
+        self.assertEqual(selected, members[:1])
+        self.assertEqual(excluded, members[1:])
+        with self.assertRaises(builder.BuildError):
+            builder.classify_libc_members(members)
 
     def test_libc_member_classification_fails_closed_on_foreign_runtime_input(self) -> None:
         with self.assertRaisesRegex(builder.BuildError, "unclassified target-runtime"):
@@ -949,24 +992,31 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     self.assertEqual(completed.stdout, "")
                     self.assertIn(expected_error, completed.stderr)
 
+    def native_static_fixture(self, root: Path) -> dict:
+        self.materialize_static_driver_sysroot(root)
+        path = root / "share/crabc/manifest.json"
+        manifest = json.loads(path.read_text())
+        if ARCH == "aarch64":
+            manifest["format"] = combined.PRODUCT_FORMATS["static"]
+            manifest["target"] = combined.TARGET
+            manifest["sealed_static_driver"]["format"] = "crabc-aarch64-sealed-static-driver-v1"
+            builder.write_json(path, manifest)
+        return manifest
+
     def materialize_combined_static_driver_sysroot(self, workspace: Path) -> Path:
         """Compose a small static product with a small dynamic one; return the tree."""
 
         static = workspace / "static"
-        self.materialize_static_driver_sysroot(static)
+        self.native_static_fixture(static)
         (static / "usr" / "lib" / "Scrt1.o").write_bytes(b"static unlinked Scrt1\n")
-        builder.write_json(
-            static / "share" / "crabc" / "manifest.json",
-            builder.installed_manifest(
-                builder.regular_file_hashes(static, exclude=frozenset({driver.MANIFEST_RELATIVE_PATH})),
-                self.example_producer_tools(),
-                source_sha256="a" * 64,
-            ),
-        )
+        static_manifest = json.loads((static / "share/crabc/manifest.json").read_text())
+        static_manifest["installed"]["files"] = builder.regular_file_hashes(
+            static, exclude=frozenset({driver.MANIFEST_RELATIVE_PATH}))
+        builder.write_json(static / "share/crabc/manifest.json", static_manifest)
         dynamic = workspace / "dynamic"
         for relative, payload in (
             ("bin/crabc-cc-dynamic", b"dynamic driver\n"),
-            ("lib/ld-crabc-x86_64.so.1", b"loader\n"),
+            (f"lib/ld-crabc-{ARCH}.so.1", b"shared libc\n" if ARCH == "aarch64" else b"loader\n"),
             ("usr/lib/libc.so", b"shared libc\n"),
             ("usr/lib/Scrt1.o", b"dynamic PIE entry\n"),
             ("usr/lib/crt1.o", b"owned\n"),
@@ -975,19 +1025,22 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             ("share/crabc/dynamic-product-state.json", json.dumps({
                 "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
                 "source_sha256": "a" * 64,
+                **({"allocator_backend": "accepted-c", "allocator_lifecycle_test_audit": False} if ARCH == "aarch64" else {}),
             }).encode()),
         ):
             path = dynamic / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
-        (dynamic / "lib" / "ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        aliases = builder.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture(ARCH)
+        for path, target in aliases.items():
+            (dynamic / path).symlink_to(target)
         builder.write_json(dynamic / "share" / "crabc" / "manifest.json", {
             "schema": 1,
-            "format": combined.PRODUCT_FORMATS["dynamic"], "target": builder.TARGET,
+            "format": combined.PRODUCT_FORMATS["dynamic"], "target": combined.TARGET,
             "hardening_profile": "compatibility",
             "toolchain": builder.PINNED_TOOLCHAIN,
             "files": {path: digest for path, (digest, _) in combined.tree(dynamic)[0].items()},
-            "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+            "symlinks": aliases,
         })
         output = workspace / "combined"
         combined.compose({"static": static, "dynamic": dynamic}, output)
@@ -1032,8 +1085,8 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             (root / "usr/include/extra.h").symlink_to("stdint.h")
 
         def retarget_alias(root: Path, record: dict) -> None:
-            (root / "lib/ld-musl-x86_64.so.1").unlink()
-            (root / "lib/ld-musl-x86_64.so.1").symlink_to("/lib/ld-musl-x86_64.so.1")
+            (root / f"lib/ld-musl-{ARCH}.so.1").unlink()
+            (root / f"lib/ld-musl-{ARCH}.so.1").symlink_to(f"/lib/ld-musl-{ARCH}.so.1")
 
         def foreign_product(root: Path, record: dict) -> None:
             record["products"]["static"]["format"] = "other"
@@ -1119,7 +1172,9 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
             root = workspace / "sysroot"
-            root.mkdir()
+            manifest = self.native_static_fixture(root) if ARCH == "aarch64" else None
+            if ARCH != "aarch64":
+                root.mkdir()
             source = workspace / "legitimate.c"
             source.write_text("int legitimate_object;\n", encoding="utf-8")
             legitimate = workspace / "legitimate.o"
@@ -1132,7 +1187,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(
-                driver.require_x86_64_relocatable_object(root, legitimate),
+                driver.require_x86_64_relocatable_object(root, legitimate, architecture=ARCH),
                 legitimate.resolve(),
             )
 
@@ -1144,10 +1199,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             for name, payload in rejected:
                 (workspace / name).write_bytes(payload)
             for name, elf_type, machine, section_types in (
-                ("not-rel.o", 3, 62, ()),
-                ("wrong-machine.o", 1, 183, ()),
-                ("linker-options.o", 1, 62, (0x6FFF4C01,)),
-                ("dependent-libraries.o", 1, 62, (0x6FFF4C04,)),
+                ("not-rel.o", 3, 183 if ARCH == "aarch64" else 62, ()),
+                ("wrong-machine.o", 1, 62 if ARCH == "aarch64" else 183, ()),
+                ("linker-options.o", 1, 183 if ARCH == "aarch64" else 62, (0x6FFF4C01,)),
+                ("dependent-libraries.o", 1, 183 if ARCH == "aarch64" else 62, (0x6FFF4C04,)),
             ):
                 self.write_elf64_relocatable(
                     workspace / name,
@@ -1167,9 +1222,12 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     ) as link_plan:
                         with self.assertRaisesRegex(
                             driver.DriverError,
-                            "not a Linux/x86-64 ELF64 ET_REL object|forbidden LLVM linker-control section",
+                            f"not a Linux/{ARCH.replace(chr(95), chr(45))} ELF64 ET_REL object|forbidden LLVM linker-control section",
                         ):
-                            driver.execute(root, invocation)
+                            if ARCH == "aarch64":
+                                driver.execute_aarch64(root, ["-static", str(workspace / name)], manifest)
+                            else:
+                                driver.execute(root, invocation)
                     link_plan.assert_not_called()
 
     def test_static_driver_rejects_normalized_output_input_aliases_before_work(self) -> None:
@@ -1178,7 +1236,9 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
             root = workspace / "sysroot"
-            root.mkdir()
+            manifest = self.native_static_fixture(root) if ARCH == "aarch64" else None
+            if ARCH != "aarch64":
+                root.mkdir()
             source = workspace / "application.c"
             source.write_text("int application_object;\n", encoding="utf-8")
             object_path = workspace / "application.o"
@@ -1211,7 +1271,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         driver.DriverError, "output collides with admitted application input"
                     ):
-                        driver.execute(root, link_invocation)
+                        if ARCH == "aarch64":
+                            driver.execute_aarch64(root, ["-static", "--link-receipt", "evidence.json", "-o", "./application.o", "application.o"], manifest)
+                        else:
+                            driver.execute(root, link_invocation)
                 link_plan.assert_not_called()
 
                 hard_link = workspace / "same-inode.o"
@@ -1227,7 +1290,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         driver.DriverError, "output collides with admitted application input"
                     ):
-                        driver.execute(root, hard_link_invocation)
+                        if ARCH == "aarch64":
+                            driver.execute_aarch64(root, ["-static", "-o", str(hard_link), str(object_path)], manifest)
+                        else:
+                            driver.execute(root, hard_link_invocation)
                 link_plan.assert_not_called()
 
                 compile_invocation = driver.parse_invocation(
@@ -1241,7 +1307,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         driver.DriverError, "output collides with admitted application input"
                     ):
-                        driver.execute(root, compile_invocation)
+                        if ARCH == "aarch64":
+                            driver.execute_aarch64(root, ["-c", "application.c", "-o", "./application.c"], manifest)
+                        else:
+                            driver.execute(root, compile_invocation)
                 compile_source.assert_not_called()
             finally:
                 os.chdir(original_cwd)

@@ -320,7 +320,7 @@ pub(super) unsafe fn seek(stream: *mut StandardStream, offset: i64, whence: c_in
     unsafe {
         if !(0..=2).contains(&whence) { errno::set_errno(EINVAL); return -1; }
         let (position, length, maximum) = match (*stream).backend {
-            Backend::Descriptor => return c_off_status(raw_syscall::syscall3(8, (*stream).file_descriptor as i64, offset, whence as i64)),
+            Backend::Descriptor => return c_off_status(raw_syscall::syscall3(raw_syscall::SYS_LSEEK, (*stream).file_descriptor as i64, offset, whence as i64)),
             Backend::Cookie(cookie) => {
                 let Some(seek) = cookie.functions.seek else { errno::set_errno(95); return -1; };
                 let mut result = offset;
@@ -406,7 +406,7 @@ unsafe fn read_wide_string(stream: *mut StandardStream, destination: *mut u8,
 pub(super) unsafe fn close(stream: *mut StandardStream) -> c_int {
     unsafe {
         match (*stream).backend {
-            Backend::Descriptor => c_status(raw_syscall::syscall1(3, (*stream).file_descriptor as i64)),
+            Backend::Descriptor => c_status(raw_syscall::syscall1(raw_syscall::SYS_CLOSE, (*stream).file_descriptor as i64)),
             Backend::Cookie(cookie) => cookie.functions.close.map_or(0, |close| close(cookie.data)),
             _ => 0,
         }

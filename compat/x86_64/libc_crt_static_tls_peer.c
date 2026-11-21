@@ -21,8 +21,14 @@ int crabc_crt_guarded_call(int corrupt)
 {
     volatile unsigned char bytes[32];
     bytes[0] = 42;
-    if (corrupt)
+    if (corrupt) {
+#if defined(__aarch64__)
+        extern uintptr_t __stack_chk_guard;
+        __stack_chk_guard ^= 1;
+#else
         __asm__ volatile("xorq $1, %%fs:40" ::: "memory");
+#endif
+    }
     return bytes[0];
 }
 #endif

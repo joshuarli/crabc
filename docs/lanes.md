@@ -249,9 +249,7 @@ The active target is native Linux/x86-64 on an x86-64 host. Linux/AArch64,
 the public target, is converging onto the same runtime under the accepted
 [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md): it runs only
 natively in an arm64 Linux VM with its own disk on the Apple Silicon host,
-never emulated and never on a macOS bind mount. Until x86 F2 is accepted,
-AArch64 work stays on branches; nothing touching the x86 product source seal
-(including `docker/`) merges. The macOS facade backend (CRAB-7) is deferred.
+never emulated and never on a macOS bind mount. The macOS facade backend (CRAB-7) is deferred.
 
 
 ## Check environments

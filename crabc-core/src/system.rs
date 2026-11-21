@@ -1,10 +1,14 @@
-//! Stateless Linux/AArch64 system-information operations.
+//! Bounded Linux system-information operations.
+//!
+//! This module owns only the fixed kernel `new_utsname` and `sysinfo` output
+//! records used by the Rust facade. It defines no C header or libc surface.
 
-use crate::Result;
-use crate::syscall::{decode, syscall1, SYS_SYSINFO, SYS_UNAME};
 use core::mem::MaybeUninit;
 
-/// Linux/AArch64 `new_utsname`, including the Linux domain-name field.
+use crate::syscall::{decode, syscall1, SYS_SYSINFO, SYS_UNAME};
+use crate::Result;
+
+/// Linux `new_utsname`, including the Linux domain-name field.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct UtsName {
@@ -16,7 +20,10 @@ pub struct UtsName {
     pub domainname: [u8; 65],
 }
 
-/// Linux/AArch64 `sysinfo` without libc's compatibility-only tail.
+const _: () = assert!(core::mem::size_of::<UtsName>() == 390);
+const _: () = assert!(core::mem::align_of::<UtsName>() == 1);
+
+/// Linux `sysinfo` without libc's compatibility-only tail.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Sysinfo {
@@ -33,28 +40,36 @@ pub struct Sysinfo {
     pub totalhigh: u64,
     pub freehigh: u64,
     pub mem_unit: u32,
-    // Linux's `struct sysinfo` retains this ABI tail so the 64-bit
-    // representation stays 112 bytes after the alignment before
-    // `totalhigh`.
     pub reserved: [u8; 4],
 }
+
+const _: () = assert!(core::mem::size_of::<Sysinfo>() == 112);
+const _: () = assert!(core::mem::align_of::<Sysinfo>() == 8);
+const _: () = assert!(core::mem::offset_of!(Sysinfo, uptime) == 0);
+const _: () = assert!(core::mem::offset_of!(Sysinfo, loads) == 8);
+const _: () = assert!(core::mem::offset_of!(Sysinfo, totalram) == 32);
+const _: () = assert!(core::mem::offset_of!(Sysinfo, procs) == 80);
+const _: () = assert!(core::mem::offset_of!(Sysinfo, totalhigh) == 88);
+const _: () = assert!(core::mem::offset_of!(Sysinfo, mem_unit) == 104);
 
 /// Reads Linux kernel and hardware naming information.
 #[inline]
 pub fn uname() -> Result<UtsName> {
     let mut value = MaybeUninit::<UtsName>::uninit();
-    // SAFETY: `value` provides exactly one writable Linux/AArch64
-    // `new_utsname`; a successful syscall initializes all fields.
+    // SAFETY: `value` is writable storage for exactly one Linux
+    // `new_utsname` record, which Linux initializes on success.
     decode(unsafe { syscall1(SYS_UNAME, value.as_mut_ptr() as usize) })?;
+    // SAFETY: Successful `uname` initialized all six fixed arrays.
     Ok(unsafe { value.assume_init() })
 }
 
-/// Reads Linux kernel and hardware naming information into C-ABI storage.
+/// Reads Linux kernel and hardware naming information into x86-64 C-ABI
+/// storage.
 ///
 /// # Safety
 ///
-/// `value` must designate writable Linux/AArch64 `new_utsname` storage,
-/// or may deliberately be an invalid C ABI pointer for kernel validation.
+/// `value` must designate writable Linux `new_utsname` storage, or may
+/// deliberately be an invalid C ABI pointer for kernel validation.
 #[inline]
 pub unsafe fn uname_raw(value: *mut UtsName) -> Result<()> {
     // SAFETY: The caller supplies the output-pointer contract.
@@ -65,17 +80,21 @@ pub unsafe fn uname_raw(value: *mut UtsName) -> Result<()> {
 #[inline]
 pub fn sysinfo() -> Result<Sysinfo> {
     let mut value = MaybeUninit::<Sysinfo>::uninit();
-    // SAFETY: `value` is the exact Linux/AArch64 `sysinfo` ABI.
+    // SAFETY: `value` is writable storage for exactly one Linux
+    // `sysinfo` record, which Linux initializes on success.
     decode(unsafe { syscall1(SYS_SYSINFO, value.as_mut_ptr() as usize) })?;
+    // SAFETY: Successful `sysinfo` initialized the complete kernel record.
     Ok(unsafe { value.assume_init() })
 }
 
-/// Reads Linux system information into C-ABI storage.
+/// Reads Linux system information into x86-64 kernel-prefix storage.
 ///
 /// # Safety
 ///
-/// `value` must designate writable Linux/AArch64 `sysinfo` storage, or
-/// may deliberately be an invalid C ABI pointer for kernel validation.
+/// `value` must designate writable Linux 112-byte kernel `sysinfo`
+/// storage, or may deliberately be an invalid C ABI pointer for kernel
+/// validation. This is not musl's larger public C `struct sysinfo`, whose
+/// compatibility tail Linux does not initialize.
 #[inline]
 pub unsafe fn sysinfo_raw(value: *mut Sysinfo) -> Result<()> {
     // SAFETY: The caller supplies the output-pointer contract.

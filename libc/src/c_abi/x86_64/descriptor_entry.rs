@@ -1,3 +1,4 @@
+// musl 1.2.6 src/internal/syscall.h defines open through openat.
 //! Selected static Linux/x86-64 C descriptor-entry boundary.
 //!
 //! This leaf owns one coherent pathname-to-descriptor entry block: C `open`,
@@ -33,8 +34,8 @@ use super::{c_status, raw_syscall};
 
 const O_CREAT: c_int = 0x40;
 const O_CLOEXEC: c_int = 0x80_000;
-const O_LARGEFILE: c_int = 0x8_000;
-const O_TMPFILE: c_int = 0x41_0000;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
+const O_TMPFILE: c_int = super::raw_syscall::O_TMPFILE as c_int;
 const O_WRONLY: c_int = 0x1;
 const O_TRUNC: c_int = 0x200;
 const F_SETFD: c_int = 2;
@@ -71,6 +72,8 @@ static_archive_member! { open_source {
     #[no_mangle]
     #[inline(never)]
     pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mut arguments: ...) -> c_int {
+        #[cfg(target_arch = "x86_64")]
+        {
         // SAFETY: the caller supplies a mode_t word exactly when the flags
         // require one; mode selection reads nothing on a two-argument call.
         let mode = unsafe { selected_mode(flags, &mut arguments) };
@@ -116,6 +119,58 @@ static_archive_member! { open_source {
         }
 
         c_status(result)
+
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+        // SAFETY: the caller supplies a mode_t word exactly when the flags
+        // require one; mode selection reads nothing on a two-argument call.
+        let mode = unsafe { selected_mode(flags, &mut arguments) };
+        // SAFETY: the caller owns the raw pathname contract. Linux x86-64 takes
+        // the old open syscall's pathname/flags/mode words in rdi/rsi/rdx.
+        let result = unsafe {
+            #[cfg(crabc_x86_owned_runtime)]
+            {
+                crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_OPENAT,
+                    -100,
+                    path as usize as i64,
+                    i64::from(flags | O_LARGEFILE),
+                    mode,
+                    0,
+                    0,
+                )
+            }
+            #[cfg(not(crabc_x86_owned_runtime))]
+            {
+                raw_syscall::syscall4(
+                    raw_syscall::SYS_OPENAT,
+                    -100,
+                    path as usize as i64,
+                    i64::from(flags | O_LARGEFILE),
+                    mode,
+                )
+            }
+        };
+
+        if result >= 0 && flags & O_CLOEXEC != 0 {
+            // Musl keeps this private post-open fix-up even though Linux 5.10
+            // understands O_CLOEXEC. Its result is intentionally ignored, exactly
+            // as in the pinned source; it neither exports a second fcntl entry nor
+            // expands the separately selected bounded status-control surface.
+            let _ = unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_FCNTL,
+                    result,
+                    i64::from(F_SETFD),
+                    i64::from(FD_CLOEXEC),
+                )
+            };
+        }
+
+        c_status(result)
+
+        }
     }
 }}
 
@@ -212,7 +267,7 @@ mod tests {
         for (flags, consumes_mode) in [
             (0, false),
             (O_CLOEXEC, false),
-            (0x1_0000, false), // O_DIRECTORY alone does not create a file.
+            (if cfg!(target_arch = "aarch64") { 0x4000 } else { 0x1_0000 }, false), // O_DIRECTORY alone does not create a file.
             (0x40_0000, false), // The unnamed-file bit needs O_DIRECTORY too.
             (O_CREAT, true),
             (O_TMPFILE, true),

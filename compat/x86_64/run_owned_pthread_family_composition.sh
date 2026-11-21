@@ -4,8 +4,9 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+readonly INTERPRETER="/lib/ld-crabc-${arch}.so.1"
 
 usage() {
     printf 'usage: %s [--worker-fixture owner-exit|tsd-four|creation-refusal] --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
@@ -205,12 +206,12 @@ done
 capture_tools "$WORK/tools-after.json"
 cmp "$WORK/tools-before.json" "$WORK/tools-after.json" || fail 'native compiler/linker tool roster changed during composition'
 
-python3 -B - "$ROOT" "$WORK" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$SOURCE" <<'PY'
+python3 -B - "$ROOT" "$WORK" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$SOURCE" "$ORACLE_CC" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
-root, work, static, dynamic, source = map(Path, sys.argv[1:])
+root, work, static, dynamic, source, oracle_compiler = map(Path, sys.argv[1:])
 
 def identity(path):
     if not path.is_file() or path.is_symlink():
@@ -258,7 +259,7 @@ record = {
     'products': {'static': product(static), 'dynamic': product(dynamic)},
     'tools': {'before': identity(work / 'tools-before.json'),
               'after': identity(work / 'tools-after.json')},
-    'oracle': {'compiler': identity(Path('/usr/local/bin/crabc-x86_64-musl-gcc')),
+    'oracle': {'compiler': identity(oracle_compiler),
                'runtime': identity(Path('/opt/musl-1.2.6/lib/libc.so')),
                'pin': identity(Path('/opt/musl-1.2.6/.crabc-oracle'))},
     'commands': commands, 'links': links, 'raw': raw,

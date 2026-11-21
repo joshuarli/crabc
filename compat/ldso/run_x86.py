@@ -33,7 +33,14 @@ from typing import Iterable, Sequence
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "compat" / "ldso" / "fixtures"
-ORACLE_CC = pathlib.Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
+from native_arch import native_arch
+
+NATIVE = native_arch()
+ARCH = NATIVE["arch"]
+ORACLE_CC = pathlib.Path(NATIVE["oracle"])
+MUSL_LOADER = f"ld-musl-{ARCH}.so.1"
+CRABC_LOADER = f"ld-crabc-{ARCH}.so.1"
 ORACLE_LIBC = pathlib.Path("/opt/musl-1.2.6/lib/libc.so")
 LIFECYCLE_DIRECTORY = ROOT / "compat" / "x86_64"
 LIFECYCLE_HELPER = LIFECYCLE_DIRECTORY / "run_qualification_manifest.py"
@@ -175,13 +182,13 @@ def checked_product_directory(path: pathlib.Path) -> pathlib.Path:
         "bin/crabc-cc-dynamic", "share/crabc/manifest.json", "usr/include/stdio.h",
         "usr/lib/libc.so", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
         "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a",
-        "lib/ld-crabc-x86_64.so.1", "lib/ld-musl-x86_64.so.1",
+        f"lib/{CRABC_LOADER}", f"lib/{MUSL_LOADER}",
     ):
         candidate = path / relative
-        if not candidate.exists() or candidate.is_symlink() and relative != "lib/ld-musl-x86_64.so.1":
+        if not candidate.exists() or candidate.is_symlink() and relative != f"lib/{MUSL_LOADER}":
             raise LoaderSyntheticError(f"supplied dynamic sysroot lacks sealed input: {relative}")
-    alias = path / "lib/ld-musl-x86_64.so.1"
-    if not alias.is_symlink() or os.readlink(alias) != "ld-crabc-x86_64.so.1":
+    alias = path / "lib" / MUSL_LOADER
+    if not alias.is_symlink() or os.readlink(alias) != CRABC_LOADER:
         raise LoaderSyntheticError("supplied dynamic sysroot has no canonical musl-loader compatibility alias")
     return path
 
@@ -196,7 +203,7 @@ def checked_scratch_directory(root: pathlib.Path = ROOT) -> pathlib.Path:
     if work.is_symlink() or not work.is_dir():
         raise LoaderSyntheticError(f"checkout .work is missing or unsafe: {work}")
     reject_symlink_components(work, "checkout .work")
-    scratch = work / "x86_64"
+    scratch = work / NATIVE["work_name"]
     reject_symlink_components(scratch, "checkout x86 scratch")
     scratch.mkdir(mode=0o755, exist_ok=True)
     if scratch.is_symlink() or not scratch.is_dir():
@@ -456,7 +463,7 @@ class FixtureBuilder:
                 argv.extend(("--application-dso", dependency))
             argv.extend(("-o", output))
         else:
-            argv = [ORACLE_CC, "-fPIE", "-pie", object_file, *dependencies, "-Wl,--hash-style=" + hash_style, *( ["-Wl,--disable-new-dtags"] if search_kind == "rpath" else []), "-Wl,-rpath," + runpath, "-Wl,-rpath-link," + str(root / "usr/lib"), "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1"]
+            argv = [ORACLE_CC, "-fPIE", "-pie", object_file, *dependencies, "-Wl,--hash-style=" + hash_style, *( ["-Wl,--disable-new-dtags"] if search_kind == "rpath" else []), "-Wl,-rpath," + runpath, "-Wl,-rpath-link," + str(root / "usr/lib"), f"-Wl,--dynamic-linker,/lib/{MUSL_LOADER}"]
             if export_dynamic:
                 argv.append("-Wl,--export-dynamic")
             argv.extend(("-o", output))
@@ -471,12 +478,12 @@ def copy_root(product: pathlib.Path, target: pathlib.Path, *, candidate: bool) -
     else:
         (target / "lib").mkdir(parents=True)
         (target / "usr/lib").mkdir(parents=True)
-        shutil.copy2(ORACLE_LIBC, target / "lib/ld-musl-x86_64.so.1")
+        shutil.copy2(ORACLE_LIBC, target / "lib" / MUSL_LOADER)
         shutil.copy2(ORACLE_LIBC, target / "usr/lib/libc.so")
 
 
 def dynamic_names(output: bytes) -> set[str]:
-    return set(re.findall(r"R_X86_64_[A-Z0-9_]+", output.decode(errors="replace")))
+    return set(re.findall(rf"R_{ARCH.upper()}_[A-Z0-9_]+", output.decode(errors="replace")))
 
 
 def tags(output: bytes) -> str:
@@ -496,7 +503,7 @@ def kernel_run(recorder: Recorder, arm: str, root: pathlib.Path, program: pathli
     # so the host-side process launcher never depends on that PATH.
     argv: list[str | pathlib.Path] = ["/usr/sbin/chroot", root]
     if direct:
-        argv.extend(("/lib/ld-musl-x86_64.so.1", "/" + program.name))
+        argv.extend((f"/lib/{MUSL_LOADER}", "/" + program.name))
     else:
         argv.append("/" + program.name)
     return recorder.run(f"{arm}-{'direct' if direct else 'kernel'}-{program.name}", argv, cwd=recorder.work, env=env)
@@ -610,7 +617,7 @@ def case_standard(name: str, work: pathlib.Path, product: pathlib.Path, recorder
         headers = recorder.checked("relro-phdr", ["readelf", "-lW", candidate_dsos["librelro.so"]], cwd=work).stdout
         reloc = recorder.checked("relro-relocations", ["readelf", "-Wr", candidate_dsos["librelro.so"]], cwd=work).stdout
         properties.update(program_headers=tags(headers), relocations=tags(reloc))
-        if "GNU_RELRO" not in tags(headers) or "R_X86_64_64" not in dynamic_names(reloc):
+        if "GNU_RELRO" not in tags(headers) or ({"R_X86_64_64"} if ARCH == "x86_64" else {"R_AARCH64_ABS64"}).isdisjoint(dynamic_names(reloc)):
             raise LoaderSyntheticError("RELRO fixture lacks GNU_RELRO or its x86 absolute protected-pointer relocation")
     if name == "visibility":
         symbols = recorder.checked("visibility-symbols", ["readelf", "--dyn-syms", "--wide", candidate_dsos["libvisibility.so"]], cwd=work).stdout
@@ -630,7 +637,7 @@ def case_standard(name: str, work: pathlib.Path, product: pathlib.Path, recorder
     if name == "dynamic-tls":
         reloc = recorder.checked("tls-relocations", ["readelf", "-Wr", candidate_dsos["libfixture_tls.so"]], cwd=work).stdout
         properties["relocations"] = tags(reloc)
-        if not ({"R_X86_64_DTPMOD64", "R_X86_64_DTPOFF64"} & dynamic_names(reloc)):
+        if not (({"R_X86_64_DTPMOD64", "R_X86_64_DTPOFF64"} if ARCH == "x86_64" else {"R_AARCH64_TLSDESC", "R_AARCH64_TLS_DTPMOD", "R_AARCH64_TLS_DTPREL"}) & dynamic_names(reloc)):
             raise LoaderSyntheticError("x86 late-TLS fixture lacks TLS module/offset relocation")
     if name == "relocations":
         reloc = recorder.checked("relocations-x86", ["readelf", "-Wr", candidate_dsos["libreloc_consumer.so"]], cwd=work).stdout
@@ -746,7 +753,7 @@ def case_relocations(work: pathlib.Path, product: pathlib.Path, recorder: Record
     adapter_relocations = recorder.checked("relocations-adapter-x86", ["readelf", "-Wr", images["candidate"]["adapter"]], cwd=work).stdout
     adapter_dynamic = recorder.checked("relocations-adapter-dynamic", ["readelf", "-dW", images["candidate"]["adapter"]], cwd=work).stdout
     consumer_names, adapter_names = dynamic_names(consumer_relocations), dynamic_names(adapter_relocations)
-    if not valid_x86_relocation_fixture(consumer_names, adapter_names):
+    if not (valid_x86_relocation_fixture(consumer_names, adapter_names) if ARCH == "x86_64" else {"R_AARCH64_ABS64", "R_AARCH64_GLOB_DAT", "R_AARCH64_JUMP_SLOT"} <= consumer_names and "R_AARCH64_RELATIVE" in adapter_names):
         raise LoaderSyntheticError(f"x86 relocation roles drifted: consumer={sorted(consumer_names)} adapter={sorted(adapter_names)}")
     if any("(" + item + ")" in tags(adapter_dynamic) for item in ("RELR", "RELRSZ", "RELRENT")):
         raise LoaderSyntheticError("x86 local relocation unexpectedly changed from direct RELATIVE to packed RELR")
@@ -887,7 +894,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if before_source != after_source or before_product != after_product or before_oracle != after_oracle or before_linker != after_linker:
             raise LoaderSyntheticError("source, supplied product, pinned linker, or pinned musl oracle changed while evidence was collected")
         selected_ok = selected_passed(cases)
-        report = {"schema": 2, "runner": "compat/ldso/run_x86.py", "architecture": "x86_64", "source_mount": str(ROOT), "selected_passed": selected_ok, "component_complete": selected_ok and exact_component_selection(selected), "family_complete": False, "selected": list(selected), "source_before": before_source, "source_after": after_source, "product_before": before_product, "product_after": after_product, "oracle_before": before_oracle, "oracle_after": after_oracle, "producer_linker_before": before_linker, "producer_linker_after": after_linker, "cases": cases, "elapsed_seconds": time.time() - started}
+        report = {"schema": 2, "runner": "compat/ldso/run_x86.py", "architecture": ARCH, "source_mount": str(ROOT), "selected_passed": selected_ok, "component_complete": selected_ok and exact_component_selection(selected), "family_complete": False, "selected": list(selected), "source_before": before_source, "source_after": after_source, "product_before": before_product, "product_after": after_product, "oracle_before": before_oracle, "oracle_after": after_oracle, "producer_linker_before": before_linker, "producer_linker_after": after_linker, "cases": cases, "elapsed_seconds": time.time() - started}
     except (LoaderSyntheticError, OSError) as error:
         report = {"schema": 2, "runner": "compat/ldso/run_x86.py", "component_complete": False, "family_complete": False, "error": str(error), "elapsed_seconds": time.time() - started}
     path = report_root / "report.json"

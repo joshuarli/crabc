@@ -6,7 +6,7 @@
  * retain only the ten defined bytes of an x86 binary80 result (or each output
  * of sincosl), together with the x87/MXCSR exception state.
  */
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
 	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
@@ -22,7 +22,13 @@
 
 _Static_assert(sizeof(long double) == 16 && _Alignof(long double) == 16,
 	"x86 binary80 storage");
-_Static_assert(LDBL_MANT_DIG == 64 && LDBL_MAX_EXP == 16384,
+_Static_assert(LDBL_MANT_DIG ==
+#if defined(__aarch64__)
+	113
+#else
+	64
+#endif
+	&& LDBL_MAX_EXP == 16384,
 	"x86 binary80 format");
 
 typedef long double (*l_unary)(long double);
@@ -62,9 +68,21 @@ struct __attribute__((packed)) result_record {
 	uint32_t rounding;
 	uint32_t exceptions;
 	uint32_t kind;
-	unsigned char value[24];
+	unsigned char value[
+#if defined(__aarch64__)
+		32
+#else
+		24
+#endif
+	];
 };
-_Static_assert(sizeof(struct result_record) == 40, "stable result record");
+_Static_assert(sizeof(struct result_record) ==
+#if defined(__aarch64__)
+	48
+#else
+	40
+#endif
+	, "stable result record");
 
 struct l_pair { long double left; long double right; };
 struct l_triple { long double first; long double second; long double third; };
@@ -103,6 +121,15 @@ static long raw_write(const void *buffer, size_t length)
 {
 	const unsigned char *cursor = buffer;
 	while (length != 0) {
+#if defined(__aarch64__)
+		register long number __asm__("x8") = 64;
+		register long descriptor __asm__("x0") = 1;
+		register const void *address __asm__("x1") = cursor;
+		register size_t count __asm__("x2") = length;
+		__asm__ volatile ("svc 0" : "+r"(descriptor)
+			: "r"(number), "r"(address), "r"(count) : "memory");
+		number = descriptor;
+#else
 		register long number __asm__("rax") = 1;
 		register long descriptor __asm__("rdi") = 1;
 		register const void *address __asm__("rsi") = cursor;
@@ -110,6 +137,7 @@ static long raw_write(const void *buffer, size_t length)
 		__asm__ volatile ("syscall" : "+a"(number)
 			: "D"(descriptor), "S"(address), "d"(count)
 			: "rcx", "r11", "memory");
+#endif
 		if (number == -4) continue;
 		if (number <= 0 || (size_t)number > length) return -1;
 		cursor += number;
@@ -128,7 +156,7 @@ static void copy_bytes(unsigned char *destination, const unsigned char *source,
 static void clear_value(unsigned char *value)
 {
 	size_t index;
-	for (index = 0; index < 24; index++) value[index] = 0;
+	for (index = 0; index < sizeof(((struct result_record *)0)->value); index++) value[index] = 0;
 }
 
 static int prepare_call(int mode)
@@ -149,7 +177,7 @@ static int emit_long(uint16_t function, uint16_t index, int mode,
 	record.exceptions = (uint32_t)fetestexcept(FE_ALL_EXCEPT);
 	record.kind = 1;
 	clear_value(record.value);
-	copy_bytes(record.value, bits.bytes, 10);
+	copy_bytes(record.value, bits.bytes, LDBL_MANT_DIG == 113 ? 16 : 10);
 	return raw_write(&record, sizeof(record)) == 0 ? 0 : -1;
 }
 
@@ -165,8 +193,8 @@ static int emit_pair(uint16_t function, uint16_t index, int mode,
 	record.exceptions = (uint32_t)fetestexcept(FE_ALL_EXCEPT);
 	record.kind = 2;
 	clear_value(record.value);
-	copy_bytes(record.value, first_bits.bytes, 10);
-	copy_bytes(record.value + 10, second_bits.bytes, 10);
+	copy_bytes(record.value, first_bits.bytes, LDBL_MANT_DIG == 113 ? 16 : 10);
+	copy_bytes(record.value + (LDBL_MANT_DIG == 113 ? 16 : 10), second_bits.bytes, LDBL_MANT_DIG == 113 ? 16 : 10);
 	return raw_write(&record, sizeof(record)) == 0 ? 0 : -1;
 }
 

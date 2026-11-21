@@ -6,6 +6,7 @@ use crabc_rs::thread;
 
 const LINUX_CPU_SETSIZE: usize = 1024;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

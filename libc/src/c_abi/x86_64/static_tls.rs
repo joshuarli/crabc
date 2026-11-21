@@ -21,13 +21,17 @@
 //! handoff is a private static-startup composition boundary, not general CRT,
 //! loader, or sysroot.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("x86 Static Initial TLS v1 requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
 use super::{pthread_identity, raw_syscall};
+
+#[cfg(target_arch = "aarch64")]
+#[path = "../../../../ldso/src/aarch64_auxv.rs"]
+mod aarch64_auxv;
 
 const AT_NULL: usize = 0;
 const AT_PHDR: usize = 3;
@@ -41,7 +45,10 @@ const PT_TLS: u32 = 7;
 const PF_R: u32 = 0x4;
 
 const ET_EXEC: u16 = 2;
-const EM_X86_64: u16 = 62;
+#[cfg(target_arch = "x86_64")]
+const ELF_MACHINE: u16 = 62;
+#[cfg(target_arch = "aarch64")]
+const ELF_MACHINE: u16 = 183;
 const ELF64_CLASS: u8 = 2;
 const ELFDATA2LSB: u8 = 1;
 const EV_CURRENT: u32 = 1;
@@ -269,7 +276,7 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
     }
-    if !unsafe { arch_set_fs(block.thread_pointer as usize) } {
+    if !unsafe { arch_set_fs(block.thread_pointer as usize, initial_stack) } {
         let _ = unsafe { release_thread(block) };
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
@@ -571,15 +578,25 @@ impl StaticInitialTlsPlan {
             None => (core::ptr::null(), 0, 0, core::mem::align_of::<usize>()),
         };
 
+        #[cfg(target_arch = "x86_64")]
         let image_offset_below_tp = if memsz == 0 {
             0
         } else {
             variant_ii_image_offset(image as usize, memsz, tls_alignment)?
         };
+        #[cfg(target_arch = "aarch64")]
+        let image_offset_below_tp = super::aarch64_tls_layout::GAP_ABOVE_TP
+            .checked_add((image as usize).wrapping_sub(super::aarch64_tls_layout::GAP_ABOVE_TP) & (tls_alignment - 1))?;
         let tp_alignment = tls_alignment.max(core::mem::align_of::<usize>());
+        #[cfg(target_arch = "x86_64")]
         let allocation_size = image_offset_below_tp
             .checked_add(tp_alignment.checked_sub(1)?)?
             .checked_add(core::mem::size_of::<StaticThreadControlBlock>())?;
+        #[cfg(target_arch = "aarch64")]
+        let allocation_size = super::aarch64_tls_layout::THREAD_RECORD_SIZE
+            .checked_add(tp_alignment.checked_sub(1)?)?
+            .checked_add(image_offset_below_tp)?
+            .checked_add(memsz)?;
 
         // Linux supplies 16 initialized entropy bytes at AT_RANDOM on the
         // untouched entry stack. Match musl 1.2.6 src/env/__stack_chk_fail.c:
@@ -614,12 +631,21 @@ impl StaticInitialTlsPlan {
         let (region, region_size) = unsafe { placement.region() };
         let region_address = region as usize;
         let region_end = region_address.checked_add(region_size)?;
+        #[cfg(target_arch = "x86_64")]
         let tp = region_address
             .checked_add(self.image_offset_below_tp)
             .and_then(|address| align_up(address, self.tp_alignment))?;
+        #[cfg(target_arch = "aarch64")]
+        let tp = align_up(region_address.checked_add(super::aarch64_tls_layout::THREAD_RECORD_SIZE)?, self.tp_alignment)?;
+        #[cfg(target_arch = "x86_64")]
         let image_destination = tp.checked_sub(self.image_offset_below_tp)?;
+        #[cfg(target_arch = "aarch64")]
+        let image_destination = tp.checked_add(self.image_offset_below_tp)?;
         let image_end = image_destination.checked_add(self.memsz)?;
+        #[cfg(target_arch = "x86_64")]
         let tcb_end = tp.checked_add(core::mem::size_of::<StaticThreadControlBlock>())?;
+        #[cfg(target_arch = "aarch64")]
+        let tcb_end = tp;
         if image_destination < region_address || image_end > region_end || tcb_end > region_end {
             return None;
         }
@@ -638,6 +664,7 @@ impl StaticInitialTlsPlan {
         }
         // Publish both compiler ABI fields before ARCH_SET_FS/CLONE_SETTLS;
         // no application or backend code can observe an uninitialized guard.
+        #[cfg(target_arch = "x86_64")]
         unsafe {
             core::ptr::write(
                 tp as *mut StaticThreadControlBlock,
@@ -649,6 +676,17 @@ impl StaticInitialTlsPlan {
                 },
             )
         };
+
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: the checked placement reserves the thread record and the
+        // 16-byte gap for the two-word DTV before the TLS image.
+        unsafe {
+            core::ptr::write_bytes((tp - super::aarch64_tls_layout::THREAD_RECORD_SIZE) as *mut u8, 0, super::aarch64_tls_layout::THREAD_RECORD_SIZE);
+            (tp as *mut usize).write(usize::from(self.memsz != 0));
+            ((tp + core::mem::size_of::<usize>()) as *mut usize).write(if self.memsz != 0 { image_destination } else { 0 });
+            ((tp - super::aarch64_tls_layout::CANARY_OFFSET_BELOW_TP) as *mut usize).write(self.stack_guard);
+            ((tp - super::aarch64_tls_layout::DTV_OFFSET_BELOW_TP) as *mut usize).write(tp);
+        }
 
         Some(StaticInitialTlsBlock {
             placement,
@@ -711,7 +749,7 @@ unsafe fn static_executable_load_bias_without_pt_phdr(
         || unsafe { core::ptr::read_unaligned(header.wrapping_add(16).cast::<u16>()) }
             != ET_EXEC
         || unsafe { core::ptr::read_unaligned(header.wrapping_add(18).cast::<u16>()) }
-            != EM_X86_64
+            != ELF_MACHINE
         || unsafe { core::ptr::read_unaligned(header.wrapping_add(20).cast::<u32>()) }
             != EV_CURRENT
         || unsafe { core::ptr::read_unaligned(header.wrapping_add(32).cast::<u64>()) }
@@ -905,7 +943,8 @@ unsafe fn unmap(address: *mut u8, length: usize) -> i64 {
     }
 }
 
-unsafe fn arch_set_fs(thread_pointer: usize) -> bool {
+#[cfg(target_arch = "x86_64")]
+unsafe fn arch_set_fs(thread_pointer: usize, _initial_stack: *const usize) -> bool {
     !is_linux_error(unsafe {
         raw_syscall::syscall2(
             raw_syscall::SYS_ARCH_PRCTL,
@@ -913,6 +952,15 @@ unsafe fn arch_set_fs(thread_pointer: usize) -> bool {
             thread_pointer as i64,
         )
     })
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn arch_set_fs(thread_pointer: usize, initial_stack: *const usize) -> bool {
+    // SAFETY: bootstrap has validated the writable kernel entry stack and its auxiliary vector.
+    let Some(auxv) = (unsafe { auxiliary_vector_from_initial_stack(initial_stack) }) else { return false };
+    // SAFETY: the caller has initialized the thread's live TLS allocation.
+    unsafe { core::arch::asm!("msr tpidr_el0, {}", in(reg) thread_pointer, options(nostack, preserves_flags)); }
+    unsafe { aarch64_auxv::mask(auxv as *mut usize, MAX_AUXV_ENTRIES) }
 }
 
 #[inline]
@@ -958,10 +1006,14 @@ pub(super) unsafe fn reset_current_thread_images(
 ) {
     let plan = unsafe { STATIC_INITIAL_TLS_PLAN };
     let tp = super::pthread_identity::current_thread_pointer();
+    #[cfg(target_arch = "x86_64")]
     let destination = unsafe { tp.sub(plan.image_offset_below_tp) };
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the acquired plan describes this thread's live TLS image.
+    let destination = unsafe { tp.add(plan.image_offset_below_tp) };
     let start = destination as usize;
     let Some(end) = start.checked_add(plan.memsz) else {
-        unsafe { raw_syscall::syscall1(231, 127); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_EXIT_GROUP, 127); }
         loop { core::hint::spin_loop(); }
     };
     let mut valid = true;
@@ -981,7 +1033,7 @@ pub(super) unsafe fn reset_current_thread_images(
         if !valid { break; }
     }
     if !valid {
-        unsafe { raw_syscall::syscall1(231, 127); }
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_EXIT_GROUP, 127); }
         loop { core::hint::spin_loop(); }
     }
 
@@ -1027,5 +1079,9 @@ pub(super) unsafe fn current_initial_image() -> *mut u8 {
     // later writer, and the calling thread owns a materialization of it.
     let plan = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(STATIC_INITIAL_TLS_PLAN)) };
     let tp = super::pthread_identity::current_thread_pointer();
+    #[cfg(target_arch = "x86_64")]
     unsafe { tp.sub(plan.image_offset_below_tp) }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the acquired plan describes this thread's live TLS image.
+    unsafe { tp.add(plan.image_offset_below_tp) }
 }

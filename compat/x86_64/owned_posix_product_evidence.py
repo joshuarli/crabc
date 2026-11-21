@@ -34,23 +34,27 @@ from scripts import native_build_tools
 from scripts.rust_toolchain import pinned_toolchain
 import native_rustc
 from native_runtime_profile import NativeRuntimeProfile
+from native_arch import native_arch
 
 
-TARGET = "x86_64-unknown-linux-musl"
-STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
-STATIC_PRODUCT_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
-DYNAMIC_PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+ARCH = native_arch()["arch"]
+TARGET = f"{ARCH}-unknown-linux-musl"
+ARCH_LABEL = "x86-64" if ARCH == "x86_64" else ARCH
+STATIC_FORMAT = f"crabc-{ARCH_LABEL}-sealed-static-driver-v1"
+STATIC_PRODUCT_FORMAT = f"crabc-{ARCH_LABEL}-owned-static-sysroot-v1"
+DYNAMIC_PRODUCT_FORMAT = f"crabc-{ARCH_LABEL}-owned-dynamic-sysroot-v1"
 # A combined four-mode sysroot (scripts/build_x86_64_owned_combined_sysroot.py)
 # embeds each product manifest at share/crabc/<product>/manifest.json. Product
 # metadata may move only within share/crabc/; the static product's unlinked
 # Scrt1.o yields to the dynamic PIE entry. The installed drivers apply the same
 # rules before they run.
-COMBINED_SYSROOT_FORMAT = "crabc-x86-64-owned-sysroot-v1"
+COMBINED_SYSROOT_FORMAT = f"crabc-{ARCH_LABEL}-owned-sysroot-v1"
 PRODUCT_MANIFEST = "share/crabc/manifest.json"
 PRODUCT_METADATA_PREFIX = "share/crabc/"
-SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_alias_image_inputs.json"
+SOURCE_NATIVE_IMAGE_MANIFEST = ROOT / ("compat/x86_64/owned_resolver_alias_image_inputs_aarch64.json" if ARCH == "aarch64" else "compat/x86_64/owned_resolver_alias_image_inputs.json")
 COMBINED_UNINSTALLED_PAYLOAD = {"static": frozenset({"usr/lib/Scrt1.o"}), "dynamic": frozenset()}
-INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+INTERPRETER = f"/lib/ld-crabc-{ARCH}.so.1"
+NATIVE_ELF_MACHINE = 183 if ARCH == "aarch64" else 62
 STATIC_DRIVER_STATUS = "planned-owned-static-product-seed-not-family-completion-not-public-support"
 STATIC_CRT_OBJECTS = ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")
 STATIC_REQUIRED = (
@@ -73,7 +77,7 @@ DYNAMIC_REQUIRED = (
     "share/crabc/owned_dynamic_receipt.py",
     "share/crabc/owned_dynamic_elf.py",
     "share/crabc/producer-tools.json",
-    "lib/ld-crabc-x86_64.so.1",
+    INTERPRETER.lstrip("/"),
     "usr/lib/crt1.o",
     "usr/lib/Scrt1.o",
     "usr/lib/crti.o",
@@ -242,6 +246,21 @@ def source_native_compiler_tool_records() -> dict[str, dict[str, str]]:
     return records
 
 
+def source_native_image_tool_record(path: str) -> dict[str, str]:
+    if not isinstance(path, str) or not Path(path).is_absolute() or ".." in Path(path).parts:
+        _fail("source-native image tool path is malformed")
+    try:
+        manifest = json.loads(SOURCE_NATIVE_IMAGE_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ProductEvidenceError("source-native image tool manifest is unreadable") from error
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    value = files.get(path) if isinstance(files, dict) else None
+    if (not isinstance(value, dict) or value.get("path") != path or
+            not isinstance(value.get("sha256"), str) or not SHA256.fullmatch(value["sha256"])):
+        _fail("source-native image manifest omits tool")
+    return {"path": path, "sha256": value["sha256"]}
+
+
 def _validate_compiler_records_against_source(records: dict[str, dict[str, str]]) -> None:
     expected = source_native_compiler_tool_records()
     for name, identity in expected.items():
@@ -253,6 +272,7 @@ def validate_native_compiler_tool_records(value: object) -> dict[str, dict[str, 
     if not isinstance(value, dict):
         _fail("native producer tools are malformed")
     expected = source_native_compiler_tool_records()
+    expected = {name: expected[name] for name in ("rustc_wrapper", "linker", "cargo_linker", "rustc")}
     for name, path_identity in expected.items():
         received = value.get(name)
         keys = ("path", "sha256", "sysroot") if name == "rustc" else ("path", "sha256")
@@ -305,7 +325,7 @@ def validate_native_rustc_command(argv: object, producer_tools: object | None = 
     return list(argv)
 
 
-def retained_elf_facts(path: Path) -> dict[str, object]:
+def retained_elf_facts(path: Path, *, machine_id: int = NATIVE_ELF_MACHINE) -> dict[str, object]:
     """Read the bounded ELF facts needed by command-free host replay.
 
     Native collection keeps its established ``readelf`` checks. A host cannot
@@ -331,7 +351,7 @@ def retained_elf_facts(path: Path) -> dict[str, object]:
     kind, machine, version, _entry, phoff, _shoff, _flags, ehsize, phsize, phnum, _shsize, _shnum, _shstrndx = unpack(
         "<HHIQQQIHHHHHH", 16
     )
-    if machine != 62 or version != 1 or ehsize != 64 or (phnum and phsize != 56):
+    if machine != machine_id or version != 1 or ehsize != 64 or (phnum and phsize != 56):
         _fail("retained ELF architecture or header contract differs")
     if kind not in (2, 3) or phnum >= 65536:
         _fail("retained ELF type or table count differs")
@@ -648,7 +668,7 @@ def _validate_product_tree(root: Path, product: str, files: dict[str, str], alia
         profile = NativeRuntimeProfile(combined["hardening_profile"])
     except (KeyError, TypeError, ValueError):
         _fail("combined product has an invalid native runtime profile")
-    if links != profile.aliases or combined.get("modes") != list(profile.combined_modes):
+    if links != profile.aliases_for_architecture(ARCH) or combined.get("modes") != list(profile.combined_modes):
         _fail("combined sysroot aliases or modes differ from its profile")
     _validate_payload_tree(root, installed, aliases=links)
     placements = combined["products"][product]["placements"]
@@ -721,7 +741,7 @@ def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]
         profile = NativeRuntimeProfile(manifest["hardening_profile"])
     except (KeyError, TypeError, ValueError):
         _fail("dynamic product has an invalid native runtime profile")
-    aliases = profile.aliases
+    aliases = profile.aliases_for_architecture(ARCH)
     if (manifest.get("schema"), manifest.get("format"), manifest.get("target"), manifest.get("symlinks")) != (
         1, DYNAMIC_PRODUCT_FORMAT, TARGET, aliases
     ):
@@ -742,7 +762,8 @@ def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]
         if type(source) is not str or re.fullmatch(r"[0-9a-f]{64}", source) is None:
             _fail("debug dynamic product source digest is invalid")
     files = _payload_files(manifest.get("files"), "dynamic product manifest")
-    required = (set(DYNAMIC_REQUIRED) - {INTERPRETER.lstrip("/")}) | {profile.interpreter.lstrip("/")}
+    interpreter = profile.interpreter if ARCH == "x86_64" else ("/lib/ld-crabc-aarch64-hardened.so.1" if profile is NativeRuntimeProfile.HARDENED else INTERPRETER)
+    required = (set(DYNAMIC_REQUIRED) - {INTERPRETER.lstrip("/")}) | {interpreter.lstrip("/")}
     missing = sorted(required - set(files))
     if missing:
         _fail(f"dynamic product manifest omits required runtime payload: {missing[0]}")
@@ -767,7 +788,7 @@ def _validate_dynamic_product_uncached(root: Path) -> tuple[Path, dict[str, str]
     try:
         crabc_cc_owned_dynamic.validate_loader_provenance(root, loader_receipt,
                                                          crabc_cc_owned_dynamic.shared.NativeRuntimeProfile(profile.value),
-                                                         manifest.get("build_profile"))
+                                                         manifest.get("build_profile"), architecture=ARCH)
     except crabc_cc_static.DriverError as error:
         raise ProductEvidenceError(str(error)) from error
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")
@@ -915,6 +936,11 @@ def _check_file_record(value: object, receipt: Path, expected: Path, description
 
 def _check_linker(value: object, receipt: Path) -> str:
     record = _require_keys(value, {"path", "sha256"}, "resolved linker")
+    if ARCH == "aarch64":
+        expected = source_native_compiler_tool_records()["linker"]
+        if record != expected:
+            _fail("resolved linker differs from source image manifest")
+        return expected["path"]
     linker = _recorded_file(record["path"], receipt, "resolved linker")
     if linker != native_build_tools.MOLD:
         _fail("resolved linker is not the pinned mold")
@@ -932,7 +958,7 @@ def _static_link_plan(root: Path, linkage: str) -> list[str]:
         Path(native_build_tools.MOLD).name, "-static", *(["-pie"] if linkage == "static-pie" else []),
         "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", str(library / mode["crt"]), str(library / "crti.o"),
-        "<application-objects>", str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
+        "<application-objects>", *(["--start-group"] if ARCH == "aarch64" else []), str(library / "libc.a"), str(library / "libcrabc-builtins.a"), *(["--end-group"] if ARCH == "aarch64" else []),
         str(library / "crtn.o"), "-o", "<output>",
     ]
 
@@ -947,9 +973,10 @@ def _declared_static_inputs(contract: list[str], workload: str) -> tuple[set[str
     conditional. A Rust-only native-shadow `libc.a` references no helper, so
     a helper-free application extracts nothing from it.
     """
-    inputs = contract[contract.index("_start") + 1:contract.index("-o")]
+    inputs = [item for item in contract[contract.index("_start") + 1:contract.index("-o")]
+              if item not in {"--start-group", "--end-group"}]
     direct = {workload if item == "<application-objects>" else item
-              for item in inputs if not item.endswith(".a")}
+              for item in inputs if not item.endswith(".a") and item not in {"--start-group", "--end-group"}}
     archives = [item for item in inputs if item.endswith(".a")]
     libc = next((item for item in archives if Path(item).name == "libc.a"), None)
     if libc is None:
@@ -1059,8 +1086,8 @@ def _dynamic_link_command_for_workloads(
     if export_dynamic:
         command.append("--export-dynamic")
     command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker",
-        interpreter, str(library / entry), str(library / "crabc-dynamic-attach.o"),
-        str(library / "crti.o"), *(str(workload) for workload in workloads), str(library / "libcrabc-builtins.a"),
+        interpreter, str(library / entry), *([str(library / "crabc-dynamic-attach.o")] if ARCH == "x86_64" else []),
+        str(library / "crti.o"), *([str(library / "crabc-dynamic-attach.o")] if ARCH == "aarch64" and linkage == "non-pie" else []), *(str(workload) for workload in workloads), str(library / "libcrabc-builtins.a"),
         str(library / "libc.so"), str(library / "crtn.o"), "-o", str(executable)))
     return command
 
@@ -1071,7 +1098,7 @@ def _validate_dynamic_trace(value: object, root: Path, workloads: tuple[Path, ..
     library = root / "usr/lib"
     entry = str(library / str(LINKAGES[linkage]["crt"]))
     direct = {
-        entry, str(library / "crabc-dynamic-attach.o"), str(library / "crti.o"),
+        entry, *([str(library / "crabc-dynamic-attach.o")] if ARCH == "x86_64" or linkage == "non-pie" else []), str(library / "crti.o"),
         *(str(workload) for workload in workloads),
         str(library / "libc.so"), str(library / "crtn.o"),
     }
@@ -1125,7 +1152,7 @@ def _validate_dynamic_receipt_for_workloads(
     entry = str(mode["crt"])
     runtime = [
         library / "crti.o", library / "libc.so", library / "crtn.o", library / entry,
-        library / "crabc-dynamic-attach.o",
+        *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or linkage == "non-pie" else []),
     ]
     archive = library / "libcrabc-builtins.a"
     expected_roster = sorted(path.relative_to(root).as_posix() for path in [*runtime, archive])
@@ -1147,7 +1174,7 @@ def _validate_dynamic_receipt_for_workloads(
     linker = _check_linker(record["resolved_linker"], receipt)
     if record["link_command"] != _dynamic_link_command_for_workloads(
             root, workloads, executable, linkage, linker, export_dynamic=export_dynamic,
-            interpreter=_dynamic_profile(root, linkage).interpreter):
+            interpreter=_dynamic_profile(root, linkage).interpreter.replace("x86_64", ARCH)):
         _fail("dynamic link command differs from the sealed product contract")
     _validate_dynamic_trace(record["link_trace"], root, workloads, linkage)
     return _sha256(receipt)
@@ -1171,14 +1198,15 @@ def _readelf(path: Path) -> dict[str, str]:
     return result
 
 
-def _audit_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER) -> None:
+def _audit_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER, *, arm: bool = False) -> None:
     inspection = _readelf(executable)
     if set(inspection) != {"header", "program", "dynamic"} or not all(isinstance(value, str) for value in inspection.values()):
         _fail("readelf inspection is incomplete")
     header, program, dynamic = inspection["header"], inspection["program"], inspection["dynamic"]
     mode = LINKAGES[linkage]
-    if re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is None:
-        _fail("linked executable is not an x86-64 ELF")
+    machine = "AArch64" if arm else "Advanced Micro Devices X86-64"
+    if re.search(rf"^\s*Machine:\s+{machine}\s*$", header, re.MULTILINE) is None:
+        _fail("linked executable is not an aarch64 ELF" if arm else "linked executable is not an x86-64 ELF")
     if re.search(rf"^\s*Type:\s+{mode['readelf_type']}(?:\s|\()", header, re.MULTILINE) is None:
         _fail("linked executable ELF type differs from the requested linkage")
     if re.search(r"\bTEXTREL\b", dynamic):
@@ -1202,12 +1230,12 @@ def _audit_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER) -
         _fail("dynamic linked executable search path differs from the owned runtime")
 
 
-def _audit_retained_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER) -> None:
+def _audit_retained_elf(executable: Path, linkage: str, interpreter: str = INTERPRETER, *, arm: bool = False) -> None:
     """Validate replayed link output without invoking a host ELF tool."""
-    facts = retained_elf_facts(executable)
+    facts = retained_elf_facts(executable, machine_id=183 if arm else 62)
     mode = LINKAGES[linkage]
     expected_type = 3 if mode["readelf_type"] == "DYN" else 2
-    if facts["machine"] != 62 or facts["type"] != expected_type:
+    if facts["machine"] != (183 if arm else 62) or facts["type"] != expected_type:
         _fail("retained linked executable ELF type differs from requested linkage")
     if facts["textrel"]:
         _fail("retained linked executable has DT_TEXTREL")
@@ -1281,6 +1309,8 @@ def _retained_linker(value: object, tool: object) -> str:
         _fail("retained linker identity is malformed")
     if record != expected:
         _fail("resolved linker differs from retained tool seal")
+    if ARCH == "aarch64" and expected != source_native_compiler_tool_records()["linker"]:
+        _fail("retained linker differs from source image manifest")
     return path
 
 
@@ -1292,8 +1322,10 @@ def _retained_static_plan(root: Path, source_mount: str, product: Path, linkage:
         "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now",
         "-e", "_start", _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
         _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
-        "<application-objects>", _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
+        "<application-objects>", *(["--start-group"] if ARCH == "aarch64" else []),
+        _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
         _retained_recorded(root, source_mount, library / "libcrabc-builtins.a", "static builtins"),
+        *(["--end-group"] if ARCH == "aarch64" else []),
         _retained_recorded(root, source_mount, library / "crtn.o", "static CRT"), "-o", "<output>",
     ]
 
@@ -1366,7 +1398,7 @@ def _retained_dynamic_command(root: Path, source_mount: str, product: Path, work
         command.append("--export-dynamic")
     command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", interpreter,
         *(recorded(path, "dynamic link input") for path in (
-            library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", workload,
+            library / entry, *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" else []), library / "crti.o", *([library / "crabc-dynamic-attach.o"] if ARCH == "aarch64" and linkage == "non-pie" else []), workload,
             library / "libcrabc-builtins.a", library / "libc.so", library / "crtn.o",
         )), "-o", recorded(executable, "dynamic output")))
     return command
@@ -1380,7 +1412,7 @@ def _validate_retained_dynamic_trace(value: object, root: Path, source_mount: st
     recorded = lambda path, description: _retained_recorded(root, source_mount, path, description)
     direct = {
         recorded(library / str(LINKAGES[linkage]["crt"]), "dynamic CRT"),
-        recorded(library / "crabc-dynamic-attach.o", "dynamic attach object"),
+        *([recorded(library / "crabc-dynamic-attach.o", "dynamic attach object")] if ARCH == "x86_64" or linkage == "non-pie" else []),
         recorded(library / "crti.o", "dynamic CRT"), recorded(workload, "dynamic workload"),
         recorded(library / "libc.so", "dynamic libc"), recorded(library / "crtn.o", "dynamic CRT"),
     }
@@ -1413,7 +1445,7 @@ def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: P
     library = product / "usr/lib"
     runtime = [
         library / "crti.o", library / "libc.so", library / "crtn.o", library / str(mode["crt"]),
-        library / "crabc-dynamic-attach.o",
+        *([library / "crabc-dynamic-attach.o"] if ARCH == "x86_64" or linkage == "non-pie" else []),
     ]
     archive = library / "libcrabc-builtins.a"
     expected_roster = sorted(path.relative_to(product).as_posix() for path in [*runtime, archive])
@@ -1430,7 +1462,7 @@ def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: P
     retained_linker = _retained_linker(record["resolved_linker"], linker)
     if record["link_command"] != _retained_dynamic_command(
             root, source_mount, product, workload, executable, linkage, retained_linker,
-            export_dynamic=export_dynamic, interpreter=_dynamic_profile(product, linkage).interpreter):
+            export_dynamic=export_dynamic, interpreter=_dynamic_profile(product, linkage).interpreter.replace("x86_64", ARCH)):
         _fail("retained dynamic link command differs")
     _validate_retained_dynamic_trace(record["link_trace"], root, source_mount, product, workload, linkage)
     return _sha256(receipt)
@@ -1468,15 +1500,19 @@ def validate_retained_link(root: Path, source_mount: str, product: Path, workloa
             checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, linker
         )
         product_format = STATIC_PRODUCT_FORMAT
+        arm = _json_object(manifest, "static product manifest").get("target") == "aarch64-unknown-linux-musl"
     else:
         manifest, _ = _validate_dynamic_product(product_path)
         profile = _dynamic_profile(product_path, linkage)
+        arm = _json_object(manifest, "dynamic product manifest").get("target") == "aarch64-unknown-linux-musl"
         receipt_hash = _validate_retained_dynamic_receipt(
             checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest,
             linker, export_dynamic=export_dynamic,
         )
-        product_format = DYNAMIC_PRODUCT_FORMAT
-    _audit_retained_elf(executable_path, linkage, profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
+        product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
+    interpreter = (profile.interpreter.replace("x86_64", ARCH)
+                   if linkage in {"pie", "non-pie"} else INTERPRETER)
+    _audit_retained_elf(executable_path, linkage, interpreter, arm=arm)
     return {
         "linkage": linkage,
         "product": str(product_path),
@@ -1539,15 +1575,19 @@ def _validate_link(
             root, workload_paths[0], executable_path, receipt_path, linkage
         )
         product_format = STATIC_PRODUCT_FORMAT
+        arm = _json_object(manifest, "static product manifest").get("target") == "aarch64-unknown-linux-musl"
     else:
         manifest, _ = _validate_dynamic_product(root)
         profile = _dynamic_profile(root, linkage)
+        arm = _json_object(manifest, "dynamic product manifest").get("target") == "aarch64-unknown-linux-musl"
         receipt_hash = _validate_dynamic_receipt_for_workloads(
             root, workload_paths, executable_path, receipt_path, linkage, manifest,
             export_dynamic=export_dynamic,
         )
-        product_format = DYNAMIC_PRODUCT_FORMAT
-    _audit_elf(executable_path, linkage, profile.interpreter if linkage in {"pie", "non-pie"} else INTERPRETER)
+        product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if arm else DYNAMIC_PRODUCT_FORMAT
+    interpreter = (profile.interpreter.replace("x86_64", ARCH)
+                   if linkage in {"pie", "non-pie"} else INTERPRETER)
+    _audit_elf(executable_path, linkage, interpreter, arm=arm)
     return {
         "linkage": linkage,
         "product": str(root),

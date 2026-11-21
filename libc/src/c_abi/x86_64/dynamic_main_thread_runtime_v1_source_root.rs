@@ -41,7 +41,6 @@ mod startup_security;
 #[cfg(crabc_general_dynamic_lifecycle)]
 #[path = "issetugid.rs"]
 mod issetugid;
-#[cfg(crabc_general_dynamic_lifecycle)]
 #[path = "syscall.rs"]
 #[allow(dead_code)]
 mod raw_syscall;

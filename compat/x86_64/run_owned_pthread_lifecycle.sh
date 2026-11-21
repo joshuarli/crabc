@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ordinary installed x86 pthread/C11 lifecycle consumer evidence.
+# Ordinary installed native pthread/C11 lifecycle consumer evidence.
 #
 # This one composition runner first executes the project-header consumer with
 # pinned musl 1.2.6, then builds the installed owned static product and runs
@@ -10,12 +10,22 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+if [ "$arch" = aarch64 ]; then
+    readonly ARCH_LABEL=aarch64 ELF_MACHINE=AArch64 RELOCATION=R_AARCH64
+    readonly DYNAMIC_FORMS='R_AARCH64_(GLOB_DAT|JUMP_SLOT|TLS|DTPMOD|DTPREL|TPREL)'
+    readonly INITIAL_TLS='R_AARCH64_TLSIE|__tls_get_addr'
+else
+    readonly ARCH_LABEL=x86-64 ELF_MACHINE='Advanced Micro Devices X86-64' RELOCATION=R_X86_64
+    readonly DYNAMIC_FORMS='R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)'
+    readonly INITIAL_TLS='R_X86_64_GOTTPOFF|__tls_get_addr'
+fi
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PROBE="$ROOT_DIR/compat/x86_64/owned_pthread_lifecycle_consumer.c"
 
 fail() {
-    printf 'ERROR: x86 owned pthread lifecycle: %s\n' "$*" >&2
+    printf 'ERROR: owned pthread lifecycle: %s\n' "$*" >&2
     exit 1
 }
 
@@ -47,10 +57,6 @@ require_tool() {
 }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
-case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) fail "refuses emulation on $(uname -m)" ;;
-esac
 for tool in cmp grep mkdir mktemp objdump python3 readelf realpath timeout; do
     require_tool "$tool"
 done
@@ -81,7 +87,7 @@ else
 fi
 ulimit -c 0
 
-work_dir="$(mktemp -d "$TMPDIR/crabc-x86-owned-pthread-lifecycle.XXXXXX")"
+work_dir="$(mktemp -d "$TMPDIR/crabc-owned-pthread-lifecycle.XXXXXX")"
 cleanup() {
     local status=$?
 
@@ -91,7 +97,7 @@ cleanup() {
     else
         chmod -R a+rX "$work_dir"
         if [ "$status" -ne 0 ]; then
-            printf 'x86 owned pthread lifecycle: retained failure evidence at %s\n' \
+            printf 'owned pthread lifecycle: retained failure evidence at %s\n' \
                 "$work_dir" >&2
         fi
     fi
@@ -138,7 +144,7 @@ audit_receipt_and_elf() {
     local symbols="$mode_root/symbols"
     local relocations="$mode_root/relocations"
 
-    python3 - "$mode" "$candidate" "$receipt" <<'PY'
+    python3 - "$mode" "$candidate" "$receipt" "$ARCH_LABEL" "$target_triple" <<'PY'
 import hashlib
 import json
 import sys
@@ -157,7 +163,7 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 
-mode, candidate_text, receipt_text = sys.argv[1:]
+mode, candidate_text, receipt_text, arch_label, target = sys.argv[1:]
 candidate = Path(candidate_text)
 receipt_path = Path(receipt_text)
 expected = {
@@ -170,9 +176,9 @@ except (OSError, json.JSONDecodeError) as error:
     fail(f"unreadable receipt: {error}")
 if not isinstance(receipt, dict):
     fail("receipt is not an object")
-if receipt.get("schema") != 1 or receipt.get("format") != "crabc-x86-64-sealed-static-driver-v1":
+if receipt.get("schema") != 1 or receipt.get("format") != f"crabc-{arch_label}-sealed-static-driver-v1":
     fail("schema or format drifted")
-if receipt.get("target") != "x86_64-unknown-linux-musl":
+if receipt.get("target") != target:
     fail("target drifted")
 selected = receipt.get("mode")
 if not isinstance(selected, dict) or (
@@ -199,8 +205,8 @@ PY
     readelf --dynamic --wide "$candidate" >"$dynamic" || true
     readelf --symbols --wide "$candidate" >"$symbols"
     readelf --relocs --wide "$candidate" >"$relocations"
-    grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' "$file_header" ||
-        fail "$label candidate is not EM_X86_64"
+    grep -Eq "Machine:[[:space:]]+$ELF_MACHINE" "$file_header" ||
+        fail "$label candidate is not the native machine"
     case "$mode" in
         -static)
             grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' "$file_header" ||
@@ -229,15 +235,14 @@ PY
     if awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end")) { print }' "$symbols" | grep . >/dev/null; then
         fail "$label candidate retains an unresolved symbol"
     fi
-    if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
-        "$relocations" "$symbols"; then
+    if grep -Eq "$DYNAMIC_FORMS" "$relocations" "$symbols"; then
         fail "$label candidate retains dynamic relocation or TLS form"
     fi
     if [ "$mode" = -static-pie ]; then
-        if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations" "$symbols"; then
+        if grep -Eq "$INITIAL_TLS" "$relocations" "$symbols"; then
             fail "$label candidate retains unrelaxed initial TLS"
         fi
-        awk '$3 ~ /^R_X86_64_/ && $3 != "R_X86_64_RELATIVE" { exit 1 }' "$relocations" ||
+        awk -v prefix="$RELOCATION" '$3 ~ ("^" prefix "_") && $3 != (prefix "_RELATIVE") { exit 1 }' "$relocations" ||
             fail "$label candidate retains a non-relative relocation"
     fi
     timeout 30 env -i "$candidate" >"$output" ||
@@ -348,4 +353,4 @@ if [ "$retain" -eq 1 ]; then
     printf 'evidence: %s\n' "$work_dir"
 fi
 printf '%s\n' \
-    'x86 owned pthread lifecycle: PASS (pinned musl + installed ET_EXEC/static-PIE attributes, C11, explicit/condition cancellation teardown, normal robust owner-death/recovery, detached reaping, atfork)'
+    'owned pthread lifecycle: PASS (pinned musl + installed ET_EXEC/static-PIE attributes, C11, explicit/condition cancellation teardown, normal robust owner-death/recovery, detached reaping, atfork)'

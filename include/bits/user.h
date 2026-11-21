@@ -43,8 +43,7 @@ struct user {
 #define HOST_TEXT_START_ADDR	(u.start_code)
 #define HOST_STACK_END_ADDR	(u.start_stack + u.u_ssize * NBPG)
 #elif defined(__aarch64__)
-#ifndef _CRABC_BITS_USER_H
-#define _CRABC_BITS_USER_H
+/* musl 1.2.6 aarch64/bits/user.h, MIT licensed. */
 struct user_regs_struct {
 	unsigned long long regs[31];
 	unsigned long long sp;
@@ -61,5 +60,5 @@ struct user_fpsimd_struct {
 #define ELF_NREG 34
 typedef unsigned long elf_greg_t, elf_gregset_t[ELF_NREG];
 typedef struct user_fpsimd_struct elf_fpregset_t;
-#endif
+
 #endif

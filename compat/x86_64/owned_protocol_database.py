@@ -39,9 +39,11 @@ from owned_static_link_authority import (
     require_static_functions,
 )
 from owned_syscall_alias_authority import archive_members
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = native_arch()["arch"]
 SCHEMA = "crabc.x86_64-owned-protocol-database-products/v2"
 COMPONENT = "protocol-database-product"
 ARMS = ("installed", "reproduction", "extracted")
@@ -61,9 +63,9 @@ PROVIDERS = (
     "setprotoent",
 )
 ORACLE_PROTO_IMPORTS = ("strcmp", "strlen")
-MUSL_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+MUSL_CC = Path(f"/usr/local/bin/crabc-{ARCH}-musl-gcc")
 PINNED_MUSL_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
-ORACLE_IMAGE_MANIFEST = Path("compat/x86_64/owned_resolver_network_image_inputs.json")
+ORACLE_IMAGE_MANIFEST = Path("compat/x86_64/owned_resolver_network_image_inputs" + ("" if ARCH == "x86_64" else "_aarch64") + ".json")
 PROBE = Path("compat/x86_64/libc_protocol_database_probe.c")
 RUST_PROVIDER = Path("libc/src/c_abi/x86_64/protocol_database.rs")
 PROVIDER_CONTRACT = Path("compat/x86_64/protocol-database-provider.toml")
@@ -95,7 +97,7 @@ def pinned_musl_archive_identity(root: Path) -> dict[str, object]:
         manifest = json.loads((root / ORACLE_IMAGE_MANIFEST).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as error:
         raise ProtocolDatabaseError(f"cannot read native oracle image manifest: {error}") from error
-    require(isinstance(manifest, dict) and manifest.get("schema") == "crabc.x86_64-owned-resolver-network-image-inputs/v1"
+    require(isinstance(manifest, dict) and manifest.get("schema") == f"crabc.{ARCH}-owned-resolver-network-image-inputs/v1"
             and isinstance(manifest.get("files"), dict), "native oracle image manifest differs")
     record = manifest["files"].get(str(PINNED_MUSL_ARCHIVE))
     require(isinstance(record, dict) and set(record) == {"path", "sha256", "size", "mode"}
@@ -131,7 +133,7 @@ def _below_work(path: Path, description: str, *, directory: bool) -> Path:
 
 
 def _verifier_scratch_root(root: Path) -> Path:
-    path = root / ".work/x86_64/tmp"
+    path = root / f".work/{ARCH}/tmp"
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as error:
@@ -321,11 +323,25 @@ def _oracle_provider_map(map_path: Path, owners: Mapping[str, str]) -> bytes:
                    if line.split() and line.split()[-1] == input_row]
         require(len(matches) == 1, f"pinned musl link map does not select one {name} input")
         index = matches[0]
-        require(index + 1 < len(lines) and lines[index + 1].split()
-                and lines[index + 1].split()[-1] == name,
-                f"pinned musl link map does not bind {name} to its selected input")
-        require(index in selected_indices and index + 1 in selected_indices,
-                f"pinned musl link map omits the selected {name} rows")
+        if ARCH == "x86_64":
+            require(index + 1 < len(lines) and lines[index + 1].split()
+                    and lines[index + 1].split()[-1] == name,
+                    f"pinned musl link map does not bind {name} to its selected input")
+            require(index in selected_indices and index + 1 in selected_indices,
+                    f"pinned musl link map omits the selected {name} rows")
+        else:
+            symbol_rows = []
+            for following in range(index + 1, len(lines)):
+                fields = lines[following].split()
+                if not fields or fields[-1].startswith(".") or ":(" in fields[-1]:
+                    break
+                if fields[-1] == name:
+                    symbol_rows.append(following)
+                elif re.fullmatch(r"\$[xd](?:\.[0-9]+)?", fields[-1]) is None:
+                    break
+            require(len(symbol_rows) == 1, f"pinned musl link map does not bind {name} to its selected input")
+            require(index in selected_indices and symbol_rows[0] in selected_indices,
+                    f"pinned musl link map omits the selected {name} rows")
     selected = [lines[0], *(lines[index] for index in sorted(selected_indices))]
     return ("\n".join(selected) + "\n").encode("utf-8")
 
@@ -397,7 +413,7 @@ def oracle_static_provider_authority(archive: Path, workload: Path, executable: 
         require(len(compiler_crts) == 2 and compiler_crts[0].parent == compiler_crts[1].parent,
                 "pinned musl link trace compiler CRT root differs")
         compiler_root = compiler_crts[0].parent
-        compiler_base = Path("/usr/lib/gcc/x86_64-alpine-linux-musl")
+        compiler_base = Path(f"/usr/lib/gcc/{ARCH}-alpine-linux-musl")
         require(compiler_root.parent == compiler_base
                 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", compiler_root.name) is not None,
                 "pinned musl link trace compiler CRT root differs")
@@ -638,9 +654,9 @@ def expected_executions() -> dict[str, tuple[str, list[str]]]:
         result[f"{arm}-static-et-exec"] = (f"{arm}-static-et-exec", ["/workload"])
         result[f"{arm}-static-pie"] = (f"{arm}-static-pie", ["/workload"])
         result[f"{arm}-dynamic-pie-kernel"] = (f"{arm}-dynamic-pie", ["/workload"])
-        result[f"{arm}-dynamic-pie-direct"] = (f"{arm}-dynamic-pie", ["/lib/ld-crabc-x86_64.so.1", "/workload"])
+        result[f"{arm}-dynamic-pie-direct"] = (f"{arm}-dynamic-pie", [f"/lib/ld-crabc-{ARCH}.so.1", "/workload"])
         result[f"{arm}-dynamic-non-pie-kernel"] = (f"{arm}-dynamic-non-pie", ["/workload"])
-        result[f"{arm}-dynamic-non-pie-direct"] = (f"{arm}-dynamic-non-pie", ["/lib/ld-crabc-x86_64.so.1", "/workload"])
+        result[f"{arm}-dynamic-non-pie-direct"] = (f"{arm}-dynamic-non-pie", [f"/lib/ld-crabc-{ARCH}.so.1", "/workload"])
     return result
 
 

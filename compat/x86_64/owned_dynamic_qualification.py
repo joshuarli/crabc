@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -28,11 +29,13 @@ import tomllib
 import owned_dynamic_elf as elf_inspection
 import owned_dynamic_receipt as receipt_contract
 import source_seal
+from native_arch import native_arch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-dynamic-qualification/v1"
 PRODUCTS = ("installed", "second", "extracted")
-PUBLICATION = ROOT / ".work/x86_64/owned-dynamic-qualification.json"
+ARCH = native_arch()
+PUBLICATION = ROOT / ".work" / ARCH["work_name"] / "owned-dynamic-qualification.json"
 MATERIALIZATION_ALLOCATOR_BACKEND = "accepted-c"
 # Materialized products can record only a backend selected by the owned builder.
 MATERIALIZATION_ALLOCATOR_BACKENDS = frozenset({
@@ -144,7 +147,7 @@ CONTRACTS = ("compat/x86_64/dynamic-product.toml", "compat/x86_64/loader-libc-tl
 
 ORACLE_FILES = {
     "runtime": Path("/opt/musl-1.2.6/lib/libc.so"),
-    "compiler_wrapper": Path("/usr/local/bin/crabc-x86_64-musl-gcc"),
+    "compiler_wrapper": Path(ARCH["oracle"]),
     "specs": Path("/opt/musl-1.2.6/lib/musl-gcc.specs"),
     "source_manifest": Path("/opt/musl-1.2.6/.crabc-oracle"),
     "specs_manifest": Path("/opt/musl-1.2.6/.crabc-musl-gcc-specs.sha256"),
@@ -222,16 +225,33 @@ def _product_identity(product: Path, source_identity: str) -> str:
     return _product_identity_from_state(product, manifest, state, provenance, source_identity)
 
 
-def _materialization_product(product: Path) -> tuple[dict, dict, dict]:
+def _materialization_product(product: Path) -> tuple[dict, dict | None, dict | None]:
     import crabc_cc_owned_dynamic as driver
-    try:
-        manifest = driver.validate_installation(product)
-    except driver.shared.DriverError as error:
-        raise QualificationError(f"installed product invalid: {error}") from error
-    if manifest.get("format") == driver.COMBINED_FORMAT:
-        manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
-    state = read(product / "share/crabc/dynamic-product-state.json")
-    provenance = read(product / "share/crabc/libc-shared.provenance.json")
+    manifest = read(product / "share/crabc/manifest.json")
+    if manifest.get("format") == "crabc-aarch64-owned-sysroot-v1":
+        try:
+            record = driver.validate_installation(product)
+        except driver.shared.DriverError as error:
+            raise QualificationError(f"installed combined product invalid: {error}") from error
+        placements = record["products"]["dynamic"]["placements"]
+        manifest = read(product / record["products"]["dynamic"]["manifest"])
+        state = read(product / placements["share/crabc/dynamic-product-state.json"])
+        provenance = read(product / placements["share/crabc/libc-shared.provenance.json"])
+    else:
+        try:
+            manifest = driver.validate_installation(product)
+        except driver.shared.DriverError as error:
+            raise QualificationError(f"installed product invalid: {error}") from error
+        if manifest.get("format") == driver.COMBINED_FORMAT:
+            manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
+        state = read(product / "share/crabc/dynamic-product-state.json")
+        provenance = read(product / "share/crabc/libc-shared.provenance.json")
+    if manifest.get("format") == "crabc-aarch64-owned-dynamic-sysroot-v1":
+        import owned_posix_product_evidence as products
+        try:
+            products._validate_dynamic_product(product)
+        except products.ProductEvidenceError as error:
+            raise QualificationError(f"installed product source-pinned validation failed: {error}") from error
     require(set(state) == MATERIALIZATION_STATE_FIELDS, "materialization fields drifted")
     require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1", "wrong materialization schema")
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()
@@ -240,8 +260,9 @@ def _materialization_product(product: Path) -> tuple[dict, dict, dict]:
     return manifest, state, provenance
 
 
-def _product_identity_from_state(product: Path, manifest: dict, state: dict, provenance: dict,
+def _product_identity_from_state(product: Path, manifest: dict, state: dict | None, provenance: dict | None,
                                  source_identity: str) -> str:
+    require(state is not None and provenance is not None, "materialization evidence is missing")
     require(state.get("source_sha256") == source_identity, "installed product source is stale")
     require(state.get("contracts") == contract_digests(), "installed product contracts are stale")
     allocator_backend = state.get("allocator_backend")
@@ -291,11 +312,11 @@ def validate_oracle(work: Path, oracle: dict) -> dict[str, str]:
         require(digest(directory / name) == expected, "oracle retained file identity differs")
     require(oracle["runtime_sha256"] == files["runtime"]
             and oracle["compiler_wrapper_sha256"] == files["compiler_wrapper"], "oracle identity differs from retained bytes")
-    require(files["compiler_wrapper"] == digest(ROOT / "docker/x86_64-musl-oracle-gcc"), "oracle compiler wrapper differs from pinned source")
+    require(files["compiler_wrapper"] == digest(ROOT / f"docker/{ARCH['arch']}-musl-oracle-gcc"), "oracle compiler wrapper differs from pinned source")
     pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl_native"]
     expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"
                          f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"
-                         f"fallback_revision={pins['fallback_revision']}\narchitecture=x86_64\n")
+                         f"fallback_revision={pins['fallback_revision']}\narchitecture={ARCH['arch']}\n")
     require((directory / "source_manifest").read_text() == expected_manifest, "oracle source verification manifest drifted")
     require((directory / "specs_manifest").read_text() == f"{files['specs']}  /opt/musl-1.2.6/lib/musl-gcc.specs\n", "oracle specs verification manifest drifted")
     return {relative(directory / name): value for name, value in files.items()}
@@ -327,6 +348,25 @@ def prepare(work: Path) -> None:
         [str(work / "loader-tests")],
         ["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
     ]
+    checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
+    if ARCH["arch"] == "aarch64":
+        import owned_posix_product_evidence as products
+        tools = Path(products.source_native_compiler_tool_records()["rustc"]["sysroot"]) / "lib/rustlib" / ARCH["target_triple"] / "bin"
+        native_product = work / "installed"
+        combined = read(native_product / "share/crabc/manifest.json").get("format") == "crabc-aarch64-owned-sysroot-v1"
+        if combined:
+            native_product = work / "native-dynamic"
+        commands[0] = ["env", f"CRABC_AARCH64_DYNAMIC_SYSROOT={native_product}",
+                       "python3", "-B", "-m", "unittest", "discover", "-s",
+                       str(ROOT / "compat/x86_64/tests"), "-p", "test_aarch64_dynamic_non_pie.py"]
+        commands.insert(1, ["env", f"PYTHONPATH={ROOT / 'compat/x86_64'}",
+                            "python3", "-B", "-m", "unittest", "-v", "test_owned_dynamic_shared"])
+        commands.insert(3, ["env", f"PATH={tools}:{os.environ.get('PATH', '')}",
+                            "python3", "-B", "-m", "unittest", "-v", "crt.tests.test_build"])
+        checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+        if combined:
+            commands.insert(0, ["python3", "-B", str(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"),
+                                "--architecture", "aarch64", "--output", str(native_product)])
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
         os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
@@ -339,7 +379,7 @@ def prepare(work: Path) -> None:
     write_new(work / "qualification-prepare.json", {
         "schema": SCHEMA, "source_sha256": source, "log": relative(log), "log_sha256": digest(log),
         "oracle": oracle,
-        "checks": ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"],
+        "checks": checks,
         "exit_status": 0,
     })
 
@@ -350,7 +390,10 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     require(set(record) == {"schema", "source_sha256", "log", "log_sha256", "oracle", "checks", "exit_status"}, "preparation fields drifted")
     require(record["schema"] == SCHEMA and record["source_sha256"] == source and record["exit_status"] == 0,
             "missing or stale preparation evidence")
-    require(record["checks"] == ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"], "preparation checks incomplete")
+    checks = ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]
+    if ARCH["arch"] == "aarch64":
+        checks = ["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+    require(record["checks"] == checks, "preparation checks incomplete")
     oracle_files = validate_oracle(work, record["oracle"])
     log = evidence_path(ROOT / record["log"])
     require(log == work / "qualification-prepare.log" and digest(log) == record["log_sha256"], "preparation log is stale")
@@ -607,6 +650,20 @@ def next_missing_case(work: Path) -> tuple[str, str] | None:
 
 def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
               *, resume: bool = False) -> None:
+    if ARCH["arch"] == "aarch64" and case == "package-corpus":
+        path = ROOT / "compat/corpus/run_x86.py"
+        spec = importlib.util.spec_from_file_location("dynamic_package_corpus_input", path)
+        require(spec is not None and spec.loader is not None, f"cannot load package corpus reader: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+            corpus = module.load_manifest()
+            module.input_identity(corpus, ROOT / ".work/aarch64/owned-package-corpus-input/apks", module.DEFAULT_INDEX)
+        except Exception as error:
+            raise QualificationError(f"package corpus input does not match its manifest: {error}") from error
+        finally:
+            sys.modules.pop(spec.name, None)
     oracle = read(work / "qualification-prepare.json")["oracle"]
     require_live_oracle(work, oracle)
     if resume:
@@ -746,16 +803,18 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             expected_path = source_mount.rstrip("/") + "/" + binary.relative_to(ROOT).as_posix()
             runtime = sorted("usr/lib/" + entry for entry in
                              (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
-                              "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o"))
+                              *([] if ARCH["arch"] == "aarch64" and not name.startswith("non-pie-") else ["crabc-dynamic-attach.o"]),
+                              "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o"))
+            product_format = "crabc-aarch64-owned-dynamic-sysroot-v1" if ARCH["arch"] == "aarch64" else "crabc-x86-64-owned-dynamic-sysroot-v1"
             search = receipt_contract.validate(
-                receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="base dynamic link receipt",
+                receipt, format=product_format, label="base dynamic link receipt",
                 fail=lambda message: require(False, message),
             )
             receipt_contract.require_runpath(
                 search, "/usr/lib", label="base dynamic link receipt",
                 fail=lambda message: require(False, message),
             )
-            require(receipt.get("format") == "crabc-x86-64-owned-dynamic-sysroot-v1"
+            require(receipt.get("format") == product_format
                     and receipt.get("runtime_imports") == [] and receipt.get("output_path") == expected_path
                     and receipt.get("owned_runtime_inputs") == runtime, "base driver path or purity contract drifted")
             require(receipt.get("output_sha256") == digest(binary), "base executable receipt hash mismatch")
@@ -768,12 +827,13 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             # canonical interpreter, mode and exact dependency roots.
             inspection_path, map_path = elf_inspection.sidecar_paths(binary)
             facts = elf_inspection.validate_record(
-                read(inspection_path), binary, output_format="crabc-x86-64-owned-dynamic-sysroot-v1",
+                read(inspection_path), binary, output_format=product_format,
                 fail=lambda message: require(False, f"base ELF inspection: {message}"),
                 recorded_path=lambda local: source_mount.rstrip("/") + "/" + local.relative_to(ROOT).as_posix(),
+                architecture=ARCH["arch"],
             )
             needed = ["libc.so"] if name.startswith("spawn-") else [f"lib{product}.so", "libc.so"]
-            require(facts["interpreter"] == "/lib/ld-crabc-x86_64.so.1" and facts["needed"] == needed
+            require(facts["interpreter"] == f"/lib/ld-crabc-{ARCH['arch']}.so.1" and facts["needed"] == needed
                     and facts["elf_type"] == ("ET_EXEC" if name.startswith("non-pie-") else "ET_DYN"),
                     "base executable inspection does not show its declared product shape")
             # The executable's replayed DT_NEEDED name must identify the

@@ -31,7 +31,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
 from scripts import native_build_tools
-TARGET = "x86_64-unknown-linux-musl"
+from compat.x86_64.native_arch import native_arch
+ARCH = native_arch()
+TARGET = ARCH["target_triple"]
 TOOLCHAIN = pinned_toolchain(ROOT)
 PINNED_CARGO_BIN = pathlib.Path("/opt/cargo/bin")
 PINNED_RUSTUP_FRONTEND = PINNED_CARGO_BIN / "rustup"
@@ -501,7 +503,7 @@ def replay_private_vendor(work: pathlib.Path, rust_source: pathlib.Path) -> dict
     project_packages = lock_registry_packages(project_lock, "workspace lock")
     source_vendor = physical(rust_source / "vendor", "pinned rust-src vendor", directory=True)
     project_vendor = physical(
-        ROOT / ".work" / "x86_64" / "cargo" / "native-static-source-runtime-vendor",
+        ROOT / ".work" / ARCH["work_name"] / "cargo" / "native-static-source-runtime-vendor",
         "authenticated project Cargo vendor",
         directory=True,
     )
@@ -820,7 +822,7 @@ def validate_wrapped_commands(commands: Sequence[Sequence[str]], compiler: pathl
         index = 0
         while index < len(command) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[\s\S]*", command[index]):
             name, _, value = command[index].partition("=")
-            if name.startswith("KACHE_") or name in {"RUSTC_WRAPPER", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"}:
+            if name.startswith("KACHE_") or name in {"RUSTC_WRAPPER", ARCH["linker_variable"]}:
                 if name not in expected or value != expected[name]:
                     fail(f"Cargo command overrides fixed native build environment: {name}")
             if name == "RUSTC_WORKSPACE_WRAPPER" and value:
@@ -1074,7 +1076,7 @@ def replay_cargo_graph(graph: pathlib.Path, features: str) -> RetainedCargoGraph
     records = cargo_records(stdout)
     emitted = emitted_artifacts(records, target)
     toolchain_root = physical(
-        PINNED_RUSTUP_HOME / "toolchains" / f"{TOOLCHAIN}-x86_64-unknown-linux-musl",
+        PINNED_RUSTUP_HOME / "toolchains" / f"{TOOLCHAIN}-{TARGET}",
         "pinned Rust toolchain root",
         directory=True,
     )
@@ -1369,7 +1371,7 @@ def replay_retained_graph(graph: pathlib.Path, features: str, scratch: pathlib.P
         fail("retained source-runtime vendor differs from pinned and workspace sources")
 
     sysroot = physical(
-        PINNED_RUSTUP_HOME / "toolchains" / f"{TOOLCHAIN}-x86_64-unknown-linux-musl",
+        PINNED_RUSTUP_HOME / "toolchains" / f"{TOOLCHAIN}-{TARGET}",
         "pinned Rust sysroot",
         directory=True,
     )
@@ -1431,7 +1433,7 @@ def build(arguments: argparse.Namespace, *, c_allocator_flags: Sequence[str] | N
     profile = source_runtime_profile(arguments.features)
     flags = runtime_flags(arguments.relocation_model)
     libc_arguments = libc_rustc_arguments(arguments.rustc_arguments)
-    work_root = ROOT / ".work" / "x86_64"
+    work_root = ROOT / ".work" / ARCH["work_name"]
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
     rustup, base_environment = pinned_environment()
@@ -1449,7 +1451,7 @@ def build(arguments: argparse.Namespace, *, c_allocator_flags: Sequence[str] | N
         fail(f"pinned Rust sysroot drifted: {sysroot}")
     rust_source = physical(sysroot / "lib" / "rustlib" / "src" / "rust" / "library", "pinned rust-src library", directory=True)
     project_vendor = physical(
-        ROOT / ".work" / "x86_64" / "cargo" / "native-static-source-runtime-vendor",
+        ROOT / ".work" / ARCH["work_name"] / "cargo" / "native-static-source-runtime-vendor",
         "authenticated project Cargo vendor",
         directory=True,
     )

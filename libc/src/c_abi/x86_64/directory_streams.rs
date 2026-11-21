@@ -101,8 +101,8 @@ const MAP_ANONYMOUS: c_int = 0x20;
 #[cfg(not(crabc_x86_owned_runtime))]
 const MAP_PRIVATE: c_int = 0x02;
 const O_CLOEXEC: c_int = 0x80_000;
-const O_DIRECTORY: c_int = 0x1_0000;
-const O_LARGEFILE: c_int = 0x8_000;
+const O_DIRECTORY: c_int = super::raw_syscall::O_DIRECTORY as c_int;
+const O_LARGEFILE: c_int = super::raw_syscall::O_LARGEFILE as c_int;
 const O_PATH: c_int = 0x20_0000;
 const O_RDONLY: c_int = 0;
 // The frozen archive's private stream mapping only.
@@ -715,6 +715,7 @@ static_archive_member! { readdir_r_source {
 // boundary.  The opaque assembly tail calls leave the ordinary C symbols for
 // the linker (and the allocation-failure wrapper test) to resolve.
 #[cfg(crabc_x86_scandir)]
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -743,6 +744,9 @@ __crabc_x86_scandir_cabi_free:
     .size __crabc_x86_scandir_cabi_free, .-__crabc_x86_scandir_cabi_free
 "#
 );
+
+#[cfg(all(crabc_x86_scandir, target_arch = "aarch64"))]
+core::arch::global_asm!(include_str!("scandir_thunks_aarch64.S"));
 
 #[cfg(crabc_x86_scandir)]
 unsafe extern "C" {

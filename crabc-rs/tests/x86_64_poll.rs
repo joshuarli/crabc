@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -87,6 +86,8 @@ fn x86_64_ppoll_temporarily_installs_mask_and_restores_previous_mask() {
     let old_action = unsafe { signal::sigaction(selected_signal, None) }.expect("query SIGUSR1 action");
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(ppoll_signal_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The handler is a static function with an x86-64 restorer owned
@@ -160,6 +161,8 @@ fn x86_64_pause_waits_for_a_signal_on_the_ppoll_seam() {
     let old_action = unsafe { signal::sigaction(signal, None) }.expect("query SIGUSR2 action");
     let action = signal::SigAction::new(
         signal::SigHandler::Simple(pause_signal_handler),
+        #[cfg(target_arch = "aarch64")]
+        signal::SignalSet::EMPTY,
         signal::SigActionFlags::empty(),
     );
     // SAFETY: The handler is a static function with a valid x86-64 restorer.

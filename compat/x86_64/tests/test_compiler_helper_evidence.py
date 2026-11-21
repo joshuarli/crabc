@@ -295,6 +295,16 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             row["name"]: row["source_definition"] for row in contract["helpers"]
         })
 
+    def test_source_scan_excludes_only_aarch64_configured_definitions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / EVIDENCE.SOURCE
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                '#[cfg(target_arch = "aarch64")]\n#[no_mangle]\npub extern "C" fn __multc3(a: f128) -> ComplexQuad {}\n'
+                '#[no_mangle]\npub extern "C" fn __extra(a: u64) -> u64 {}\n'
+            )
+            self.assertEqual(set(EVIDENCE.source_definitions(Path(directory))), {"__extra"})
+
     def test_reader_rejects_extra_helper_wrong_metadata_and_shared_placement(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
         wrong = copy.deepcopy(contract)

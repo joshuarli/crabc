@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_legacy_time_probe.c"
 readonly SCENARIOS='times timer-query timer-delivery ualarm-cancel timer-errors adjustment-query adjustment-guards settimeofday-null settimeofday-guards adjustment-seccomp'
 
@@ -106,7 +107,7 @@ for mode in pie non-pie; do
     cp -a "$provided_dynamic" "$root"
     cp "$work/consumer-$mode" "$root/consumer"
     run_cases "dynamic-$mode-kernel" /consumer chroot "$root"
-    run_cases "dynamic-$mode-direct" /consumer chroot "$root" /lib/ld-crabc-x86_64.so.1
+    run_cases "dynamic-$mode-direct" /consumer chroot "$root" "/lib/ld-crabc-$arch.so.1"
 done
 
 printf 'owned legacy-time: PASS (same installed-header C object through musl and owned static/static-PIE/dynamic PIE/non-PIE kernel/direct; raw times return/wrap, interval query/disarm/delivery/error/cancel, query-only adjustment, local timeval bounds, null settimeofday, and seccomp-contained clock-mutation errors); evidence: %s\n' "$work"

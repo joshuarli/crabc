@@ -22,7 +22,8 @@ chmod a+rx "$work"
 printf 'PTY evidence: %s\n' "$work"
 readonly execution_root="$work/execution-root"
 readonly probe="$ROOT/compat/x86_64/owned_pty_probe.c"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly cases=(naming descriptor-lifetime naming-ioctl-failure openpty no-controlling-terminal optional-errors master-failure unlock-failure number-failure slave-failure login login-failures session-conflict forkpty pipe-failure fork-failure child-login-failure forkpty-master-failure forkpty-unlock-failure forkpty-number-failure cancellation)
 # The public naming entry is musl's weak alias of a hidden internal provider;
 # ptsname must keep calling that internal body if the application overrides it.
@@ -103,7 +104,7 @@ for mode in pie non-pie; do
     for scenario in "${cases[@]}"; do
         for entry in kernel direct; do
             command=("/consumer-$mode")
-            if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 "/consumer-$mode"); fi
+            if [ "$entry" = direct ]; then command=(/lib/ld-crabc-${arch}.so.1 "/consumer-$mode"); fi
             timeout 20 chroot "$execution_root" "${command[@]}" "$scenario" >"$work/$mode-$entry-$scenario.stdout" 2>"$work/$mode-$entry-$scenario.stderr"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$entry-$scenario.stdout"
             cmp "$work/oracle-$scenario.stderr" "$work/$mode-$entry-$scenario.stderr"

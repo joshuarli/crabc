@@ -36,6 +36,7 @@ static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     ".text",
     ".global __crabc_x86_syscall_cp_asm", ".hidden __crabc_x86_syscall_cp_asm",
@@ -55,6 +56,24 @@ core::arch::global_asm!(
     "__crabc_x86_cp_cancel:", "jmp __crabc_x86_cancel",
     ".size __crabc_x86_syscall_cp_asm,.-__crabc_x86_syscall_cp_asm",
     options(att_syntax)
+);
+// musl 1.2.6 src/thread/aarch64/syscall_cp.s; MIT license above.
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".text",
+    ".global __crabc_x86_syscall_cp_asm", ".hidden __crabc_x86_syscall_cp_asm",
+    ".type __crabc_x86_syscall_cp_asm,%function",
+    ".global __crabc_x86_cp_begin", ".hidden __crabc_x86_cp_begin",
+    ".global __crabc_x86_cp_end", ".hidden __crabc_x86_cp_end",
+    ".global __crabc_x86_cp_cancel", ".hidden __crabc_x86_cp_cancel",
+    ".hidden __crabc_x86_cancel",
+    "__crabc_x86_syscall_cp_asm:", "__crabc_x86_cp_begin:",
+    "ldr w0, [x0]", "cbnz w0, __crabc_x86_cp_cancel",
+    "mov x8, x1", "mov x0, x2", "mov x1, x3", "mov x2, x4",
+    "mov x3, x5", "mov x4, x6", "mov x5, x7", "svc #0",
+    "__crabc_x86_cp_end:", "ret", "__crabc_x86_cp_cancel:",
+    "b __crabc_x86_cancel",
+    ".size __crabc_x86_syscall_cp_asm,.-__crabc_x86_syscall_cp_asm",
 );
 unsafe extern "C" {
     fn __crabc_x86_syscall_cp_asm(pending: *const c_int, number: i64,
@@ -90,11 +109,11 @@ pub(super) unsafe fn syscall_cp(number: i64, a: i64, b: i64, c: i64, d: i64, e: 
             return raw_syscall::syscall6(number,a,b,c,d,e,f);
         };
         let status = state.state.load(Ordering::Acquire);
-        if status != PTHREAD_CANCEL_ENABLE && (status == PTHREAD_CANCEL_DISABLE || number == 3) {
+        if status != PTHREAD_CANCEL_ENABLE && (status == PTHREAD_CANCEL_DISABLE || number == raw_syscall::SYS_CLOSE) {
             return raw_syscall::syscall6(number,a,b,c,d,e,f);
         }
         let result = __crabc_x86_syscall_cp_asm(state.pending.as_ptr(),number,a,b,c,d,e,f);
-        if result == -4 && number != 3 && state.pending.load(Ordering::Acquire) != 0
+        if result == -4 && number != raw_syscall::SYS_CLOSE && state.pending.load(Ordering::Acquire) != 0
             && state.state.load(Ordering::Acquire) != PTHREAD_CANCEL_DISABLE {
             return __crabc_x86_cancel();
         }
@@ -110,8 +129,13 @@ unsafe extern "C" fn cancel_handler(_signal: c_int, _information: *mut c_void, c
         // Linux/x86 ucontext_t: mcontext at 40, REG_RIP at gregs[16], and
         // uc_sigmask at 296. Only the kernel's first eight signal-mask bytes
         // are touched; no public tail/padding is read or manufactured.
-        let pc = context.cast::<u8>().add(40+16*8).cast::<usize>();
-        let mask = context.cast::<u8>().add(296).cast::<u64>();
+        #[cfg(target_arch = "x86_64")]
+        let (pc_offset, mask_offset) = (40 + 16 * 8, 296);
+        #[cfg(target_arch = "aarch64")]
+        // musl 1.2.6 arch/aarch64/bits/signal.h: uc_sigmask and uc_mcontext.pc.
+        let (pc_offset, mask_offset) = (440, 40);
+        let pc = context.cast::<u8>().add(pc_offset).cast::<usize>();
+        let mask = context.cast::<u8>().add(mask_offset).cast::<u64>();
         let saved_pc = pc.read_unaligned();
         let saved_mask = mask.read_unaligned() | SIGNAL_BIT;
         mask.write_unaligned(saved_mask);
@@ -119,7 +143,7 @@ unsafe extern "C" fn cancel_handler(_signal: c_int, _information: *mut c_void, c
             // pthread_sigmask forwards the input mask unchanged; it filters
             // reserved bits only in a requested old-mask result. SIGCANCEL
             // therefore stays blocked while asynchronous exit begins.
-            raw_syscall::syscall4(14,2,(&saved_mask as *const u64) as i64,0,8);
+            raw_syscall::syscall4(raw_syscall::SYS_RT_SIGPROCMASK,2,(&saved_mask as *const u64) as i64,0,8);
             __crabc_x86_cancel();
         } else if saved_pc >= core::ptr::addr_of!(__crabc_x86_cp_begin) as usize
             && saved_pc < core::ptr::addr_of!(__crabc_x86_cp_end) as usize {
@@ -128,7 +152,7 @@ unsafe extern "C" fn cancel_handler(_signal: c_int, _information: *mut c_void, c
             // Requeue while the signal remains blocked in the restored
             // context; the pending load at the next PC window closes the
             // request-before-syscall race without lossy wake/check emulation.
-            raw_syscall::syscall2(200,raw_syscall::syscall0(186),SIGCANCEL as i64);
+            raw_syscall::syscall2(raw_syscall::SYS_TKILL,raw_syscall::syscall0(raw_syscall::SYS_GETTID),SIGCANCEL as i64);
         }
     }
 }
@@ -143,7 +167,7 @@ pub(super) unsafe fn initialize() -> Result<(), c_int> {
         restorer: signal_foundation::restorer_address(),
         mask: u64::MAX,
     };
-    let result = unsafe { raw_syscall::syscall4(13,SIGCANCEL as i64,(&action as *const _) as i64,0,8) };
+    let result = unsafe { raw_syscall::syscall4(raw_syscall::SYS_RT_SIGACTION,SIGCANCEL as i64,(&action as *const _) as i64,0,8) };
     if result < 0 { return Err((-result) as c_int); }
     HANDLER_INSTALLED.store(true,Ordering::Release);
     Ok(())
@@ -153,7 +177,7 @@ pub(super) unsafe fn request(thread: *mut c_void) -> c_int {
     unsafe {
         if let Err(error) = initialize() { return error; }
         let mask = match AllSignals::block() { Ok(mask) => mask, Err(error) => return error };
-        let caller_tid = raw_syscall::syscall0(186) as c_int;
+        let caller_tid = raw_syscall::syscall0(raw_syscall::SYS_GETTID) as c_int;
         let result = super::pthread_create_join::with_selected_pthread_signal_target(thread, |tgid,tid,state| {
             // The lifecycle owner pins this mapped state and serializes the
             // live TID against exit. No callback/allocator/public libc or
@@ -162,7 +186,7 @@ pub(super) unsafe fn request(thread: *mut c_void) -> c_int {
             if state.kind.load(Ordering::Acquire) != super::SLOT_PTHREAD { return super::EINVAL; }
             state.pending.store(1,Ordering::Release);
             if tid == 0 || tid == caller_tid { return 0; }
-            -raw_syscall::syscall3(234,tgid as i64,tid as i64,SIGCANCEL as i64) as c_int
+            -raw_syscall::syscall3(raw_syscall::SYS_TGKILL,tgid as i64,tid as i64,SIGCANCEL as i64) as c_int
         }).unwrap_or(super::EINVAL);
         if result == 0 {
             // Preserve the older private condition point's independent

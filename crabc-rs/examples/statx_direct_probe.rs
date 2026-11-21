@@ -6,11 +6,9 @@ use core::ffi::CStr;
 
 use crabc_rs::fs::{self, StatxFlags, CWD};
 
-#[cfg(target_arch = "aarch64")]
-use crabc_rs::fs::AtFlags as StatxAtFlags;
-#[cfg(target_arch = "x86_64")]
 use crabc_rs::fs::StatxAtFlags;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -154,9 +154,34 @@ class NativeStaticContracts(unittest.TestCase):
     scratch_root = RUNNER.ROOT / ".work" / "lua-runner-host-tests"
 
     def setUp(self) -> None:
+        architecture = mock.patch.object(RUNNER, "ARCHITECTURE", RUNNER.native_arch("x86_64"))
+        arch = mock.patch.object(RUNNER, "ARCH", "x86_64")
+        architecture.start()
+        arch.start()
+        self.addCleanup(architecture.stop)
+        self.addCleanup(arch.stop)
         self.scratch_root.mkdir(parents=True, exist_ok=True)
         self.temporary = Path(tempfile.mkdtemp(prefix="lua-", dir=self.scratch_root))
         self.addCleanup(self.cleanup)
+
+    def test_arm64_dynamic_uses_owned_dynamic_product(self) -> None:
+        with mock.patch.object(sys, "path", [str(RUNNER.LUA_ROOT), *sys.path]):
+            import run_x86_dynamic as dynamic
+        args = RUNNER.parse_args(["--target", "aarch64-dynamic", "--sysroot", "/product",
+                                  "--work-root", "/work", "--offline"])
+        with (mock.patch.object(RUNNER, "require_native_aarch64"),
+              mock.patch.object(dynamic, "run_dynamic_lane", return_value={"passed": True}) as lane):
+            self.assertTrue(RUNNER.run_aarch64_dynamic(args)["passed"])
+        lane.assert_called_once_with(sysroot_path=Path("/product"), work_root=Path("/work"), cache=RUNNER.CACHE,
+                                     offline=True, jobs=args.jobs, timeout=args.timeout, manifest_path=args.manifest)
+
+    def test_arm64_static_elf_rejects_foreign_relocations(self) -> None:
+        with mock.patch.object(RUNNER, "ARCH", "aarch64"):
+            facts = dict(header="Machine: AArch64\nType: DYN", program_headers="", dynamic="",
+                         mode=RUNNER.STATIC_PIE, label="arm64")
+            RUNNER.validate_static_elf_facts(relocations="R_AARCH64_RELATIVE", **facts)
+            with self.assertRaises(RUNNER.RunnerError):
+                RUNNER.validate_static_elf_facts(relocations="R_X86_64_RELATIVE", **facts)
 
     def cleanup(self) -> None:
         if self.temporary.exists() and not self.temporary.is_symlink():

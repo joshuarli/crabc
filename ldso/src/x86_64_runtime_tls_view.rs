@@ -87,8 +87,14 @@ impl PreparedTlsView {
         if tp.is_null() || tp as usize % core::mem::align_of::<usize>() != 0 { return None; }
         let previous = unsafe { current(tp) };
         let (old_dtv, old_sizes, old_count) = if previous.is_null() {
+            #[cfg(target_arch = "x86_64")]
             let dtv = unsafe { *tp.add(8).cast::<*mut usize>() };
+            #[cfg(target_arch = "x86_64")]
             let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*mut usize>() };
+            #[cfg(target_arch = "aarch64")]
+            let dtv = unsafe { *tp.sub(8).cast::<*mut usize>() };
+            #[cfg(target_arch = "aarch64")]
+            let sizes = unsafe { *tp.cast::<*mut usize>() };
             if dtv.is_null() || sizes.is_null() { return None; }
             (dtv, sizes, unsafe { *dtv })
         } else {
@@ -156,6 +162,10 @@ impl PreparedTlsView {
     /// exclusively held; no other writer changed its current view. Scope
     /// publication must follow publication to every registered thread.
     pub(super) unsafe fn publish(self, tp: *mut u8) {
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: This registered thread owns the aligned ABI DTV slot, and
+        // the new descriptor and all of its DTV entries are fully prepared.
+        unsafe { (&*tp.sub(8).cast::<AtomicPtr<usize>>()).store((*self.view).dtv, Ordering::Release); }
         unsafe { slot(tp).store(self.view, Ordering::Release); }
         core::mem::forget(self);
     }
@@ -168,7 +178,11 @@ impl Drop for PreparedTlsView {
 }
 
 unsafe fn slot<'a>(tp: *mut u8) -> &'a AtomicPtr<RuntimeTlsView> {
+    #[cfg(target_arch = "x86_64")]
     unsafe { &*tp.add(CURRENT_VIEW_TCB_OFFSET).cast::<AtomicPtr<RuntimeTlsView>>() }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: The loader reserves TP-32 for the aligned current-view pointer.
+    unsafe { &*tp.sub(32).cast::<AtomicPtr<RuntimeTlsView>>() }
 }
 
 pub(super) unsafe fn current(tp: *mut u8) -> *mut RuntimeTlsView {
@@ -212,7 +226,7 @@ mod tests {
             let image = [31u8];
             let mut initial = [EMPTY_OBJECT; 32];
             initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
-                tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+                tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
             let first = materialize_initial_tls(&initial, 0)?;
             let second = materialize_initial_tls(&initial, 0)?;
             *(*first.dtv.add(1) as *mut u8) = 97;
@@ -227,16 +241,16 @@ mod tests {
             prepared.threads.as_mut_slice()[0] = ThreadView { tp: first.thread_pointer, view: view.view };
             core::mem::forget(view);
             let mut original_limit = [0u64; 2];
-            if syscall4(302, 0, 9, 0, original_limit.as_mut_ptr() as i64) != 0 { return None; }
+            if syscall4(if cfg!(target_arch = "aarch64") { 261 } else { 302 }, 0, 9, 0, original_limit.as_mut_ptr() as i64) != 0 { return None; }
             // Refuse new mappings only in this isolated child. Existing TLS
             // remains accessible and the hard limit remains unchanged. The
             // large image cannot be served from the loader's current chunk.
             let restricted = [0, original_limit[1]];
-            if syscall4(302, 0, 9, restricted.as_ptr() as i64, 0) != 0 { return None; }
+            if syscall4(if cfg!(target_arch = "aarch64") { 261 } else { 302 }, 0, 9, restricted.as_ptr() as i64, 0) != 0 { return None; }
             let large = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
                 tls_memsz: 1 << 20, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
             let refused = PreparedTlsView::prepare(second.thread_pointer, &large).is_none();
-            if syscall4(302, 0, 9, original_limit.as_ptr() as i64, 0) != 0 || !refused { return None; }
+            if syscall4(if cfg!(target_arch = "aarch64") { 261 } else { 302 }, 0, 9, original_limit.as_ptr() as i64, 0) != 0 || !refused { return None; }
             drop(prepared);
             // A dropped preparation returns its scratch block to the pool.
             let reclaimed = unsafe { x86_64_runtime_memory::allocate(view_bytes, core::mem::align_of::<RuntimeTlsView>()) };
@@ -259,7 +273,7 @@ mod tests {
         let image = [31u8];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
-            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let first = unsafe { materialize_initial_tls(&initial, 0) }?;
         let second = unsafe { materialize_initial_tls(&initial, 0) }?;
         let modules = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
@@ -295,7 +309,7 @@ mod tests {
         let image = [23u8, 29];
         let mut modules = [EMPTY_OBJECT; 32];
         modules[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2, tls_memsz: 16,
-            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&modules, 0) }.unwrap();
         unsafe { PreparedTlsView::prepare(block.thread_pointer, &modules).unwrap().publish(block.thread_pointer); }
         let tp = block.thread_pointer as usize;
@@ -328,7 +342,7 @@ mod tests {
         let image = [1u8];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
-            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let module = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 32,
             tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT };
@@ -353,7 +367,7 @@ mod tests {
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: initial_image.as_ptr(), tls_filesz: 2,
             tls_memsz: 32, tls_align: 16, tls_module_id: 1,
-            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (initial_image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
         let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 3,
             tls_memsz: 129, tls_align: 4096, tls_module_id: 2, ..EMPTY_OBJECT };
         let later = Object { tls_image: later_image.as_ptr(), tls_filesz: 2,
@@ -433,13 +447,13 @@ mod tests {
         let image = [17u8, 19];
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2, tls_memsz: 16,
-            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 16 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let original = unsafe { *block.dtv.add(1) };
         unsafe { *(original as *mut u8) = 99; }
         // The adjacent opaque cancellation-state slot belongs to libc, not to
         // a DTV descriptor or the loader's allocation token.
-        unsafe { *block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() = 0x12345; }
+        unsafe { *(if cfg!(target_arch = "aarch64") { block.thread_pointer.sub(24) } else { block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET) }).cast::<usize>() = 0x12345; }
         let runtime_image = [41u8, 43, 47];
         let mut modules = [initial[0], Object { tls_image: runtime_image.as_ptr(), tls_filesz: 3,
             tls_memsz: 127, tls_align: 4096, tls_module_id: 2, ..EMPTY_OBJECT }, EMPTY_OBJECT];
@@ -468,7 +482,7 @@ mod tests {
         assert_eq!(unsafe { resolve(first, 2, 0) } as usize, runtime_address);
         assert!(unsafe { resolve(first, 3, 0) }.is_null());
         assert_eq!(unsafe { *block.dtv }, 1, "RuntimeV1 generation1 must not be rewritten");
-        assert_eq!(unsafe { *block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() }, 0x12345);
+        assert_eq!(unsafe { *(if cfg!(target_arch = "aarch64") { block.thread_pointer.sub(24) } else { block.thread_pointer.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET) }).cast::<usize>() }, 0x12345);
         assert_eq!(unsafe { release(block.thread_pointer) }, 0);
         assert_eq!(unsafe { release(block.thread_pointer) }, 0);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
@@ -493,8 +507,14 @@ pub(super) unsafe fn module_image_bounds(tp: *mut u8, object: &Object) -> Option
         || (object.tls_filesz != 0 && object.tls_image.is_null()) { return None; }
     let view = unsafe { current(tp) };
     let (destination, size) = if view.is_null() {
+        #[cfg(target_arch = "x86_64")]
         let dtv = unsafe { *tp.add(8).cast::<*const usize>() };
+        #[cfg(target_arch = "x86_64")]
         let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
+        #[cfg(target_arch = "aarch64")]
+        let dtv = unsafe { *tp.sub(8).cast::<*const usize>() };
+        #[cfg(target_arch = "aarch64")]
+        let sizes = unsafe { *tp.cast::<*const usize>() };
         if dtv.is_null() || sizes.is_null() || object.tls_module_id > unsafe { *dtv } { return None; }
         unsafe { (*dtv.add(object.tls_module_id) as *mut u8, *sizes.add(object.tls_module_id)) }
     } else {
@@ -567,7 +587,7 @@ mod timer_reset_tests {
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
             tls_memsz: 32, tls_align: 16, tls_module_id: 1,
-            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let tp = block.thread_pointer;
         let current = unsafe { *block.dtv.add(1) } as *mut u8;
@@ -595,14 +615,14 @@ mod timer_reset_tests {
         let mut initial = [EMPTY_OBJECT; 32];
         initial[0] = Object { tls_image: first_image.as_ptr(), tls_filesz: 2,
             tls_memsz: 32, tls_align: 16, tls_module_id: 1,
-            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            tls_offset_below_tp: if cfg!(target_arch = "aarch64") { 16 + (first_image.as_ptr() as usize & 15) } else { 32 }, ..EMPTY_OBJECT };
         let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
         let tp = block.thread_pointer;
         let first = unsafe { *block.dtv.add(1) } as *mut u8;
         unsafe {
             first.write(99);
             first.add(20).write(99);
-            *tp.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() = 0x12345;
+            *(if cfg!(target_arch = "aarch64") { tp.sub(24) } else { tp.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET) }).cast::<usize>() = 0x12345;
         }
         assert!(unsafe { reset_module_image(tp, &initial[0], false) });
         assert_eq!(unsafe { first.read() }, 99);
@@ -625,7 +645,7 @@ mod timer_reset_tests {
         assert_eq!(unsafe { first.read() }, 11);
         assert_eq!(unsafe { current(tp) }, view);
         assert_eq!(unsafe { *block.dtv }, 1);
-        assert_eq!(unsafe { *tp.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() }, 0x12345);
+        assert_eq!(unsafe { *(if cfg!(target_arch = "aarch64") { tp.sub(24) } else { tp.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET) }).cast::<usize>() }, 0x12345);
         assert_eq!(unsafe { release(tp) }, 0);
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
     }

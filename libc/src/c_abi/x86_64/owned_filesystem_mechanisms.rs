@@ -1,3 +1,4 @@
+// musl 1.2.6 src/unistd/chown.c and src/stat/mknod.c supply the *at forms.
 //! Installed owned Linux/x86-64 filesystem C mechanisms.
 //!
 //! This feature-gated block owns exactly `fchmodat`, `lchmod`, `fchown`,
@@ -61,7 +62,7 @@ const F_LOCK: c_int = 1;
 const F_TLOCK: c_int = 2;
 const F_TEST: c_int = 3;
 const O_NOCTTY: i64 = 0x100;
-const O_NOFOLLOW: i64 = 0x2_0000;
+const O_NOFOLLOW: i64 = super::raw_syscall::O_NOFOLLOW as i64;
 const O_CLOEXEC: i64 = 0x8_0000;
 const O_PATH: i64 = 0x20_0000;
 const SEEK_CUR: c_short = 1;
@@ -376,12 +377,10 @@ static_archive_member! { fchown_source {
         pathname_lifecycle::procfdname(&mut procfd_path, descriptor);
         // SAFETY: the fixed local procfd pathname remains valid through chown.
         c_status(unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_CHOWN,
-                procfd_path.as_ptr() as i64,
-                i64::from(user),
-                i64::from(group),
-            )
+            #[cfg(target_arch = "x86_64")]
+            { raw_syscall::syscall3(raw_syscall::SYS_CHOWN, procfd_path.as_ptr() as i64, i64::from(user), i64::from(group)) }
+            #[cfg(target_arch = "aarch64")]
+            { raw_syscall::syscall5(raw_syscall::SYS_FCHOWNAT, -100, procfd_path.as_ptr() as i64, i64::from(user), i64::from(group), 0) }
         })
     }
 }}
@@ -435,12 +434,10 @@ static_archive_member! { mknod_source {
     ) -> c_int {
         // SAFETY: the caller owns the raw pathname/mode/dev_t request.
         c_status(unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_MKNOD,
-                path as usize as i64,
-                i64::from(mode),
-                device as i64,
-            )
+            #[cfg(target_arch = "x86_64")]
+            { raw_syscall::syscall3(raw_syscall::SYS_MKNOD, path as usize as i64, i64::from(mode), device as i64) }
+            #[cfg(target_arch = "aarch64")]
+            { raw_syscall::syscall4(raw_syscall::SYS_MKNODAT, -100, path as usize as i64, i64::from(mode), device as i64) }
         })
     }
 }}

@@ -47,7 +47,7 @@ def elf(kind: int, interpreter: str | None = None, tag: bytes = b"", binding: st
     """
     data = bytearray(512)
     data[:7] = b"\x7fELF\x02\x01\x01"
-    struct.pack_into("<HH", data, 16, kind, 62)
+    struct.pack_into("<HH", data, 16, kind, 62 if policy.ARCH == "x86_64" else 183)
     struct.pack_into("<Q", data, 32, 64)
     struct.pack_into("<HH", data, 54, 56, 1)
     # Section table: null, one static symbol table, its string table.
@@ -165,7 +165,7 @@ class PolicyReceiptTests(unittest.TestCase):
         }).encode())
         dynamic_files = {
             "usr/lib/libc.so": digest(files["dynamic-libc"]),
-            "lib/ld-crabc-x86_64.so.1": digest(files["dynamic-loader"]),
+            f"lib/ld-crabc-{policy.ARCH}.so.1": digest(files["dynamic-loader"]),
             "share/crabc/libc-shared.provenance.json": digest(files["dynamic-libc-provenance"]),
             **{path: digest(files[name]) for name, path in {
                 "dynamic-driver": "bin/crabc-cc-dynamic", "dynamic-crt1": "usr/lib/crt1.o",
@@ -190,7 +190,7 @@ class PolicyReceiptTests(unittest.TestCase):
             product(f"static-pie-{program}", elf(2 if wrong_elf_mode else 3, binding="LOCAL"))
             for kind in ("pie", "non-pie"):
                 product(f"dynamic-{kind}-{program}", elf(3 if kind == "pie" else 2,
-                                                        "/lib/ld-crabc-x86_64.so.1", binding="LOCAL"))
+                                                        f"/lib/ld-crabc-{policy.ARCH}.so.1", binding="LOCAL"))
             oracle_compiler_inputs = {
                 "oracle-gcc": {"path": "/usr/bin/gcc", "sha256": digest(files["oracle-gcc"])},
                 "oracle-specs": {"path": "/opt/musl-1.2.6/lib/musl-gcc.specs",
@@ -265,8 +265,8 @@ class PolicyReceiptTests(unittest.TestCase):
                 object_hash = ("0" * 64 if bad_link_input and name == "static-pie-policy" else
                                digest(files[f"object-{name}"]))
                 record(f"link-{name}", {
-                    "schema": 1, "format": "crabc-x86-64-sealed-static-driver-v1",
-                    "target": "x86_64-unknown-linux-musl",
+                    "schema": 1, "format": f"crabc-{policy.ARCH_LABEL}-sealed-static-driver-v1",
+                    "target": f"{policy.ARCH}-unknown-linux-musl",
                     "mode": {"id": "static-et-exec" if mode == "static" else "static-pie",
                              "elf_type": "ET_EXEC" if mode == "static" else "ET_DYN",
                              "crt_object": "crt1.o" if mode == "static" else "rcrt1.o",
@@ -287,10 +287,11 @@ class PolicyReceiptTests(unittest.TestCase):
                     "crti.o": "dynamic-crti", "libc.so": "dynamic-libc", "crtn.o": "dynamic-crtn",
                     "Scrt1.o" if mode == "pie" else "crt1.o":
                         "dynamic-scrt1" if mode == "pie" else "dynamic-crt1",
-                    "crabc-dynamic-attach.o": "dynamic-attach",
                     "libcrabc-builtins.a": "dynamic-builtins",
                     f"object-{name}.o": f"object-{name}",
                 }
+                if policy.ARCH == "x86_64" or mode != "pie":
+                    runtime["crabc-dynamic-attach.o"] = "dynamic-attach"
                 inputs = [{"path": f"/work/usr/lib/{basename}" if not basename.startswith("object-")
                            else f"/work/{basename}",
                            "sha256": "0" * 64 if bad_dynamic_input and name == "dynamic-non-pie-policy"
@@ -305,7 +306,8 @@ class PolicyReceiptTests(unittest.TestCase):
                     "link_trace": ["trace: " + next(item["path"] for item in inputs if Path(item["path"]).name == basename)
                                    + ("(builtins.o)" if basename == "libcrabc-builtins.a" else "")
                                    for basename in ("Scrt1.o" if mode == "pie" else "crt1.o",
-                                                    "crabc-dynamic-attach.o", "crti.o", f"object-{name}.o",
+                                                    *(["crabc-dynamic-attach.o"] if policy.ARCH == "x86_64" else []),
+                                                    "crti.o", *(["crabc-dynamic-attach.o"] if policy.ARCH == "aarch64" and mode != "pie" else []), f"object-{name}.o",
                                                     "libcrabc-builtins.a", "libc.so", "crtn.o")],
                 })
                 record(f"elf-{name}", {
@@ -395,7 +397,8 @@ class PolicyReceiptTests(unittest.TestCase):
         receipt_path = self.publish()
         target = receipt_path.parent / "products/link-dynamic-pie-basic"
         link = json.loads(target.read_text())
-        link["link_trace"][4] = link["link_trace"][4].replace("builtins.o", "foreign.o")
+        index = next(i for i, row in enumerate(link["link_trace"]) if "builtins.o" in row)
+        link["link_trace"][index] = link["link_trace"][index].replace("builtins.o", "foreign.o")
         target.write_text(json.dumps(link))
         record = json.loads(receipt_path.read_text())
         record["products"]["link-dynamic-pie-basic"] = {"sha256": digest(target), "size": target.stat().st_size}

@@ -63,16 +63,34 @@ unsafe extern "C" {
         stack: *mut u8, flags: i32, argument: *mut c_void, parent_tid: *mut c_int,
         tls: *mut c_void, child_tid: *mut c_int) -> i64;
 }
-unsafe fn close(fd: c_int) { unsafe { sys::syscall1(3, fd as i64); } }
+
+unsafe fn duplicate_to(old: i64, new: i64) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: scalar descriptor arguments are validated by the kernel.
+    unsafe { sys::syscall2(sys::SYS_DUP2, old, new) }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: callers only pass distinct descriptors; flags are zero.
+    unsafe { sys::syscall3(sys::SYS_DUP3, old, new, 0) }
+}
+
+unsafe fn open_path(path: *const u8, flags: i64, mode: i64) -> i64 {
+    // SAFETY: the caller supplies the terminated file-action pathname.
+    #[cfg(target_arch = "x86_64")]
+    unsafe { sys::syscall3(sys::SYS_OPEN, path as i64, flags, mode) }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { sys::syscall4(sys::SYS_OPENAT, -100, path as i64, flags, mode) }
+}
+
+unsafe fn close(fd: c_int) { unsafe { sys::syscall1(sys::SYS_CLOSE, fd as i64); } }
 unsafe fn signal_mask(how: i64, set: *const u64, old: *mut u64) -> i64 {
     unsafe {
-        let result = sys::syscall4(14, how, set as i64, old as i64, 8);
+        let result = sys::syscall4(sys::SYS_RT_SIGPROCMASK, how, set as i64, old as i64, 8);
         if result == 0 && !old.is_null() { *old &= !0x380000000; }
         result
     }
 }
 unsafe fn disposition(signal: i64, set: *const KernelSignalAction, old: *mut KernelSignalAction) {
-    unsafe { sys::syscall4(13, signal, set as i64, old as i64, 8); }
+    unsafe { sys::syscall4(sys::SYS_RT_SIGACTION, signal, set as i64, old as i64, 8); }
 }
 
 // The only mutation of shared args is exec_errno. No Rust reference to args
@@ -90,17 +108,17 @@ unsafe fn child_exec(args: *mut SpawnArguments, error_fd: &mut c_int) -> i64 {
             disposition(signal, &action, ptr::null_mut());
         }
         if (*args).flags & SET_SESSION != 0 {
-            let result = sys::syscall0(112);
+            let result = sys::syscall0(sys::SYS_SETSID);
             if result < 0 { return result; }
         }
         if (*args).flags & SET_PGROUP != 0 {
-            let result = sys::syscall2(109, 0, (*args).process_group as i64);
+            let result = sys::syscall2(sys::SYS_SETPGID, 0, (*args).process_group as i64);
             if result != 0 { return result; }
         }
         if (*args).flags & RESET_IDS != 0 {
-            let result = sys::syscall1(106, sys::syscall0(104));
+            let result = sys::syscall1(sys::SYS_SETGID, sys::syscall0(sys::SYS_GETGID));
             if result != 0 { return result; }
-            let result = sys::syscall1(105, sys::syscall0(102));
+            let result = sys::syscall1(sys::SYS_SETUID, sys::syscall0(sys::SYS_GETUID));
             if result != 0 { return result; }
         }
         let mut op = if (*args).actions.is_null() { ptr::null_mut() }
@@ -108,7 +126,7 @@ unsafe fn child_exec(args: *mut SpawnArguments, error_fd: &mut c_int) -> i64 {
         if !op.is_null() { while !(*op).next.is_null() { op = (*op).next; } }
         while !op.is_null() {
             if (*op).fd == *error_fd {
-                let result = sys::syscall1(32, *error_fd as i64);
+                let result = sys::syscall1(sys::SYS_DUP, *error_fd as i64);
                 if result < 0 { return result; }
                 close(*error_fd); *error_fd = result as c_int;
             }
@@ -116,39 +134,38 @@ unsafe fn child_exec(args: *mut SpawnArguments, error_fd: &mut c_int) -> i64 {
                 1 => { close((*op).fd); 0 }
                 2 => {
                     if (*op).srcfd == *error_fd { return -9; }
-                    if (*op).srcfd != (*op).fd { sys::syscall2(33, (*op).srcfd as i64, (*op).fd as i64) }
+                    if (*op).srcfd != (*op).fd { duplicate_to((*op).srcfd as i64, (*op).fd as i64) }
                     else {
-                        let flags = sys::syscall3(72, (*op).fd as i64, 1, 0);
-                        sys::syscall3(72, (*op).fd as i64, 2, flags & !1)
+                        let flags = sys::syscall3(sys::SYS_FCNTL, (*op).fd as i64, 1, 0);
+                        sys::syscall3(sys::SYS_FCNTL, (*op).fd as i64, 2, flags & !1)
                     }
                 }
                 3 => {
                     // fdop's flexible pathname begins at byte 36, not its
                     // padded sizeof(40), matching the allocating owner.
-                    let fd = sys::syscall3(2, op.cast::<u8>().add(36) as i64,
-                        (*op).oflag as i64, (*op).mode as i64);
+                    let fd = open_path(op.cast::<u8>().add(36), (*op).oflag as i64, (*op).mode as i64);
                     if fd < 0 { return fd; }
                     if fd != (*op).fd as i64 {
-                        let result = sys::syscall2(33, fd, (*op).fd as i64);
+                        let result = duplicate_to(fd, (*op).fd as i64);
                         if result < 0 { return result; }
                         close(fd as c_int);
                     }
                     0
                 }
-                4 => sys::syscall1(80, op.cast::<u8>().add(36) as i64),
-                5 => sys::syscall1(81, (*op).fd as i64),
+                4 => sys::syscall1(sys::SYS_CHDIR, op.cast::<u8>().add(36) as i64),
+                5 => sys::syscall1(sys::SYS_FCHDIR, (*op).fd as i64),
                 _ => 0, // Only the existing initialized action owner writes cmd.
             };
             if result < 0 { return result; }
             op = (*op).prev;
         }
-        sys::syscall3(72, *error_fd as i64, 2, 1);
+        sys::syscall3(sys::SYS_FCNTL, *error_fd as i64, 2, 1);
         signal_mask(2, ptr::addr_of!((*args).mask), ptr::null_mut());
         if (*args).search_path {
             process_exec_path::execvpe_raw((*args).path, (*args).arguments,
                 (*args).environment, (*args).inherited_path, ptr::addr_of_mut!((*args).exec_errno))
         } else {
-            let result = sys::syscall3(59, (*args).path as i64, (*args).arguments as i64, (*args).environment as i64);
+            let result = sys::syscall3(sys::SYS_EXECVE, (*args).path as i64, (*args).arguments as i64, (*args).environment as i64);
             if result < 0 { ptr::addr_of_mut!((*args).exec_errno).write(-result as c_int); }
             result
         }
@@ -163,7 +180,7 @@ unsafe extern "C" fn child(pointer: *mut c_void) -> c_int {
         let error = -child_exec(args, &mut error_fd) as c_int;
         if error != 0 {
             loop {
-                let result = sys::syscall3(1, error_fd as i64, &error as *const c_int as i64, 4);
+                let result = sys::syscall3(sys::SYS_WRITE, error_fd as i64, &error as *const c_int as i64, 4);
                 if result >= 0 || result == -32 { break; }
             }
         }
@@ -195,7 +212,7 @@ pub(super) unsafe fn spawn_with_outcome(pid: *mut c_int, path: *const c_char,
             exec_errno: 0 };
         let creation = ProcessGuard::acquire_blocked();
         let outcome;
-        let result = sys::syscall2(293, args.pipe.as_mut_ptr() as i64, CLOEXEC);
+        let result = sys::syscall2(sys::SYS_PIPE2, args.pipe.as_mut_ptr() as i64, CLOEXEC);
         if result == 0 {
             // The trampoline initializes its own stack words. Unused stack
             // storage needs no zeroing: compiler-lowered memset here could
@@ -209,10 +226,10 @@ pub(super) unsafe fn spawn_with_outcome(pid: *mut c_int, path: *const c_char,
             if args.exec_errno != 0 { errno::set_errno(args.exec_errno); }
             if child_pid > 0 {
                 let mut error = 0i32;
-                let read = sys::syscall3(0, args.pipe[0] as i64, &mut error as *mut c_int as i64, 4);
+                let read = sys::syscall3(sys::SYS_READ, args.pipe[0] as i64, &mut error as *mut c_int as i64, 4);
                 if read == 4 {
                     let mut status = 0;
-                    while sys::syscall4(61, child_pid, &mut status as *mut c_int as i64, 0, 0) == -4 {}
+                    while sys::syscall4(sys::SYS_WAIT4, child_pid, &mut status as *mut c_int as i64, 0, 0) == -4 {}
                     outcome = SpawnOutcome::ChildFailure(error);
                 } else {
                     if !pid.is_null() { pid.write(child_pid as c_int); }

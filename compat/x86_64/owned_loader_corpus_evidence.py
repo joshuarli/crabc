@@ -20,9 +20,13 @@ import sys
 from typing import Any, Iterable, Mapping
 
 import owned_dynamic_receipt as receipt_contract
+from native_arch import native_arch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ARCH = native_arch()["arch"]
+MUSL_LOADER = f"lib/ld-musl-{ARCH}.so.1"
+CRABC_LOADER = f"lib/ld-crabc-{ARCH}.so.1"
 SHA256_HEX = frozenset("0123456789abcdef")
 
 
@@ -690,7 +694,7 @@ def _loader_link_argv(loader: Any, name: str, link: Mapping[str, Any], product: 
         argv.append("-Wl,--disable-new-dtags")
     argv.extend(("-Wl,-rpath," + runpath,
                  "-Wl,-rpath-link," + recorded_path(root, source_mount, work / (arm + "-root") / "usr/lib"),
-                 "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1"))
+                 f"-Wl,--dynamic-linker,/{MUSL_LOADER}"))
     if export_dynamic:
         argv.append("-Wl,--export-dynamic")
     return argv + ["-o", output]
@@ -760,7 +764,9 @@ def _loader_dynamic_runtime(product: Path, kind: str) -> tuple[Path, ...]:
     library = product / "usr/lib"
     runtime = [library / "crti.o", library / "libc.so", library / "crtn.o"]
     if kind == "executable":
-        runtime.extend((library / "Scrt1.o", library / "crabc-dynamic-attach.o"))
+        runtime.append(library / "Scrt1.o")
+        if ARCH == "x86_64":
+            runtime.append(library / "crabc-dynamic-attach.o")
     return tuple(runtime)
 
 
@@ -779,8 +785,8 @@ def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product:
     if export_dynamic:
         command.append("--export-dynamic")
     if kind == "executable":
-        command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", recorded(library / "Scrt1.o"),
-                        recorded(library / "crabc-dynamic-attach.o")))
+        command.extend((*receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS, "--dynamic-linker", "/" + CRABC_LOADER, recorded(library / "Scrt1.o"),
+                        *([recorded(library / "crabc-dynamic-attach.o")] if ARCH == "x86_64" else [])))
     if kind == "shared":
         command.extend(("-soname", Path(link["output"]).name))
     command.extend((recorded(library / "crti.o"), link["object"], recorded(library / "libcrabc-builtins.a"),
@@ -925,8 +931,8 @@ def _validate_loader_execution_root(checkout: Path, execution_root: Path, source
             expected[relative] = str(product_entry["kind"])
     else:
         expected.update({"lib": "directory", "usr": "directory", "usr/lib": "directory",
-                         "lib/ld-musl-x86_64.so.1": "file", "usr/lib/libc.so": "file"})
-        _loader_require_file(entries, "lib/ld-musl-x86_64.so.1", oracle["libc_sha256"],
+                         MUSL_LOADER: "file", "usr/lib/libc.so": "file"})
+        _loader_require_file(entries, MUSL_LOADER, oracle["libc_sha256"],
                              f"loader case {name} oracle loader")
         _loader_require_file(entries, "usr/lib/libc.so", oracle["libc_sha256"],
                              f"loader case {name} oracle libc")
@@ -973,7 +979,7 @@ def _loader_runtime_observation(root: Path, source_mount: str, work: Path, raw_r
     record = _keys(value, {"argv", "returncode", "stdout_hex", "stderr_hex", "timed_out"}, description)
     arm_root = work / (arm + "-root")
     argv = ["/usr/sbin/chroot", recorded_path(root, source_mount, arm_root)]
-    argv += ["/lib/ld-musl-x86_64.so.1", "/" + program] if direct else ["/" + program]
+    argv += ["/" + MUSL_LOADER, "/" + program] if direct else ["/" + program]
     _require(record["argv"] == argv and observation[1] == 0 and not observation[4] and observation[3] == b"",
              f"{description} command or status differs")
     raw_records.take(argv, recorded_path(root, source_mount, work), environment, description,
@@ -1030,7 +1036,7 @@ def _validate_loader_properties(name: str, properties: object, loader: Any, raw:
         _require(isinstance(properties["program_headers"], str) and " TLS " in properties["program_headers"], "loader initial TLS headers differ")
         _loader_readelf(raw, root, source_mount, work, ["readelf", "-lW", image("usr/lib/libinitial_tls.so")], properties["program_headers"], "loader initial TLS readelf")
     if name == "relro":
-        _require(isinstance(properties["program_headers"], str) and "GNU_RELRO" in properties["program_headers"] and isinstance(properties["relocations"], str) and "R_X86_64_64" in properties["relocations"], "loader RELRO properties differ")
+        _require(isinstance(properties["program_headers"], str) and "GNU_RELRO" in properties["program_headers"] and isinstance(properties["relocations"], str) and ("R_X86_64_64" if ARCH == "x86_64" else "R_AARCH64_ABS64") in properties["relocations"], "loader RELRO properties differ")
         _loader_readelf(raw, root, source_mount, work, ["readelf", "-lW", image("usr/lib/librelro.so")], properties["program_headers"], "loader RELRO program headers")
         _loader_readelf(raw, root, source_mount, work, ["readelf", "-Wr", image("usr/lib/librelro.so")], properties["relocations"], "loader RELRO relocations")
     if name == "visibility":
@@ -1043,7 +1049,7 @@ def _validate_loader_properties(name: str, properties: object, loader: Any, raw:
         _require(isinstance(properties["dynamic"], str) and all(tag in properties["dynamic"] for tag in ("(INIT)", "(FINI)", "(INIT_ARRAY)", "(FINI_ARRAY)")), "loader legacy lifecycle tags differ")
         _loader_readelf(raw, root, source_mount, work, ["readelf", "-dW", image("usr/lib/liblegacy_lifecycle.so")], properties["dynamic"], "loader legacy lifecycle tags")
     if name == "dynamic-tls":
-        _require(isinstance(properties["relocations"], str) and any(tag in properties["relocations"] for tag in ("R_X86_64_DTPMOD64", "R_X86_64_DTPOFF64")), "loader dynamic TLS relocations differ")
+        _require(isinstance(properties["relocations"], str) and any(tag in properties["relocations"] for tag in (("R_X86_64_DTPMOD64", "R_X86_64_DTPOFF64") if ARCH == "x86_64" else ("R_AARCH64_TLSDESC", "R_AARCH64_TLS_DTPMOD", "R_AARCH64_TLS_DTPREL"))), "loader dynamic TLS relocations differ")
         _loader_readelf(raw, root, source_mount, work, ["readelf", "-Wr", image("usr/lib/libfixture_tls.so")], properties["relocations"], "loader dynamic TLS relocations")
     if name in {"nested-needed", "constructor-order"}:
         edge = "libnested_leaf.so" if name == "nested-needed" else "liborder_leaf.so"
@@ -1122,8 +1128,8 @@ def _validate_loader_behavior(name: str, case: Mapping[str, Any], raw_records: _
         _loader_readelf(raw_records, root, source_mount, work, ["readelf", "-dW", image], case["dynamic"], "loader hash-many tags")
     if name == "relocations":
         _require(all(isinstance(case[key], str) for key in ("consumer_relocations", "adapter_relocations", "adapter_dynamic"))
-                 and all(tag in case["consumer_relocations"] for tag in ("R_X86_64_64", "R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"))
-                 and "R_X86_64_RELATIVE" in case["adapter_relocations"]
+                 and all(tag in case["consumer_relocations"] for tag in (("R_X86_64_64", "R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT") if ARCH == "x86_64" else ("R_AARCH64_ABS64", "R_AARCH64_GLOB_DAT", "R_AARCH64_JUMP_SLOT")))
+                 and ("R_X86_64_RELATIVE" if ARCH == "x86_64" else "R_AARCH64_RELATIVE") in case["adapter_relocations"]
                  and not any("(" + tag + ")" in case["adapter_dynamic"] for tag in ("RELR", "RELRSZ", "RELRENT")), "loader relocation evidence differs")
         candidate = recorded_path(root, source_mount, work / "candidate-root/usr/lib")
         _loader_readelf(raw_records, root, source_mount, work, ["readelf", "-Wr", candidate + "/libreloc_consumer.so"], case["consumer_relocations"], "loader consumer relocations")
@@ -1160,12 +1166,12 @@ def _validate_loader_case(root: Path, source_mount: str, report_root: Path, prod
         retained_root = report_root / "cases" / name / (arm + "-root")
         root_entries = _validate_retained_loader_tree(retained_root, roots[arm], f"loader case {name} {arm} root")
         _validate_loader_execution_root(root, retained_root, source_mount, product, oracle, producer_linker, name, case, loader, arm, root_entries)
-    _require(_hash_within(report_root / "cases" / name / "oracle-root", "lib/ld-musl-x86_64.so.1", "loader oracle") == oracle["libc_sha256"],
+    _require(_hash_within(report_root / "cases" / name / "oracle-root", MUSL_LOADER, "loader oracle") == oracle["libc_sha256"],
              f"loader case {name} oracle loader differs")
     _require(_hash_within(report_root / "cases" / name / "oracle-root", "usr/lib/libc.so", "loader oracle") == oracle["libc_sha256"],
              f"loader case {name} oracle libc differs")
     candidate = report_root / "cases" / name / "candidate-root"
-    _require(_hash_within(candidate, "lib/ld-crabc-x86_64.so.1", "loader candidate") == product_files["lib/ld-crabc-x86_64.so.1"],
+    _require(_hash_within(candidate, CRABC_LOADER, "loader candidate") == product_files[CRABC_LOADER],
              f"loader case {name} candidate loader differs from supplied product")
     _require(_hash_within(candidate, "usr/lib/libc.so", "loader candidate") == product_files["usr/lib/libc.so"],
              f"loader case {name} candidate libc differs from supplied product")
@@ -1204,7 +1210,7 @@ def validate_loader_report(report_path: Path, dynamic_product: Path, *, expected
                 "family_complete", "selected", "source_before", "source_after", "product_before", "product_after",
                 "oracle_before", "oracle_after", "producer_linker_before", "producer_linker_after", "cases", "elapsed_seconds"}
     _keys(report, required, "synthetic-loader report")
-    _require((report["schema"], report["runner"], report["architecture"]) == (2, "compat/ldso/run_x86.py", "x86_64"),
+    _require((report["schema"], report["runner"], report["architecture"]) == (2, "compat/ldso/run_x86.py", ARCH),
              "synthetic-loader report identity differs")
     source_mount = _safe_mount(report["source_mount"])
     _require(report["selected_passed"] is True and report["component_complete"] is True and report["family_complete"] is False,
@@ -1283,7 +1289,7 @@ def _corpus_oracle(value: object, expected_oracle: Mapping[str, object]) -> dict
     loader = _keys(oracle["loader"], {"path", "target", "resolved_path"}, "package-corpus oracle loader")
     source = _keys(oracle["source_manifest"], {"path", "sha256"}, "package-corpus oracle source manifest")
     root = oracle["root"].rstrip("/")
-    _require(runtime["path"] == root + "/lib/libc.so" and loader["path"] == root + "/lib/ld-musl-x86_64.so.1"
+    _require(runtime["path"] == root + "/lib/libc.so" and loader["path"] == root + _corpus().CANONICAL_INTERPRETER
              and loader["resolved_path"] == runtime["path"] and isinstance(loader["target"], str) and loader["target"],
              "package-corpus oracle runtime path differs")
     for item, description in ((runtime, "runtime"), (source, "source manifest")):
@@ -1332,12 +1338,13 @@ def _validate_corpus_inputs(value: object, manifest: Any) -> None:
     signatures = before["archive_signatures"]
     _require(isinstance(signatures, dict) and set(signatures) == set(manifest.archive_roster),
              "package-corpus archive signature roster differs")
+    package_arch = native_arch()["arch"] if sys.platform == "linux" else "x86_64"
     for name, item in signatures.items():
         metadata = _keys(item, {"metadata", "signature_stdout", "signature_stderr"}, "package-corpus archive signature")
         _require(isinstance(metadata["signature_stdout"], str) and isinstance(metadata["signature_stderr"], str),
                  "package-corpus archive signature stream differs")
         fields = _keys(metadata["metadata"], {"pkgname", "pkgver", "arch"}, "package-corpus archive metadata")
-        _require(fields["arch"] in {"x86_64", "noarch"} and name == f"{fields['pkgname']}-{fields['pkgver']}.apk",
+        _require(fields["arch"] in {package_arch, "noarch"} and name == f"{fields['pkgname']}-{fields['pkgver']}.apk",
                  "package-corpus archive metadata differs")
     _require(inputs["after"] == identity, "package-corpus inputs changed during execution")
 
@@ -1692,10 +1699,11 @@ def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: st
                  f"package-corpus {expected_case.id} {arm} {name} source differs")
         _digest(item["sha256"], f"package-corpus {expected_case.id} {arm} {name}")
     if arm == "candidate":
-        loader = recorded_path(checkout, source_mount, product / "lib/ld-crabc-x86_64.so.1")
+        arch = getattr(corpus, "ARCH", "x86_64")
+        loader = recorded_path(checkout, source_mount, product / f"lib/ld-crabc-{arch}.so.1")
         libc = recorded_path(checkout, source_mount, product / "usr/lib/libc.so")
         _require(runtime["loader"]["source"] == loader and runtime["loader"]["resolved_source"] == loader
-                 and runtime["loader"]["sha256"] == product_files["lib/ld-crabc-x86_64.so.1"],
+                 and runtime["loader"]["sha256"] == product_files[f"lib/ld-crabc-{arch}.so.1"],
                  f"package-corpus {expected_case.id} candidate loader differs from supplied product")
         _require(runtime["libc"]["source"] == libc and runtime["libc"]["resolved_source"] == libc
                  and runtime["libc"]["sha256"] == product_files["usr/lib/libc.so"],

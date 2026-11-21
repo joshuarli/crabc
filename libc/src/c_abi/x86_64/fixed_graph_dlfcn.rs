@@ -46,9 +46,6 @@ const RTLD_NOW: c_int = 2;
 const RTLD_NOLOAD: c_int = 4;
 const RTLD_NEXT_BITS: usize = usize::MAX;
 const RTLD_DI_LINKMAP: c_int = 2;
-const SYS_GETPID: i64 = 39;
-const SYS_GETTID: i64 = 186;
-const SYS_TGKILL: i64 = 234;
 const ESRCH: i64 = 3;
 
 const UNAVAILABLE: &[u8] = b"crabc fixed-graph loader runtime unavailable";
@@ -81,6 +78,7 @@ unsafe impl Sync for RuntimeRecordV1 {}
 // dlfcn entries referring to it. Give it one explicit allocated executable
 // section. The installed static product selects `static_dlfcn.rs` instead,
 // so this weak loader-record import never enters a closed ET_EXEC image.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     ".section .text.__crabc_x86_fixed_graph_dlfcn_record,\"ax\",@progbits",
     ".weak __crabc_x86_64_fixed_graph_dlfcn_v1",
@@ -92,6 +90,9 @@ core::arch::global_asm!(
     "ret",
     ".size __crabc_x86_fixed_graph_dlfcn_record, .-__crabc_x86_fixed_graph_dlfcn_record",
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("fixed_graph_dlfcn_aarch64.S"));
 
 extern "C" {
     fn __crabc_x86_fixed_graph_dlfcn_record() -> *const RuntimeRecordV1;
@@ -284,15 +285,15 @@ unsafe fn runtime_record() -> Option<&'static RuntimeRecordV1> {
 }
 
 unsafe fn linux_tid() -> i32 {
-    raw_syscall::syscall0(SYS_GETTID) as i32
+    raw_syscall::syscall0(raw_syscall::SYS_GETTID) as i32
 }
 
 unsafe fn linux_pid() -> i32 {
-    raw_syscall::syscall0(SYS_GETPID) as i32
+    raw_syscall::syscall0(raw_syscall::SYS_GETPID) as i32
 }
 
 unsafe fn tid_is_dead(pid: i32, tid: i32) -> bool {
-    raw_syscall::syscall3(SYS_TGKILL, pid as i64, tid as i64, 0) == -ESRCH
+    raw_syscall::syscall3(raw_syscall::SYS_TGKILL, pid as i64, tid as i64, 0) == -ESRCH
 }
 
 unsafe fn diagnostic_slot() -> Option<usize> {

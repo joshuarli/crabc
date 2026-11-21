@@ -83,6 +83,7 @@ union Semun {
 // commands, installs an explicit zero before passing through the fixed helper.
 // This exactly retains musl's zero-initialized `union semun` fallback rather
 // than reading an unspecified fourth register.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -125,6 +126,10 @@ semctl:
     no_argument = sym semctl_no_argument,
     word = sym semctl_word,
 );
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(include_str!("semctl_aarch64.S"),
+    no_argument = sym semctl_no_argument, word = sym semctl_word);
 
 // Musl's `src/ipc/semget.c` object.
 static_archive_member! { semget_source {

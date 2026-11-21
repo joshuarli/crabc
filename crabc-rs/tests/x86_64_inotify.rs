@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};

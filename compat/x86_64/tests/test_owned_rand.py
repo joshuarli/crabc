@@ -35,14 +35,20 @@ class OwnedRandContracts(unittest.TestCase):
         )
 
     def test_target_gated_exact_dependency_graph_is_locked(self) -> None:
-        manifest = MANIFEST.read_text(encoding="utf-8")
-        self.assertIn('"dep:rand_pcg",', manifest)
-        self.assertIn(
-            'rand_pcg = { version = "=0.10.2", default-features = false, optional = true }',
-            manifest,
+        manifest = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertNotIn("rand_pcg", manifest.get("dependencies", {}))
+        gated = [
+            table["dependencies"]["rand_pcg"]
+            for cfg, table in manifest["target"].items()
+            if 'target_os = "linux"' in cfg
+            and 'target_arch = "x86_64"' in cfg
+            and "rand_pcg" in table.get("dependencies", {})
+        ]
+        self.assertEqual(
+            gated,
+            [{"version": "=0.10.2", "default-features": False, "optional": True}],
         )
-        target_start = manifest.index("[target.'cfg(all(target_os = \"linux\", target_arch = \"x86_64\"")
-        self.assertGreater(manifest.index("rand_pcg", target_start), target_start)
+        self.assertIn("dep:rand_pcg", manifest["features"]["x86-owned-static-runtime-core"])
         lock = tomllib.loads(LOCK.read_text(encoding="utf-8"))
         packages = {item["name"]: item for item in lock["package"]}
         self.assertEqual(

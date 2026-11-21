@@ -7,6 +7,7 @@ use crabc_rs::net::{
     ipv4_local_number, ipv4_network_number, make_ipv4_address, parse_ipv4_network_number, Ipv4Addr,
 };
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

@@ -50,7 +50,7 @@ class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
         body = b'member'
         product('dynamic-builtins', b'!<arch>\n' +
                 f"{'builtins.o/':<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(body):<10}`\n".encode() + body)
-        work, selected = '.work/x86_64/tmp/owned-native-allocator-dso.fixture', '/workspace/.work/dynamic'
+        work, selected = f'.work/{reader.ARCH}/tmp/owned-native-allocator-dso.fixture', '/workspace/.work/dynamic'
         obj, output = f'/workspace/{work}/objects/initial.o', f'/workspace/{work}/libdso-initial.so'
         library = selected + '/usr/lib'
         crti, libc, crtn, builtins = [library + '/' + name for name in ('crti.o', 'libc.so', 'crtn.o', 'libcrabc-builtins.a')]
@@ -173,7 +173,7 @@ class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
                 for name in reader.PRODUCTS:
                     (products / name).write_bytes(b"retained product")
                 (products / "dynamic-manifest").write_text(json.dumps({
-                    "target": "x86_64-unknown-linux-musl", "files": {},
+                    "target": f"{reader.ARCH}-unknown-linux-musl", "files": {},
                 }))
                 (products / "dynamic-product-state").write_text(json.dumps({"allocator_backend": backend}))
                 (products / "dynamic-libc-provenance").write_text(json.dumps({
@@ -191,7 +191,7 @@ class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
                 (latest / "receipt.json").write_text(json.dumps({
                     "schema": shared.SCHEMA, "runner": reader.RUNNER, "source": SEAL,
                     "canonical": True, "parameters": reader.PARAMETERS,
-                    "work": ".work/x86_64/tmp/owned-native-allocator-dso.source-proof",
+                    "work": f".work/{reader.ARCH}/tmp/owned-native-allocator-dso.source-proof",
                     "cases": cases, "products": {name: record(products / name) for name in reader.PRODUCTS},
                 }))
                 shared.read_receipt(root, reader.RUNNER, seal=SEAL)
@@ -245,7 +245,7 @@ class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
                 "runner": reader.RUNNER,
                 "schema": shared.SCHEMA,
                 "source": SEAL,
-                "work": ".work/x86_64/tmp/owned-native-allocator-dso.fake",
+                "work": f".work/{reader.ARCH}/tmp/owned-native-allocator-dso.fake",
             }
             # A rewritten transcript can carry valid hashes while an executed
             # mode is omitted from the semantic roster.

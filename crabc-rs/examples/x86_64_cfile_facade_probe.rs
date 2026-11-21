@@ -13,10 +13,14 @@ use core::ffi::{c_char, c_int};
 use crabc_rs::cfile::{CFile, FileMode, SeekFrom};
 use crabc_rs::Errno;
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
-    // SAFETY: `ud2` raises SIGILL, ending this probe process immediately.
+    // SAFETY: The illegal instruction terminates the probe process.
+    #[cfg(target_arch = "x86_64")]
     unsafe { core::arch::asm!("ud2", options(noreturn)) }
+    #[cfg(target_arch = "aarch64")]
+    unsafe { core::arch::asm!("udf #0", options(noreturn)) }
 }
 
 // Mirrors `enum facade_op_kind` in the C driver.

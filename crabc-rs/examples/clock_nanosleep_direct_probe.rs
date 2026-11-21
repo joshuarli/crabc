@@ -8,6 +8,7 @@ use crabc_rs::time::{
     clock_nanosleep_absolute, clock_nanosleep_relative, ClockId, SleepError, SleepOutcome, Timespec,
 };
 
+#[cfg(not(feature = "std"))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}

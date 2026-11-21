@@ -10,16 +10,19 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
+architecture_args=()
+if [ "$arch" != x86_64 ]; then architecture_args=(--architecture "$arch"); fi
 readonly PROBE="$ROOT/compat/x86_64/owned_stdio_allocator_interposition_probe.c"
-readonly CRABC_INTERPRETER=/lib/ld-crabc-x86_64.so.1
-readonly MUSL_INTERPRETER=/lib/ld-musl-x86_64.so.1
+readonly CRABC_INTERPRETER="/lib/ld-crabc-$arch.so.1"
+readonly MUSL_INTERPRETER="/lib/ld-musl-$arch.so.1"
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
-[ "$(uname -sm)" = 'Linux x86_64' ]
+[ "$(uname -s)" = Linux ]
 
 provided_dynamic="${1:-}"
 if [ -n "$provided_dynamic" ]; then
@@ -46,7 +49,7 @@ printf 'owned stdio allocator interposition evidence: %s\n' "$work"
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/installed" >"$work/dynamic-build.json"
+        "${architecture_args[@]}" --output "$work/installed" >"$work/dynamic-build.json"
     provided_dynamic="$work/installed"
 fi
 readonly installed="$provided_dynamic"
@@ -79,7 +82,7 @@ prepare_oracle_root() {
     chmod 1777 "$root/tmp"
     cp "$executable" "$root/consumer"
     cp /opt/musl-1.2.6/lib/libc.so "$root$MUSL_INTERPRETER"
-    ln -s ld-musl-x86_64.so.1 "$root/lib/libc.so"
+    ln -s "ld-musl-$arch.so.1" "$root/lib/libc.so"
 }
 
 prepare_candidate_root() {

@@ -4,12 +4,13 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly ORACLE_CC="$oracle"
 readonly PROBE="$ROOT/compat/x86_64/owned_numeric_calendar_probe.c"
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_numeric_calendar.sh"
 readonly RECEIPT_READER="$ROOT/compat/x86_64/owned_numeric_calendar_component_receipt.py"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly INTERPRETER="/lib/ld-crabc-$arch.so.1"
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -41,7 +42,7 @@ done
 [ -z "$provided_static" ] || [ -n "$provided_dynamic" ] || usage
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
-case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) fail "unsupported architecture $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
 
 python3 -B - "$ROOT" "$TMPDIR" "$provided_static" "$provided_dynamic" <<'PY'

@@ -26,6 +26,7 @@ import stat
 import tomllib
 from typing import Any, Mapping
 
+from native_arch import native_arch
 import owned_c_abi_compat_family_cohort as cohort
 import owned_posix_family_execution as family
 import source_seal
@@ -39,7 +40,7 @@ FAMILY = "libc.c-abi-compat"
 ROSTER = Path("compat/x86_64/c-abi-compat-family.toml")
 LEDGER = Path("compat/x86_64/parity.toml")
 DISPATCHER = "./scripts/dev-x86_64.sh"
-EXECUTION_WORK = Path(".work/x86_64")
+EXECUTION_WORK = Path(".work") / native_arch()["arch"]
 PRODUCT_SCOPES = {
     "static-and-dynamic": ("static", "static-pie", "pie", "non-pie"),
     "dynamic": ("pie", "non-pie"),
@@ -301,8 +302,7 @@ def _request(root: Path, work: Path) -> dict[str, str]:
 
 
 def _guard(root: Path, work: Path, products: Mapping[str, Mapping[str, Any]]) -> None:
-    require(family.same_json(source_seal.seal(root),
-                             family.read(work / "source-before.json")),
+    require(source_seal.same_evidence(family.read(work / "source-before.json"), source_seal.seal(root)),
             "source changed during c-abi-compat family execution")
     require(family.same_json(_product_seal(root, products), family.read(work / "product-before.json")),
             "primary product changed during c-abi-compat family execution")
@@ -320,7 +320,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
     root = root.resolve(strict=True)
     work = Path(os.path.abspath(root / work))
     require(work.is_relative_to(root / EXECUTION_WORK) and work != root / EXECUTION_WORK,
-            "c-abi-compat family output must be below checkout .work/x86_64")
+            f"c-abi-compat family output must be below checkout {EXECUTION_WORK}")
     require(not work.exists() and not work.is_symlink(), "c-abi-compat family output must be fresh")
     roster = load_roster(root)
     request = {
@@ -691,7 +691,7 @@ def collect(root: Path, work: Path) -> dict[str, object]:
     current = source_seal.seal(root)
     seals = {}
     for name in ("source-before.json", "source-after.json"):
-        require(family.same_json(family.read(work / name), current), f"c-abi-compat family {name} differs")
+        require(source_seal.same_evidence(family.read(work / name), current), f"c-abi-compat family {name} differs")
         seals[name] = family.file_identity(root, work / name)
     product_seal = _product_seal(root, products)
     for name in ("product-before.json", "product-after.json"):
@@ -708,7 +708,7 @@ def collect(root: Path, work: Path) -> dict[str, object]:
         result = component_result(root, work, component, products, mount, roster, companions)
         receipt = runs / component.identifier / "receipt.json"
         if (runs / component.identifier).is_dir():
-            require(family.same_json(family.read(receipt), result),
+            require(source_seal.same_evidence(family.read(receipt), result),
                     f"c-abi-compat component receipt changed: {component.identifier}")
             result = {**result, "receipt": family.file_identity(root, receipt)}
         components[component.identifier] = result
@@ -748,7 +748,7 @@ def validate_assessment(root: Path, path: Path) -> dict[str, object]:
     path = family.physical(root, root / path)
     require(path.name == "assessment.json", "expected a c-abi-compat family assessment.json")
     reconstructed = collect(root, path.parent)
-    require(family.same_json(family.read(path), reconstructed), "c-abi-compat family assessment does not reconstruct")
+    require(source_seal.same_evidence(family.read(path), reconstructed), "c-abi-compat family assessment does not reconstruct")
     return reconstructed
 
 
@@ -807,7 +807,8 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
     canonical_source, products = cohort.canonical_products(
         root, root / receipts["static_preparation"]["path"],
         root / receipts["dynamic_qualification"]["path"])
-    require(retained["cohort"] == {"schema": cohort.SCHEMA, "source": canonical_source, "products": products},
+    require(source_seal.same_evidence(retained["cohort"], {"schema": cohort.SCHEMA, "source": canonical_source,
+                                                          "products": products}),
             "c-abi-compat family assessment cohort binding differs")
     primary = products[cohort.PAIR]
     for component in roster.components:
@@ -819,8 +820,8 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
                 f"c-abi-compat family {identifier} receipt is outside its run")
         require(family.same_json(family.file_identity(root, receipt), record),
                 f"c-abi-compat family {identifier} receipt changed")
-        require(family.same_json(family.read(receipt), {key: value for key, value in result.items()
-                                                     if key != "receipt"}),
+        require(source_seal.same_evidence(family.read(receipt), {key: value for key, value in result.items()
+                                                              if key != "receipt"}),
                 f"c-abi-compat family {identifier} receipt differs from assessment")
         expected_binding = {"pair": cohort.PAIR, "products": {
             "static": primary["static"] if component.products == "static-and-dynamic" else None,

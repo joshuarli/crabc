@@ -45,7 +45,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
+#if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
     __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "credentials profile requires native Linux/x86-64 little-endian LP64"
@@ -71,8 +71,12 @@ _Static_assert(_Alignof(uid_t) == _Alignof(uint32_t), "x86 uid_t alignment");
 _Static_assert(_Alignof(gid_t) == _Alignof(uint32_t), "x86 gid_t alignment");
 _Static_assert((uid_t)-1 > (uid_t)0, "x86 uid_t is unsigned");
 _Static_assert((gid_t)-1 > (gid_t)0, "x86 gid_t is unsigned");
+#if defined(__aarch64__)
+_Static_assert(SYS_getresuid == 148 && SYS_getresgid == 150, "aarch64 credential syscall numbers");
+#else
 _Static_assert(SYS_getresuid == 118, "x86 getresuid syscall number");
 _Static_assert(SYS_getresgid == 120, "x86 getresgid syscall number");
+#endif
 _Static_assert(__builtin_types_compatible_p(__typeof__(&setgroups),
     int (*)(size_t, const gid_t *)), "setgroups declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&setuid), int (*)(uid_t)),
@@ -116,6 +120,14 @@ struct named_credential_case {
 
 static long raw_syscall3(long number, long first, long second, long third)
 {
+#if defined(__aarch64__)
+    register long x0 __asm__("x0") = first;
+    register long x1 __asm__("x1") = second;
+    register long x2 __asm__("x2") = third;
+    register long x8 __asm__("x8") = number;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
+    return x0;
+#else
     long result;
 
     __asm__ volatile(
@@ -124,6 +136,7 @@ static long raw_syscall3(long number, long first, long second, long third)
         : "a"(number), "D"(first), "S"(second), "d"(third)
         : "rcx", "r11", "memory");
     return result;
+#endif
 }
 
 static int capture_ids(struct credential_ids *ids)

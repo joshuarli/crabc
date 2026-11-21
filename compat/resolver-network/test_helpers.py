@@ -62,7 +62,8 @@ class DnsHelperTests(unittest.TestCase):
                     if len(observed) < 3:
                         with self.assertRaises(BlockingIOError):
                             client.recv(65535, socket.MSG_DONTWAIT)
-                truncated = client.recv(65535, socket.MSG_DONTWAIT)
+                client.settimeout(1)
+                truncated = client.recv(65535)
                 self.assertEqual(truncated, dns_server.encode_answer(
                     request, 7, "tc-failover.example.test.", 1))
                 connection, tcp_client = socket.socketpair()
@@ -97,7 +98,8 @@ class DnsHelperTests(unittest.TestCase):
         for role in ("valid", "drop"):
             clients[0].sendto(request, endpoints[role].getsockname())
             server._handle_datagram(endpoints[role], role, "ipv4")
-        self.assertEqual(clients[0].recv(65535, socket.MSG_DONTWAIT),
+        clients[0].settimeout(1)
+        self.assertEqual(clients[0].recv(65535),
                          dns_server.encode_answer(request, 7, "tc-failover.example.test.", 1))
 
     def test_question_parser_canonicalizes_name(self) -> None:

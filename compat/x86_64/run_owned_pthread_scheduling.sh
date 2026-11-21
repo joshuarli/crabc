@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_pthread_scheduling_probe.c"
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command builds and checks both static entries; the
@@ -47,7 +48,7 @@ for mode in pie non-pie; do
     for scenario in ordinary surface inherit; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
-        timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+        timeout 20 chroot "$work/execution-root" "/lib/ld-crabc-$arch.so.1" \
             "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done

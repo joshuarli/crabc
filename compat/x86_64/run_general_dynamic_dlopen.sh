@@ -3,6 +3,7 @@
 # This does not by itself qualify the complete dynamic product campaign.
 set -euo pipefail
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
 ulimit -c 0
 [ "$#" -eq 1 ] || { printf 'usage: %s INSTALLED_DYNAMIC_SYSROOT\n' "$0" >&2; exit 2; }
 readonly installed="$1"
@@ -43,14 +44,14 @@ fi
 [ "$(<"$work/consumer.stdout")" = 'nested-dlopen=42' ]
 printf 'general runtime dlopen: PASS (runtime-new dependency closure); evidence: %s\n' "$work"
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly oracle_cc="$oracle"
 oracle_entry_flags=(-fPIE -pie)
 [ "$entry_mode" = --dynamic-pie ] || oracle_entry_flags=(-fno-pie -no-pie)
 # A pure-TBSS main has no initialized template bytes in the executable.
 # Its per-thread zero fill can extend beyond every ordinary PT_LOAD.
 "$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_tbss.c" -o "$work/tbss-consumer"
 readelf -lW "$work/tbss-consumer" >"$work/tbss-consumer.phdr"
-python3 -B - "$work/tbss-consumer" <<'PYTHON'
+python3 -B - "$work/tbss-consumer" "$arch" <<'PYTHON'
 from pathlib import Path
 import struct
 import sys
@@ -59,7 +60,7 @@ offset = struct.unpack_from('<Q', image, 32)[0]
 entry_size, count = struct.unpack_from('<HH', image, 54)
 headers = [struct.unpack_from('<IIQQQQQQ', image, offset + index * entry_size) for index in range(count)]
 tls, = [header for header in headers if header[0] == 7]
-assert tls[5] == 0 and tls[6] == 8192 and tls[7] == 4096
+assert tls[5] == 0 and tls[6] == (131072 if sys.argv[2] == 'aarch64' else 8192) and tls[7] == 4096
 assert not any(header[0] == 1 and header[3] <= tls[3] and tls[3] + tls[6] <= header[3] + header[6] for header in headers)
 PYTHON
 cp "$work/tbss-consumer" "$work/execution-root/tbss-consumer"
@@ -67,7 +68,8 @@ timeout 20 chroot "$work/execution-root" /tbss-consumer >"$work/tbss-candidate.s
 "$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_tbss.c" -o "$work/tbss-oracle"
 timeout 20 "$work/tbss-oracle" >"$work/tbss-oracle.stdout"
 cmp "$work/tbss-candidate.stdout" "$work/tbss-oracle.stdout"
-[ "$(<"$work/tbss-candidate.stdout")" = 'initial-tbss=8192,worker=isolated' ]
+if [ "$arch" = aarch64 ]; then tbss_size=131072; else tbss_size=8192; fi
+[ "$(<"$work/tbss-candidate.stdout")" = "initial-tbss=$tbss_size,worker=isolated" ]
 printf 'general initial pure TBSS: PASS (mapped-prefix boundary and independent worker zero fill); evidence: %s\n' "$work"
 
 mkdir "$work/oracle"
@@ -578,7 +580,8 @@ python3 -B "$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_relr.py" "$work/o
 for object in "$work/execution-root/relr/librelr.so" "$work/oracle/relr/librelr.so" "$work/oracle/relr-rewritten/librelr.so"; do
     readelf -dW "$object" >"$object.dynamic"
     grep -F '(RELR)' "$object.dynamic" >/dev/null
-    ! readelf -rW "$object" | grep -F R_X86_64_RELATIVE >/dev/null
+    if [ "$arch" = aarch64 ]; then relative=R_AARCH64_RELATIVE; else relative=R_X86_64_RELATIVE; fi
+    ! readelf -rW "$object" | grep -F "$relative" >/dev/null
 done
 "$driver" "$entry_mode" "$relr_consumer" -o "$work/execution-root/relr-consumer"
 "$oracle_cc" "${oracle_entry_flags[@]}" "$relr_consumer" -o "$work/oracle/relr-consumer"

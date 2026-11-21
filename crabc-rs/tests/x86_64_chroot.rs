@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;

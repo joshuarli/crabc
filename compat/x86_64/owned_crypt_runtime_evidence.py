@@ -465,7 +465,11 @@ def edge_run(work: Path, product: Path) -> Path:
     for mode in ("pie", "non-pie"):
         binary = edge / f"dynamic-{mode}-consumer"
         edge_run_command(edge, f"link-{mode}", commands[f"link-{mode}"], environment)
-        validate_link(product, edge / "workload.o", binary, Path(str(binary) + ".crabc-link.json"), mode)
+        link = Path(str(binary) + ".crabc-link.json")
+        if profile.ARCH == 'aarch64':
+            profile.aarch64_link_identity(HERE.parents[1], product, edge / 'workload.o', binary, link, mode)
+        else:
+            validate_link(product, edge / "workload.o", binary, link, mode)
         execution = edge / f"dynamic-{mode}-root"
         subprocess.run(["cp", "-a", str(product), str(execution)], check=True)
         subprocess.run(["cp", str(binary), str(execution / "consumer")], check=True)
@@ -521,7 +525,10 @@ def edge_audit(receipt_path: Path, product: Path) -> dict[str, Any]:
         link_path = edge / f"dynamic-{mode}-consumer.crabc-link.json"
         assert_file_record(record["links"][mode], link_path, f"edge {mode} link receipt")
         from owned_posix_product_evidence import validate_link
-        validate_link(product, edge / "workload.o", edge / f"dynamic-{mode}-consumer", link_path, mode)
+        if profile.ARCH == 'aarch64':
+            profile.aarch64_link_identity(HERE.parents[1], product, edge / 'workload.o', edge / f'dynamic-{mode}-consumer', link_path, mode)
+        else:
+            validate_link(product, edge / "workload.o", edge / f"dynamic-{mode}-consumer", link_path, mode)
         audit_execution_payload(product, edge / f"dynamic-{mode}-root", edge / f"dynamic-{mode}-consumer",
                                 edge / f"dynamic-{mode}-root/consumer", edge / f"dynamic-{mode}-execution-payload.json")
     if set(record["links"]) != {"pie", "non-pie"} or set(record["consumers"]) != {"pie", "non-pie"}:

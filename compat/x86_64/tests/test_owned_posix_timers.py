@@ -318,7 +318,10 @@ class OwnedPosixTimersTests(unittest.TestCase):
             tools = Path(temporary) / "tools"
             tools.mkdir()
             python = tools / "python3"
-            python.write_text("#!/bin/sh\nexit 79\n", encoding="utf-8")
+            python.write_text(
+                "#!/bin/sh\nexit 79\n",
+                encoding="utf-8",
+            )
             python.chmod(0o755)
             environment = dict(os.environ)
             environment["PATH"] = f"{tools}{os.pathsep}{environment['PATH']}"

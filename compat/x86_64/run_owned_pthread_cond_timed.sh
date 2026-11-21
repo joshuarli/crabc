@@ -3,7 +3,8 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+eval "$(python3 -B "$ROOT/compat/x86_64/native_arch.py")"
+readonly oracle_cc="$oracle"
 readonly probe="$ROOT/compat/x86_64/owned_pthread_cond_timed_probe.c"
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command builds and checks both static entries; the
@@ -47,7 +48,7 @@ compile_and_check_companions() {
             # A dynamic product also runs through explicit loader entry.
             if [ -n "$root" ]; then
                 timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" \
-                    "$root" /lib/ld-crabc-x86_64.so.1 "$executable" "$scenario" \
+                    "$root" "/lib/ld-crabc-$arch.so.1" "$executable" "$scenario" \
                     >"$work/$product-direct-$variant-$scenario.stdout"
                 cmp "$work/oracle-$variant-$scenario.stdout" "$work/$product-direct-$variant-$scenario.stdout"
             fi
@@ -87,7 +88,7 @@ for mode in pie non-pie; do
     for scenario in "${scenarios[@]}"; do
         timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
-        timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
+        timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" "/lib/ld-crabc-$arch.so.1" "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done

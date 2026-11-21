@@ -4,7 +4,8 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly NATIVE_ARCH="$(python3 -B "$ROOT/compat/x86_64/native_arch.py" | awk -F= '$1 == "arch" {print $2}')"
+readonly ORACLE_CC="/usr/local/bin/crabc-${NATIVE_ARCH}-musl-gcc"
 readonly PROBE="$ROOT/compat/x86_64/libc_crypt_probe.c"
 readonly EXECUTION_EVIDENCE="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
 readonly PROFILE_EVIDENCE="$ROOT/compat/x86_64/owned_crypt_profile.py"
@@ -47,7 +48,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-[ "$(uname -sm)" = 'Linux x86_64' ] || fail 'requires native Linux/x86-64'
+[ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 
 # Supplied products and evidence are physical checkout-local artifacts.  Do
 # this before canonicalizing a supplied spelling so a symlink cannot become an
@@ -386,16 +387,20 @@ PY_DYNAMIC_SYMBOLS
 
 audit_owned_link() {
     local product="$1" object="$2" candidate="$3" receipt="$4" mode="$5" identity="$6"
-    python3 -B - "$ROOT" "$product" "$object" "$candidate" "$receipt" "$mode" "$identity" <<'PY_LINK'
+    python3 -B - "$ROOT" "$product" "$object" "$candidate" "$receipt" "$mode" "$identity" "${NATIVE_ARCH:-x86_64}" <<'PY_LINK'
 import json
 from pathlib import Path
 import sys
 
-root, product, object_path, candidate, receipt, mode, identity = sys.argv[1:]
+root, product, object_path, candidate, receipt, mode, identity, architecture = sys.argv[1:]
 sys.path.insert(0, str(Path(root) / "compat/x86_64"))
 from owned_posix_product_evidence import ProductEvidenceError, validate_link
 try:
-    record = validate_link(Path(product), Path(object_path), Path(candidate), Path(receipt), mode)
+    if architecture == 'aarch64':
+        from owned_crypt_profile import aarch64_link_identity
+        record = aarch64_link_identity(Path(root), Path(product), Path(object_path), Path(candidate), Path(receipt), mode)
+    else:
+        record = validate_link(Path(product), Path(object_path), Path(candidate), Path(receipt), mode)
 except ProductEvidenceError as error:
     raise SystemExit(f"owned crypt runtime link evidence: {error}") from error
 output = Path(identity)

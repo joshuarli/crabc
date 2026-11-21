@@ -113,14 +113,14 @@ fn lockf_uses_current_offset_and_reports_conflicts() {
     .expect("take current-offset range lock");
     assert_eq!(fs::tell(&file).expect("tell after lockf"), 3);
 
-    let child = match unsafe { process::fork_raw() }.expect("fork lockf observer") {
-        process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => child_lockf_test(&file),
+    let child = match crabc_core::process::fork_raw().map(crabc_rs::Pid::from_raw).expect("fork lockf observer") {
+        Some(child) => child,
+        None => child_lockf_test(&file),
     };
-    let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
-        .expect("wait for lockf observer")
-        .expect("lockf observer changed state");
-    assert_eq!(status.exit_status(), Some(0));
+    let mut status = 0;
+    // SAFETY: The status word is writable and the child is owned by this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 0);
 
     fs::lock_from_current(
         &file,

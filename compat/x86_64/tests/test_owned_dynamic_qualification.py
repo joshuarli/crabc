@@ -20,13 +20,25 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
-import owned_dynamic_qualification as qualification
+import native_arch
+with mock.patch.object(native_arch, "native_arch", return_value=native_arch.native_arch("x86_64")):
+    import owned_dynamic_qualification as qualification
 import crabc_cc_owned_dynamic as driver
 
 REAL_PRODUCT_IDENTITY = qualification.product_identity
 REAL_SOURCE_BOUND_PRODUCT_IDENTITY = qualification._product_identity
 REAL_SOURCE_DIGEST = qualification.source_seal.product_source_digest
 REAL_VALIDATE_ELF_INSPECTION = qualification.elf_inspection.validate_record
+
+
+class NativeCorpusTests(unittest.TestCase):
+    def test_arm64_corpus_case_fails_without_creating_receipt(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(qualification, "ARCH", native_arch.native_arch("aarch64")):
+            work = Path(directory)
+            with self.assertRaisesRegex(qualification.QualificationError, "APK archive directory is unavailable"):
+                qualification._run_case(work, "installed", "package-corpus", "source", "manifest")
+            self.assertEqual(list(work.iterdir()), [])
 
 
 class OwnedDynamicQualificationTests(unittest.TestCase):
@@ -149,7 +161,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             "oracle": {"version": "musl-1.2.6", "runtime_sha256": oracle_files["runtime"],
                        "compiler_wrapper_sha256": oracle_files["compiler_wrapper"],
                        "pins_sha256": qualification.digest(pins), "files": oracle_files},
-            "checks": ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"], "exit_status": 0,
+            "checks": (["installed-driver-aarch64", "installed-driver-shared", "owned-crt", "owned-crt-aarch64", "owned-loader-source", "pinned-musl-oracle"]
+                       if qualification.ARCH["arch"] == "aarch64" else
+                       ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"]), "exit_status": 0,
         })
         for name in ("runtime.tar", "second-runtime.tar"):
             with tarfile.open(self.work / name, "w") as archive:
@@ -234,6 +248,22 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             (product / "payload").write_bytes(b"changed after product seal")
             with self.assertRaisesRegex(qualification.QualificationError,
                                         "installed product invalid: installed payload hash mismatch"):
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
+
+    def test_aarch64_product_identity_rejects_stale_source(self):
+        product, manifest_path, manifest, validate = self.materialized_product("arm-product-identity")
+        manifest["format"] = "crabc-aarch64-owned-dynamic-sysroot-v1"
+        manifest_path.write_text(json.dumps(manifest))
+        import owned_posix_product_evidence as products
+        with mock.patch.object(driver, "validate_installation", return_value=manifest), \
+             mock.patch.object(products, "_validate_dynamic_product") as pinned:
+            self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
+                             qualification.digest(manifest_path))
+            pinned.assert_called_with(product)
+            with self.assertRaisesRegex(qualification.QualificationError, "installed product source is stale"):
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, "d" * 64)
+            pinned.side_effect = products.ProductEvidenceError("producer pin differs")
+            with self.assertRaisesRegex(qualification.QualificationError, "producer pin differs"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
     def test_run_case_rejects_source_mutation_during_the_leaf(self):
@@ -594,6 +624,14 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             self.put("installed/" + driver.COMBINED_PRODUCT_MANIFEST, {"files": {"payload": "0" * 64}})
             with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
                 REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
+
+    def test_arm_combined_product_rejects_invalid_installed_provenance(self):
+        product = self.work / "arm-combined"
+        self.put("arm-combined/share/crabc/manifest.json", {"format": "crabc-aarch64-owned-sysroot-v1"})
+        with mock.patch.object(driver, "validate_installation", side_effect=driver.shared.DriverError("bad loader provenance")) as validate:
+            with self.assertRaisesRegex(qualification.QualificationError, "bad loader provenance"):
+                qualification._materialization_product(product)
+        validate.assert_called_once_with(product)
 
     def test_receipt_reuse_and_outside_validation(self):
         receipt = qualification.collect(self.work)
