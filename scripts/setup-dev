@@ -1,0 +1,63 @@
+#!/bin/sh
+# Prepare a fresh Linux x86-64 host for crabc development. Idempotent: each
+# step is skipped when it is already satisfied. See docs/development.md.
+set -eu
+
+fail() { printf 'setup-dev: %s\n' "$*" >&2; exit 1; }
+step() { printf '==> %s\n' "$*"; }
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
+
+[ "$(uname -s)" = Linux ] || fail "crabc builds only on Linux (found $(uname -s))"
+case "$(uname -m)" in
+    x86_64) ;;
+    aarch64) fail "the AArch64 core image is not yet reproducible; follow docs/development.md#aarch64" ;;
+    *) fail "unsupported architecture $(uname -m)" ;;
+esac
+
+[ -r /etc/os-release ] || fail "cannot identify the distribution (/etc/os-release missing)"
+. /etc/os-release
+case "${ID:-}:${VERSION_ID:-}" in
+    ubuntu:24.04) ;;
+    *) fail "unverified distribution ${ID:-unknown} ${VERSION_ID:-}; install the packages in docs/development.md by hand" ;;
+esac
+
+sudo=
+if [ "$(id -u)" -ne 0 ]; then
+    command -v sudo >/dev/null || fail "run as root or install sudo"
+    sudo=sudo
+fi
+
+packages="ca-certificates docker.io git python3"
+missing=
+for package in $packages; do
+    dpkg-query -W -f '${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' ||
+        missing="$missing $package"
+done
+if [ -n "$missing" ]; then
+    step "installing$missing"
+    $sudo apt-get update -q
+    DEBIAN_FRONTEND=noninteractive $sudo apt-get install -y -q --no-install-recommends $missing
+fi
+
+step "checking the Docker daemon"
+docker info >/dev/null 2>&1 ||
+    fail "cannot reach the Docker daemon; start it (sudo systemctl enable --now docker) and add yourself to the docker group (sudo usermod -aG docker \$USER, then log in again)"
+docker info -f '{{.DriverStatus}}' | grep -q 'io.containerd.snapshotter' ||
+    fail "Docker must use the containerd image store so image IDs match the pin; set {\"features\": {\"containerd-snapshotter\": true}} in /etc/docker/daemon.json and restart Docker"
+
+image=$(python3 -B compat/x86_64/core_image.py x86_64)
+if docker image inspect "$image" >/dev/null 2>&1; then
+    step "pinned core image $image is present"
+else
+    step "building the pinned core image $image from docker/image/sources.lock.json"
+    ./scripts/dev-x86_64.sh image
+    docker image inspect "$image" >/dev/null 2>&1 ||
+        fail "the build did not produce the pinned image $image; see docs/lanes.md#reproducible-core-image"
+fi
+
+step "fetching locked Cargo dependencies, oracle sources and qualification inputs"
+scripts/lanes/prepare-worktree.sh
+
+step "ready; run the checks in docs/development.md"
