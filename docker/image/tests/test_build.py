@@ -124,6 +124,20 @@ class ImageIdentityTests(unittest.TestCase):
             self.assertIn(manifest["config"]["digest"].split(":", 1)[1], blobs)
             self.assertIn(manifest["layers"][0]["digest"].split(":", 1)[1], blobs)
 
+    def test_layer_is_gzip_with_diff_id_over_uncompressed_tar(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            raw = b"layer-bytes"
+            _, config_id = build.write_oci(out, raw, build.SOURCE_DATE_EPOCH)
+            config = json.loads((out / "oci/blobs/sha256" / config_id.split(":", 1)[1]).read_bytes())
+            self.assertEqual(config["rootfs"]["diff_ids"], [build.digest_bytes(raw)])
+            index = json.loads((out / "oci/index.json").read_bytes())
+            manifest_digest = index["manifests"][0]["digest"].split(":", 1)[1]
+            manifest = json.loads((out / "oci/blobs/sha256" / manifest_digest).read_bytes())
+            layer = (out / "oci/blobs/sha256" /
+                     manifest["layers"][0]["digest"].split(":", 1)[1]).read_bytes()
+            self.assertEqual(layer[:2], b"\x1f\x8b")
+
     def test_archive_tar_entries_are_sorted_with_fixed_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)

@@ -21,6 +21,7 @@ Usage: build.py --lock PATH --work DIR --staging DIR --out DIR \
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import http.server
 import io
@@ -39,7 +40,7 @@ SOURCE_DATE_EPOCH = 1794873600
 OCI_IMAGE_INDEX = "application/vnd.oci.image.index.v1+json"
 OCI_IMAGE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 OCI_IMAGE_CONFIG = "application/vnd.oci.image.config.v1+json"
-OCI_LAYER_TAR = "application/vnd.oci.image.layer.v1.tar"
+OCI_LAYER_TAR_GZIP = "application/vnd.oci.image.layer.v1.tar+gzip"
 BUILD_USER_AGENT = "laputa-buildlib/0.1"
 
 IMAGE_ENV = [
@@ -520,13 +521,16 @@ def image_config(epoch: int, diff_id: str) -> bytes:
 
 
 def write_oci(out: Path, rootfs_tar: bytes, epoch: int) -> tuple[str, str]:
+    # The diff_id names the uncompressed tar; the layer blob is that tar gzipped
+    # with a fixed header (mtime 0, no name) so the layer digest is reproducible.
+    layer = gzip.compress(rootfs_tar, compresslevel=9, mtime=0)
     config = image_config(epoch, digest_bytes(rootfs_tar))
     manifest = canonical_json({
         "schemaVersion": 2,
         "mediaType": OCI_IMAGE_MANIFEST,
         "config": {"mediaType": OCI_IMAGE_CONFIG, "size": len(config), "digest": digest_bytes(config)},
-        "layers": [{"mediaType": OCI_LAYER_TAR, "size": len(rootfs_tar),
-                    "digest": digest_bytes(rootfs_tar)}],
+        "layers": [{"mediaType": OCI_LAYER_TAR_GZIP, "size": len(layer),
+                    "digest": digest_bytes(layer)}],
     })
     index = canonical_json({
         "schemaVersion": 2,
@@ -542,7 +546,7 @@ def write_oci(out: Path, rootfs_tar: bytes, epoch: int) -> tuple[str, str]:
     shutil.rmtree(layout, ignore_errors=True)
     blobs = layout / "blobs/sha256"
     blobs.mkdir(parents=True)
-    for data in (rootfs_tar, config, manifest):
+    for data in (layer, config, manifest):
         (blobs / hashlib.sha256(data).hexdigest()).write_bytes(data)
     (layout / "index.json").write_bytes(index)
     (layout / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}', encoding="utf-8")
@@ -566,12 +570,6 @@ def load_image(archive: Path, socket_path: str) -> None:
     data = archive.read_bytes()
     _socket_request(socket_path, "POST", "/v1.44/images/load", data,
                     {"Content-Type": "application/x-tar", "Content-Length": str(len(data))})
-
-
-def tag_image(image_id: str, tag: str, socket_path: str) -> None:
-    _socket_request(socket_path, "POST",
-                    f"/v1.44/images/{image_id}/tag?repo={tag.rsplit(':', 1)[0]}"
-                    f"&tag={tag.rsplit(':', 1)[-1]}", b"", {})
 
 
 def _socket_request(socket_path: str, method: str, path: str, body: bytes,
@@ -655,9 +653,6 @@ def assemble(args: argparse.Namespace) -> None:
     print(f"CONFIG_ID {config_id}")
     if args.load:
         load_image(out / "image.tar", args.load_socket)
-    if args.tag:
-        tag_image(image_id, args.tag, args.load_socket)
-        print(f"TAGGED {args.tag}", file=sys.stderr)
 
 
 def main() -> None:
@@ -673,7 +668,6 @@ def main() -> None:
     assemble_parser.add_argument("--musl-oracle-gcc", required=True)
     assemble_parser.add_argument("--load", action="store_true")
     assemble_parser.add_argument("--load-socket", default="/var/run/docker.sock")
-    assemble_parser.add_argument("--tag", default=None)
     args = parser.parse_args()
     if args.phase == "fetch":
         if os.geteuid() != 0:

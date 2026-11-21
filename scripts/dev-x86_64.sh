@@ -3335,11 +3335,13 @@ build_image() {
     builder="$(image_builder)" || exit 2
     build_root="$(image_build_root "build-$$")" || exit 2
     run_image_builder "$builder" "$build_root" bridge fetch
+    # Load by content ID only. The build never tags or retags an existing image;
+    # selecting the new image is done by ID (or by re-pinning core_image.py).
     run_image_builder "$builder" "$build_root" none assemble \
         --staging /build/staging --out /build/out \
         --mold-gcc /workspace/docker/x86_64-mold-gcc \
         --musl-oracle-gcc /workspace/docker/x86_64-musl-oracle-gcc \
-        --load --tag "$BUILD_IMAGE"
+        --load
 }
 
 check_image_reproducibility() {
