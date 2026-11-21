@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import copy
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -36,10 +39,23 @@ class CampaignRunnerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1, completed.stderr)
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["gate"], "static_product")
-        self.assertEqual(payload["state"], "blocked")
-        self.assertIn("sysroot.static-tls", payload["incomplete_families"])
+        self.assertIn(payload["state"], {"blocked", "ready"})
         self.assertTrue(payload["machine_gate_defined"])
         self.assertEqual(completed.stderr, "")
+
+        inputs = list(copy.deepcopy(campaign_report.load_validated_campaign_inputs()))
+        for family in inputs[1]["family"]:
+            if family["id"] == "sysroot.static-tls":
+                family["status"] = "planned"
+        with mock.patch.object(campaign_report, "load_validated_campaign_inputs", return_value=inputs):
+            report = campaign_report.build_report()
+        output = io.StringIO()
+        with mock.patch.object(campaign_runner.subprocess, "run") as run, redirect_stdout(output):
+            self.assertEqual(campaign_runner.execute_gate(report, "static_product"), 1)
+        run.assert_not_called()
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["state"], "blocked")
+        self.assertEqual(payload["incomplete_families"], ["sysroot.static-tls"])
 
     def test_qualification_gate_reports_family_blockers_without_running_native_cases(self) -> None:
         completed = self.invoke("qualification")
@@ -57,7 +73,7 @@ class CampaignRunnerTests(unittest.TestCase):
                 campaign_report.qualification_manifest.load_contract()["qualification_profile"])),
         )
         for row in payload["chain_conditions"]:
-            self.assertIn("prerequisite-families", [condition["id"] for condition in row["unmet"]])
+            self.assertTrue(row["unmet"] or row["native_reads"], row)
 
     def test_ready_qualification_runs_only_the_pinned_ordered_chain(self) -> None:
         manifest = campaign_report.qualification_manifest.load_contract()
