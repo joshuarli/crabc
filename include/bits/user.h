@@ -1,5 +1,4 @@
 #if defined(__x86_64__)
-#if defined(__x86_64__)
 /* Linux/x86-64 user-area and core-register ABI from musl 1.2.6
  * `arch/x86_64/bits/user.h`.  These records are consumed by <sys/user.h> and
  * <sys/procfs.h>; they are not interchangeable with the AArch64 signal and
@@ -43,27 +42,6 @@ struct user {
 #define UPAGES			1
 #define HOST_TEXT_START_ADDR	(u.start_code)
 #define HOST_STACK_END_ADDR	(u.start_stack + u.u_ssize * NBPG)
-#elif defined(__aarch64__)
-#ifndef _CRABC_BITS_USER_H
-#define _CRABC_BITS_USER_H
-struct user_regs_struct {
-	unsigned long long regs[31];
-	unsigned long long sp;
-	unsigned long long pc;
-	unsigned long long pstate;
-};
-
-struct user_fpsimd_struct {
-	__uint128_t vregs[32];
-	unsigned int fpsr;
-	unsigned int fpcr;
-};
-
-#define ELF_NREG 34
-typedef unsigned long elf_greg_t, elf_gregset_t[ELF_NREG];
-typedef struct user_fpsimd_struct elf_fpregset_t;
-#endif
-#endif
 #elif defined(__aarch64__)
 /* musl 1.2.6 aarch64/bits/user.h, MIT licensed. */
 struct user_regs_struct {
