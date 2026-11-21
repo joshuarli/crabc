@@ -136,27 +136,38 @@ def fetch_verified(item: dict, cache: Path) -> Path:
         actual, actual_size = digest_file(destination)
         if actual == expected and (pinned_size is None or actual_size == pinned_size):
             return destination
+    import time
+    import urllib.error
     import urllib.request
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     failures = []
     for url in entry_urls(item):
-        staging = destination.with_name(destination.name + ".part")
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": BUILD_USER_AGENT})
-            with urllib.request.urlopen(request, timeout=300) as response, staging.open("wb") as out:
-                shutil.copyfileobj(response, out, 1 << 20)
-            actual, actual_size = digest_file(staging)
-            if pinned_size is not None and actual_size != pinned_size:
-                raise ValueError(f"{url} served {actual_size} bytes, pinned {pinned_size}")
-            if actual != expected:
-                raise ValueError(f"{url} served {actual}, pinned {expected}")
-            staging.replace(destination)
-            return destination
-        except (OSError, ValueError) as error:
-            failures.append(str(error))
-        finally:
-            staging.unlink(missing_ok=True)
+        # A mirror may answer with a transient origin error; retry a few times
+        # before treating the URL as down, and never accept unpinned bytes.
+        for attempt in range(3):
+            staging = destination.with_name(destination.name + ".part")
+            try:
+                request = urllib.request.Request(url, headers={"User-Agent": BUILD_USER_AGENT})
+                with urllib.request.urlopen(request, timeout=300) as response, staging.open("wb") as out:
+                    shutil.copyfileobj(response, out, 1 << 20)
+                actual, actual_size = digest_file(staging)
+                if pinned_size is not None and actual_size != pinned_size:
+                    raise ValueError(f"{url} served {actual_size} bytes, pinned {pinned_size}")
+                if actual != expected:
+                    raise ValueError(f"{url} served {actual}, pinned {expected}")
+                staging.replace(destination)
+                return destination
+            except urllib.error.HTTPError as error:
+                if error.code < 500 or attempt == 2:
+                    failures.append(str(error))
+                    break
+                time.sleep(2 * (attempt + 1))
+            except (OSError, ValueError) as error:
+                failures.append(str(error))
+                break
+            finally:
+                staging.unlink(missing_ok=True)
     raise SystemExit(f"{item['name']}: no URL served the pinned bytes: " + "; ".join(failures))
 
 
@@ -165,17 +176,18 @@ def fetch(args: argparse.Namespace) -> None:
     inputs = read_lock(Path(args.lock))
     cache = Path(args.cache)
     cache.mkdir(parents=True, exist_ok=True)
-    # The wheel supplies buildlib itself, so it is verified here directly.
+    # The wheel supplies buildlib itself; validate the lock through its reader
+    # before trusting the pins, then fetch each input through the retrying
+    # downloader so a flaky mirror yields a clear failure rather than a bad byte.
     wheel = fetch_verified(lock_entry(inputs, "laputa-buildlib"), cache)
     sys.path.insert(0, str(wheel))
     from buildlib import locks
 
-    source = locks.load_sources(Path(args.lock))
-    for item in source.inputs:
-        if item.role == "builder":
+    locks.load_sources(Path(args.lock))
+    for item in inputs:
+        if item.get("role") == "builder":
             continue
-        filename = item.extra.get("filename") or item.url.rsplit("/", 1)[-1]
-        locks.fetch_input(item, cache / item.name / filename)
+        fetch_verified(item, cache)
 
 
 def verify_cache(inputs: list[dict], cache: Path) -> dict[str, Path]:
