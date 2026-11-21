@@ -15,6 +15,10 @@ mkdir -p "$work"
 printf 'backend: %s\n' "$backend"
 python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" "${build_args[@]}" --output "$work/static-product" >"$work/static-build.json"
 python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" "${build_args[@]}" --output "$work/dynamic-product" >"$work/dynamic-build.json"
+if readelf --dyn-syms -W "$work/dynamic-product/usr/lib/libc.so" | awk '$8 == "__crabc_allocator_environ" { found=1 } END { exit !found }'; then
+    echo 'allocator environment accessor is exported' >&2
+    result=1
+fi
 cc -O2 "$ROOT/compat/x86_64/mimalloc_secure_environment_start.c" -o "$work/start"
 "$oracle" -static -fno-pie -no-pie -fno-builtin "$ROOT/compat/x86_64/mimalloc_secure_environment_probe.c" -o "$work/oracle"
 "$work/dynamic-product/bin/crabc-cc-dynamic" --dynamic-pie -fno-builtin -c "$ROOT/compat/x86_64/mimalloc_secure_environment_probe.c" -o "$work/probe.o"
@@ -28,12 +32,15 @@ for mode in oracle static dynamic; do
         cp "$work/dynamic-product/lib/ld-crabc-${arch}.so.1" "$root/lib/"
         cp "$work/dynamic-product/usr/lib/libc.so" "$root/usr/lib/"
     fi
-    for security in secure normal; do
+    for security in secure normal mixed; do
+        if [ "$security" = mixed ] && [ "$backend" = native-shadow ]; then continue; fi
         status=0
         if [ "$security" = secure ]; then
             env -i MIMALLOC_VERBOSE=1 MIMALLOC_SHOW_STATS=1 MIMALLOC_SHOW_ERRORS=1 "$work/start" "$root" secure >"$work/$mode-$security.stdout" 2>"$work/$mode-$security.stderr" || status=$?
-        else
+        elif [ "$security" = normal ]; then
             env -i MIMALLOC_VERBOSE=1 MIMALLOC_SHOW_STATS=1 MIMALLOC_SHOW_ERRORS=1 /usr/sbin/chroot "$root" /work/probe >"$work/$mode-$security.stdout" 2>"$work/$mode-$security.stderr" || status=$?
+        else
+            env -i MiMaLlOc_VeRbOsE=1 MiMaLlOc_ShOw_StAtS=1 MiMaLlOc_ShOw_ErRoRs=1 /usr/sbin/chroot "$root" /work/probe >"$work/$mode-$security.stdout" 2>"$work/$mode-$security.stderr" || status=$?
         fi
         bytes=$(wc -c <"$work/$mode-$security.stderr")
         printf '%s %s: exit=%s stderr_bytes=%s\n' "$mode" "$security" "$status" "$bytes"

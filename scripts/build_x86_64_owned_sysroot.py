@@ -939,7 +939,7 @@ def c_allocator_compile_command(c_flags: Sequence[str], source_root: Path, outpu
         f"-ffile-prefix-map={source_root}=/mimalloc",
         "-I", str(source_root / "include"), "-I", str(source_root / "src"),
         "-Wno-error=date-time", "-ftls-model=initial-exec",
-        "-DMI_DEBUG=0", "-DMI_BUILD_RELEASE", "-DNDEBUG",
+        "-DMI_DEBUG=0", "-DMI_BUILD_RELEASE", "-DNDEBUG", "-Denviron=(*__crabc_allocator_environ())",
         "-MD", "-MF", str(dependencies),
         "-o", str(output), "-c", str(source_root / "src" / "static.c"),
     ]
