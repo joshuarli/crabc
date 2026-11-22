@@ -18,10 +18,10 @@
       "sha256": "48e3d1726765d6a50f288548901838fdff534d76862a91080ac23bf140172ca4",
       "size": 636
     },
-    "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc": {
+    "/opt/rustup/toolchains/nightly-2026-11-09-x86_64-unknown-linux-musl/bin/rustc": {
       "mode": 493,
-      "path": "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc",
-      "sha256": "228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b",
+      "path": "/opt/rustup/toolchains/nightly-2026-11-09-x86_64-unknown-linux-musl/bin/rustc",
+      "sha256": "5fcbc97a7f522e5fc88dfe5d9071139a13b1ac027b0d87cfe48dafd514660d31",
       "size": 9528
     },
     "/usr/bin/as": {

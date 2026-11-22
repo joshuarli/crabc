@@ -101,7 +101,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         files = manifest["files"]
         self.assertEqual(
             files[str(self.receipt.TOOLCHAIN_ROOT / "bin/rustc")]["sha256"],
-            ("228e24592d38da145ce4064b14e4bcfdd13cd3e2623bdbdcec45f37d16ef7b3b" if self.receipt.ARCH == "x86_64" else "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b"),
+            ("5fcbc97a7f522e5fc88dfe5d9071139a13b1ac027b0d87cfe48dafd514660d31" if self.receipt.ARCH == "x86_64" else "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b"),
         )
         self.assertEqual(
             files[str(self.receipt.LINKER_PATH)]["sha256"],
