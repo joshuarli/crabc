@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import importlib
 import json
@@ -405,6 +406,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
 
     def test_source_build_foundation_replays_physical_lane_admission(self) -> None:
+        import qualification_gates as gates
+
         source_build_root = ROOT / "compat" / "lua"
         if str(source_build_root) not in sys.path:
             sys.path.insert(0, str(source_build_root))
@@ -419,13 +422,47 @@ class X86ParityLedgerTests(unittest.TestCase):
                 }
             ]
         }
-        with mock.patch.object(
-            source_build_admission,
-            "validate",
-            side_effect=source_build_admission.LUA.RunnerError("missing physical lane receipt"),
-        ):
-            with self.assertRaisesRegex(ledger.LedgerError, "missing physical lane receipt"):
+        scratch = ROOT / ".work" / "lua-publication-ledger-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            receipt = root / ".work/lua/admission.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("{}", encoding="utf-8")
+            pointer = root / ".work/x86_64/qualification-evidence/consumer.source-build/lua-source-build.json"
+            pointer.parent.mkdir(parents=True)
+            publication = {"schema": gates.PUBLICATION_SCHEMA, "gate": "consumer.source-build",
+                           "publication": "lua-source-build", "receipt": ".work/lua/admission.json",
+                           "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
+            with mock.patch.object(gates, "ROOT", root), mock.patch.object(
+                gates, "PUBLICATION_DIRECTORY", pointer.parents[1]
+            ), mock.patch.object(source_build_admission, "validate_receipt", return_value={}) as validate, mock.patch.object(
+                source_build_admission, "validate", side_effect=AssertionError("legacy latest report selected")
+            ):
+                with self.assertRaisesRegex(ledger.LedgerError, "Lua admission failed: no published lua-source-build"):
+                    ledger.require_lua_source_build_admission(family)
+                validate.assert_not_called()
+                pointer.write_text(json.dumps(publication), encoding="utf-8")
                 ledger.require_lua_source_build_admission(family)
+                validate.assert_called_once_with(root, receipt)
+                self.assertFalse((root / "compat/reports/lua").exists())
+                receipt.write_text("changed", encoding="utf-8")
+                with self.assertRaisesRegex(ledger.LedgerError, "Lua admission failed:.*changed after publication"):
+                    ledger.require_lua_source_build_admission(family)
+                receipt.write_text("{}", encoding="utf-8")
+                validate.side_effect = source_build_admission.LUA.RunnerError("retained Lua report changed")
+                with self.assertRaisesRegex(ledger.LedgerError, "Lua admission failed: retained Lua report changed"):
+                    ledger.require_lua_source_build_admission(family)
+
+    def test_source_build_structural_validation_needs_no_publication(self) -> None:
+        family = self.family(self.data(), "consumer.source-build")
+        family["native_evidence"][0]["state"] = "verified"
+        token = ledger._require_receipts.set(False)
+        try:
+            with mock.patch("qualification_gates.read_publication", side_effect=AssertionError("unexpected read")):
+                ledger.require_lua_source_build_admission(family)
+        finally:
+            ledger._require_receipts.reset(token)
 
     def test_validate_ledger_reuses_successful_artifact_owner_checks_within_one_call(
         self,

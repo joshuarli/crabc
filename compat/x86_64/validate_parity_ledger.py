@@ -7964,15 +7964,12 @@ def require_lua_source_build_admission(family: Mapping[str, Any]) -> None:
         and evidence[0].get("command") == "./scripts/dev-x86_64.sh lua-source-build-admission",
         "consumer.source-build requires its canonical Lua admission verifier",
     )
-    source_build_root = ROOT / "compat" / "lua"
-    if str(source_build_root) not in sys.path:
-        sys.path.insert(0, str(source_build_root))
-    import source_build_admission
-
     if not _receipts_required():
         return
+    import qualification_gates as gates
+
     try:
-        source_build_admission.validate()
+        gates.read_publication("consumer.source-build", "lua-source-build")
     except Exception as error:
         raise LedgerError(f"consumer.source-build Lua admission failed: {error}") from error
 
