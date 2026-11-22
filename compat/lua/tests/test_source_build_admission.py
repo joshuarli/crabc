@@ -7,6 +7,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -214,6 +215,98 @@ class SourceBuildAdmissionTests(unittest.TestCase):
                 (work / "program").write_bytes(b"replaced")
                 with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "artifact bytes differ"):
                     ADMISSION.validate_receipt(ROOT, receipt)
+
+    def test_supplied_native_paths_replay_on_host_without_rewriting_reports(self) -> None:
+        import run_x86_static_dispatch as static_runner
+        import run_x86_dynamic_supplied as dynamic_runner
+
+        def native(value):
+            if isinstance(value, dict):
+                return {key: native(child) for key, child in value.items()}
+            if isinstance(value, list):
+                return [native(child) for child in value]
+            if isinstance(value, str) and value.startswith(str(ROOT)):
+                return "/workspace" + value[len(str(ROOT)):]
+            return value
+
+        with self.selected_reports() as (work, static, dynamic):
+            context = {"checkout": str(ROOT), "preparation": {"path": str(static)},
+                       "roots": {label: str(work / "static/sysroot") for label in static_runner.SUPPLIED_ROOTS},
+                       "archive_seed": {"path": str(static)}}
+            static.write_text(json.dumps(native({"supplied": context})))
+            report = json.loads(dynamic.read_text())
+            seal = {"revision": "1" * 40, "inputs": {"program": ADMISSION.LUA.artifact_record(work / "program")}}
+            cohort = {"checkout": str(ROOT), "receipt": {"path": str(static)}, "source_sha256": "2" * 64,
+                      "roots": {label: {"path": str(work / "dynamic" / directory)}
+                                for label, directory in (("installed", "sysroot"), ("extracted", "extracted"))}}
+            report.update({"runner": "crabc-lua-native-x86-dynamic-supplied-cohort",
+                           "consumer_source_before": seal, "consumer_source_after": seal})
+            report["dispatcher"].update({"state_root": str(dynamic.parent), "authoritative_report": str(dynamic),
+                                         "cohort": cohort})
+            report["reproducibility"]["contract"] = "identical Lua source artifacts through supplied installed and extracted dynamic roots"
+            for label in ("installed", "extracted"):
+                report[label]["environment"]["sysroot"] = cohort["roots"][label]["path"]
+            report = native(report)
+            report["command_evidence"] = ADMISSION.LUA.command_record(
+                [sys.executable, "-c", "print('/workspace/retained-output')"])
+            dynamic.write_text(json.dumps(report))
+            retained = {path: path.read_bytes() for path in (static, dynamic)}
+            with (mock.patch.object(static_runner, "read_supplied") as static_reader,
+                  mock.patch.object(dynamic_runner, "consumer_source_seal", return_value=seal),
+                  mock.patch.object(dynamic_runner, "validate_cohort", return_value=(cohort, {})) as dynamic_reader):
+                result = ADMISSION.admit_supplied(static, dynamic)
+                self.assertEqual(static_reader.call_args.args[0].cohort_checkout, ROOT)
+                self.assertEqual(static_reader.call_args.args[0].installed_sysroot, work / "static/sysroot")
+                self.assertEqual(dynamic_reader.call_args.kwargs["checkout"], ROOT)
+                self.assertEqual(dynamic_reader.call_args.kwargs["installed"], work / "dynamic/sysroot")
+                self.assertEqual(result["dynamic"]["report_sha256"], ADMISSION.LUA.sha256_file(dynamic))
+                self.assertEqual({path: path.read_bytes() for path in retained}, retained)
+                (work / "program").write_bytes(b"changed retained artifact")
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "artifact bytes differ"):
+                    ADMISSION.admit_supplied(static, dynamic)
+
+    def test_supplied_replay_uses_and_cleans_private_writable_tmp(self) -> None:
+        with self.selected_reports() as (work, static, dynamic):
+            checkout = work / "readonly"
+            selected_work = checkout / ".work/x86_64"
+            scratch = selected_work / "tmp"
+            scratch.mkdir(parents=True)
+            protected = (selected_work, checkout / ".work", checkout)
+            for directory in protected:
+                directory.chmod(0o555)
+            allocated = []
+
+            def replay(static_path, dynamic_path, state):
+                self.assertEqual((static_path, dynamic_path), (static, dynamic))
+                self.assertEqual(state.parent, scratch)
+                child = ADMISSION.LUA.allocate_native_run_root(state / "static")
+                (child / "report.json").write_text("{}")
+                allocated.append(state)
+                return {"passed": True}
+
+            try:
+                with (mock.patch.object(ADMISSION, "WORK", selected_work),
+                      mock.patch.object(ADMISSION.LUA, "ROOT", checkout),
+                      mock.patch.object(ADMISSION, "_admit_supplied", side_effect=replay)):
+                    if os.geteuid() != 0:
+                        with self.assertRaises(PermissionError):
+                            (selected_work / "lua-supplied-admission").mkdir()
+                    self.assertEqual(ADMISSION.admit_supplied(static, dynamic), {"passed": True})
+                    self.assertFalse(allocated[-1].exists())
+                    with mock.patch.object(ADMISSION, "_admit_supplied", side_effect=ADMISSION.LUA.RunnerError("rejected")):
+                        with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "rejected"):
+                            ADMISSION.admit_supplied(static, dynamic)
+                    self.assertEqual(list(scratch.iterdir()), [])
+            finally:
+                for directory in protected:
+                    directory.chmod(0o755)
+
+    def test_retained_paths_reject_traversal_and_do_not_remap_lookalikes(self) -> None:
+        self.assertEqual(ADMISSION.retained_path("/workspace/.work/receipt.json"), ROOT / ".work/receipt.json")
+        self.assertEqual(ADMISSION.retained_path("/workspace-other/file"), Path("/workspace-other/file"))
+        for value in ("/workspace/../outside", "/workspace/.work/../../outside"):
+            with self.subTest(value=value), self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "traversal"):
+                ADMISSION.retained_path(value)
 
     def test_nondefault_dispatcher_report_selection_replays_without_global_changes(self) -> None:
         with self.selected_reports() as (work, static, dynamic):

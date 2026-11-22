@@ -334,7 +334,7 @@ class SuppliedStaticDispatcherTests(unittest.TestCase):
         payload = json.loads(self.receipt.read_text())
         roots = {label: self.products / label for label in DISPATCH.SUPPLIED_ROOTS}
         report = {"passed": True, "result": "pass", "consumer_source": source,
-                  "supplied": {"source": payload["source"],
+                  "supplied": {"checkout": str(self.cohort), "source": payload["source"],
                                "preparation": DISPATCH.LUA.artifact_record(self.receipt)},
                   "products": {label: {"passed": True, "environment": {
                       "sysroot_manifest": {}, "sysroot": str(root)},
@@ -375,6 +375,44 @@ class SuppliedStaticDispatcherTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         producer.assert_not_called()
         publish.assert_not_called()
+
+    def test_retained_native_paths_are_authenticated_through_host_paths(self) -> None:
+        import source_build_admission as admission
+
+        seed = self.arguments.archive_seed
+        artifact = {"artifact": DISPATCH.LUA.artifact_record(seed)}
+        comparison = DISPATCH.LUA.result_comparison(
+            DISPATCH.LUA.ProcessResult(0, b"matching output", b""),
+            DISPATCH.LUA.ProcessResult(0, b"matching output", b""))
+        row = {role: {"artifacts": {name: artifact for name in ("lua", "luac")}}
+               for role in ("candidate", "reference")}
+        row["workloads"] = {"source": comparison, "bytecode": comparison}
+        source = {"revision": "consumer"}
+        payload = json.loads(self.receipt.read_text())
+        roots = {label: self.products / label for label in DISPATCH.SUPPLIED_ROOTS}
+        report = {"passed": True, "result": "pass", "consumer_source": source,
+                  "supplied": {"checkout": str(self.cohort), "source": payload["source"],
+                               "preparation": DISPATCH.LUA.artifact_record(self.receipt)},
+                  "products": {label: {"passed": True, "environment": {
+                      "sysroot_manifest": {}, "sysroot": str(root)},
+                      "modes": {mode: row for mode in ("static-et-exec", "static-pie")}}
+                      for label, root in roots.items()}}
+        selected = self.state / "native-report.json"
+        selected.write_text(json.dumps(report).replace(str(ROOT), "/workspace"))
+        retained = selected.read_bytes()
+        self.arguments.read = selected
+        with (mock.patch.object(DISPATCH.LUA, "current_source_identity", return_value=source),
+              mock.patch.object(DISPATCH, "supplied_products", return_value=(payload, roots, {"status": 0})),
+              mock.patch.object(DISPATCH.LUA, "owned_static_sysroot", return_value=(None, None, None, {})),
+              mock.patch.object(DISPATCH.LUA, "static_elf_record", return_value=artifact) as elf,
+              mock.patch.object(admission, "validate_pinned_input")):
+            DISPATCH.read_supplied(self.arguments)
+            self.assertEqual(elf.call_count, 24)
+            self.assertTrue(all(call.args[0] == seed for call in elf.call_args_list))
+            self.assertEqual(selected.read_bytes(), retained)
+            seed.write_bytes(b"replaced tool")
+            with self.assertRaisesRegex(DISPATCH.LUA.RunnerError, "artifact bytes differ"):
+                DISPATCH.read_supplied(self.arguments)
 
 
 if __name__ == "__main__":
