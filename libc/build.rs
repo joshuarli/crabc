@@ -53,13 +53,13 @@ fn x86_runtime_capabilities() {
 /// definitions and exports nothing new. Every other build assembles the
 /// checked translation unchanged.
 fn split_musl_objects() {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::{HashMap, HashSet};
     use std::fmt::Write as _;
     use std::path::PathBuf;
 
     const MARKER: &str = "/* musl-1.2.6/";
     let is_symbol_byte = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$');
-    let tokens = |text: &str| -> BTreeSet<String> {
+    let tokens = |text: &str| -> HashSet<String> {
         text.split(|character: char| !(character.is_ascii() && is_symbol_byte(character as u8)))
             .filter(|token| !token.is_empty() && !token.starts_with(".L"))
             .map(str::to_owned)
@@ -111,8 +111,8 @@ fn split_musl_objects() {
             chunks.push((tag, body));
         }
         // Symbols each object defines, and those it declares global or weak.
-        let mut defined: BTreeMap<String, usize> = BTreeMap::new();
-        let mut exported: BTreeSet<String> = BTreeSet::new();
+        let mut defined: HashMap<String, usize> = HashMap::new();
+        let mut exported: HashSet<String> = HashSet::new();
         for (index, (_, body)) in chunks.iter().enumerate() {
             for line in body.lines() {
                 if let Some(name) = directive_symbol(line, &[".globl", ".global", ".weak"]) {
@@ -177,7 +177,7 @@ fn split_musl_objects() {
         let directory = output_root.join(&stem);
         std::fs::create_dir_all(&directory).expect("musl object directory");
         for (index, (tag, body)) in chunks.iter().enumerate() {
-            let mut shared: BTreeSet<&String> = BTreeSet::new();
+            let mut shared: HashSet<&String> = HashSet::new();
             for (other, (_, other_body)) in chunks.iter().enumerate() {
                 if other != index {
                     let used = tokens(other_body);
@@ -196,7 +196,9 @@ fn split_musl_objects() {
                     }
                 }
             }
-            for name in &shared {
+            let mut shared: Vec<_> = shared.into_iter().collect();
+            shared.sort_unstable();
+            for name in shared {
                 writeln!(object, "\t.globl\t{name}\n\t.hidden\t{name}").expect("string write");
             }
             object.push_str(trailer);

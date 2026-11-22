@@ -318,7 +318,7 @@ impl Database {
 }
 
 fn without_line_ending(line: &[u8]) -> &[u8] {
-    line.strip_suffix(b"\r").unwrap_or(line)
+    line.trim_suffix(b"\r")
 }
 
 fn ignorable(line: &[u8]) -> bool {

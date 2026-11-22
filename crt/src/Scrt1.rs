@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(naked_functions)]
 
 //! Position-independent dynamic-PIE application entry object.
 

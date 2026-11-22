@@ -21,6 +21,9 @@ import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from scripts.rust_toolchain import pinned_toolchain
+
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
@@ -96,7 +99,7 @@ class MoldStaticFunctionTests(unittest.TestCase):
                 require_static_functions(link_map, executable, {str(obj): obj}, [contract])
 
 
-@unittest.skipUnless(Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc').is_file(),
+@unittest.skipUnless(Path(f'/opt/rustup/toolchains/{pinned_toolchain()}-x86_64-unknown-linux-musl/bin/rustc').is_file(),
                      'requires the pinned native compiler and LLVM linker')
 class StaticUndefinedBindingTests(unittest.TestCase):
     """Real TLS relaxation keeps metadata without a final symbol operand."""

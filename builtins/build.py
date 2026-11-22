@@ -730,10 +730,15 @@ def extract_upstream_members(
         raise BuildError("source-built compiler_builtins archive contained no object members")
     llvm_objcopy = str(pathlib.Path(llvm_ar).with_name("llvm-objcopy"))
     localize = [f"--localize-symbol={symbol}" for symbol in sorted(LOCALIZED_LIBM_SYMBOLS)]
+    # Keep rust-src's weak hidden definitions from hiding crabc's public C helpers during ELF merging.
+    rename_complex = [
+        f"--redefine-sym=__{name}=__rust_{name}"
+        for name in ("mulsc3", "muldc3", "divsc3", "divdc3")
+    ]
     for member in members:
         if not member.name.startswith("compiler_builtins-"):
             raise BuildError(f"compiler_builtins rlib carried a non-compiler-builtins object member: {member.name}")
-        run((require_tool(llvm_objcopy), *localize, str(member)))
+        run((require_tool(llvm_objcopy), *localize, *rename_complex, str(member)))
     return members
 
 

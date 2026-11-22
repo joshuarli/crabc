@@ -122,9 +122,9 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "--locked",
             "-p",
             "crabc-ldso",
-            "--release",
+            "--profile", "dist",
             "--config",
-            'profile.release.opt-level="s"',
+            'profile.dist.opt-level="s"',
             "--target",
             producer.common.TARGET,
             "--target-dir",
@@ -132,7 +132,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "--no-default-features",
             "--features",
             producer.LOADER_FEATURE,
-            "--", "--emit=obj",
+            "--", f"--emit=obj={stage / 'ldso.o'}", f"--emit=dep-info={stage / 'ldso.d'}",
         ]
         return producer.loader_provenance(
             stage,
@@ -310,7 +310,7 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         tampered = (
             ("missing size profile", argv[:argv.index("--config")] + argv[argv.index("--target"):], rustflags),
             ("changed size profile", [
-                'profile.release.opt-level="z"' if arg == 'profile.release.opt-level="s"' else arg
+                'profile.dist.opt-level="z"' if arg == 'profile.dist.opt-level="s"' else arg
                 for arg in argv
             ], rustflags),
             ("extra Cargo option", argv + ["--offline"], rustflags),

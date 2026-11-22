@@ -138,7 +138,7 @@ def _source_file_identity(path: Path, description: str) -> dict[str, object]:
 def _normalized_loader_argument(argument: str, stage: Path) -> str:
     """Replace build-local prefixes without changing an arbitrary argument."""
 
-    for option in ("--dynamic-list=", "--version-script="):
+    for option in ("--dynamic-list=", "--version-script=", "--emit=obj=", "--emit=dep-info="):
         if argument.startswith(option):
             return option + _normalized_loader_argument(argument.removeprefix(option), stage)
     for physical, replacement in ((stage.resolve(), "$BUILD"), (ROOT.resolve(), "$SOURCE")):
@@ -724,16 +724,15 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     # Every process touches nearly all interpreter text, so it is optimized
     # for size: opt-level s cuts it from 135 to 81 KiB (54 KiB of PSS per
     # process) for about 2% more fork+exec CPU and 8% slower dlsym.
-    loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release",
-                      "--config", 'profile.release.opt-level="s"', "--target", common.TARGET,
+    loader_object = stage / "ldso.o"
+    loader_dependencies = loader_object.with_suffix(".d")
+    loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--profile", "dist",
+                      "--config", 'profile.dist.opt-level="s"', "--target", common.TARGET,
                       "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
-                      LOADER_FEATURE, "--", "--emit=obj"]
+                      LOADER_FEATURE, "--", f"--emit=obj={loader_object}", f"--emit=dep-info={loader_dependencies}"]
     run(loader_command, environment=loader_env)
-    object_candidates = sorted((stage / "loader" / common.TARGET / "release" / "build" / "crabc-ldso").glob("*/out/ldso.o"),
-                               key=lambda path: path.stat().st_mtime)
-    if not object_candidates:
-        raise common.BuildError("merged loader object was not produced")
-    loader_object = object_candidates[-1]
+    if not loader_object.is_file():
+        raise common.BuildError("Cargo did not emit the merged loader object")
     localized_loader = stage / "ldso-localized.o"
     localized_loader.write_bytes(loader_object.read_bytes())
     run(["/usr/bin/objcopy", "--localize-symbol=memcpy", "--localize-symbol=memset",
@@ -798,7 +797,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         metadata / "loader.provenance.json",
         loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter,
                           hardening_profile, merged=True,
-                          dependencies_override=loader_object.with_suffix(".d"),
+                          dependencies_override=loader_dependencies,
                           merged_link_command=libc_shared_link_command),
     )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
@@ -1062,13 +1061,18 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         objects = stage / "objects"
         objects.mkdir()
         common.run([ar, "x", str(raw), *selected], cwd=objects, environment=environment)
-        loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--release", "--target", target, "--target-dir", str(stage / "loader"), "--no-default-features", "--features", LOADER_FEATURE, *flags, "--", "--emit=obj", *(["--cfg", "crabc_hardened"] if hardening_profile is common.NativeRuntimeProfile.HARDENED else [])]
+        loader_object = stage / "ldso.o"
+        loader_dependencies = loader_object.with_suffix(".d")
+        loader_command = [*cargo, "rustc", "--locked", "-p", "crabc-ldso", "--profile", "dist",
+                          "--target", target, "--target-dir", str(stage / "loader"),
+                          "--no-default-features", "--features", LOADER_FEATURE, *flags, "--",
+                          f"--emit=obj={loader_object}", f"--emit=dep-info={loader_dependencies}",
+                          *(["--cfg", "crabc_hardened"] if hardening_profile is common.NativeRuntimeProfile.HARDENED else [])]
         common.run(loader_command, environment=environment)
-        candidates = list((stage / "loader" / target / "release/build/crabc-ldso").glob("*/out/ldso.o"))
-        if len(candidates) != 1:
-            raise common.BuildError(f"expected one loader object, found {candidates}")
+        if not loader_object.is_file():
+            raise common.BuildError("Cargo did not emit the merged loader object")
         loader = stage / "loader-local.o"
-        shutil.copyfile(candidates[0], loader)
+        shutil.copyfile(loader_object, loader)
         common.run(["/usr/bin/objcopy", *["--localize-symbol=" + name for name in ("memcpy", "memset", "memmove", "memcmp", "bcmp", "__tls_get_addr", "_dl_debug_state")], str(loader)], environment=environment)
         installed = stage / "installed"
         library = installed / "usr/lib"
@@ -1145,7 +1149,7 @@ def build_aarch64(output: Path, *, allocator_backend: str, lifecycle_test_audit:
         common.write_json(metadata / "producer-tools.json", common.resolve_pinned_producer_tools("aarch64"))
         common.write_json(metadata / "loader.provenance.json",
                           loader_provenance(stage, loader_command, loader_flags, loader, interpreter,
-                                            hardening_profile, merged=True, dependencies_override=candidates[0].with_suffix(".d"),
+                                            hardening_profile, merged=True, dependencies_override=loader_dependencies,
                                             merged_link_command=libc_link_command, architecture="aarch64"))
         if source_seal.product_source_digest(ROOT) != source_before_build:
             raise common.BuildError("aarch64 dynamic product source changed during build")

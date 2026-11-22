@@ -36,6 +36,9 @@
 //! bulk-memory surface only after its freestanding artifact fixture proves
 //! it. It is not a general C runtime.
 
+#[cfg(target_arch = "aarch64")]
+use core::ffi::c_void;
+
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
 compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");
 
@@ -150,7 +153,8 @@ static_archive_member! { memcmp_source {
     /// Both pointers must be readable for length bytes.
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
-    pub unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
+    pub unsafe extern "C" fn memcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 {
+        let (left, right) = (left.cast::<u8>(), right.cast::<u8>());
         for index in 0..length {
             // SAFETY: the C memcmp contract gives readable ranges of length bytes.
             let (a, b) = unsafe { (left.add(index).read_volatile(), right.add(index).read_volatile()) };
@@ -382,7 +386,8 @@ static_archive_member! { memmove_source {
     /// The source and destination must be readable and writable for length bytes, respectively.
     #[cfg(target_arch = "aarch64")]
     #[no_mangle]
-    pub unsafe extern "C" fn memmove(destination: *mut u8, source: *const u8, length: usize) -> *mut u8 {
+    pub unsafe extern "C" fn memmove(destination: *mut c_void, source: *const c_void, length: usize) -> *mut c_void {
+        let (destination, source) = (destination.cast::<u8>(), source.cast::<u8>());
         if (destination as usize) <= (source as usize) {
             for index in 0..length {
                 // SAFETY: memmove permits overlap and guarantees both ranges have length bytes.
@@ -394,7 +399,7 @@ static_archive_member! { memmove_source {
                 unsafe { destination.add(index).write_volatile(source.add(index).read_volatile()); }
             }
         }
-        destination
+        destination.cast()
     }
     #[cfg(target_arch = "x86_64")]
     core::arch::global_asm!(

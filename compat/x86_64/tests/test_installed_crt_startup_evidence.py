@@ -12,6 +12,9 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from scripts.rust_toolchain import pinned_toolchain
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
@@ -64,7 +67,7 @@ SOURCE_CRT_DEFINITIONS={
     },
 }
 
-@unittest.skipUnless(Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc').is_file(),
+@unittest.skipUnless(Path(f'/opt/rustup/toolchains/{pinned_toolchain()}-x86_64-unknown-linux-musl/bin/rustc').is_file(),
                      'physical CRT regression requires the pinned native environment')
 class OwnedCrtFramePhysicalTests(unittest.TestCase):
     @classmethod

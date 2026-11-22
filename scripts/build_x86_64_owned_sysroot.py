@@ -96,9 +96,8 @@ NATIVE_COMPILER_RT_MEMBER = re.compile(
 # Ordinary archive extraction needs libc providers in separate members: an
 # application that defines one libc function must not collide with the rest
 # of libc, as it does not with musl's one-object-per-source-file libc.a. The
-# workspace release profile's fat LTO with one codegen unit fuses all of libc
-# into one object. ThinLTO keeps cross-crate optimization while emitting one
-# member per codegen unit; a unit ceiling above libc's module count gives each
+# dist profile fuses libc into one object. ThinLTO keeps cross-crate
+# optimization while emitting one member per codegen unit; a unit ceiling above libc's module count gives each
 # Rust module its own member, and rustc never splits a module to reach it.
 # ThinLTO also imports core and alloc code into `c.*` members. Their definitions
 # shared with the pinned Rust rlibs must be weak so ordinary C links can use

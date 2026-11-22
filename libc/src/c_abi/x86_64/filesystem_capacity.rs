@@ -121,8 +121,6 @@ unsafe fn fstatfs_raw(descriptor: c_int, output: *mut StatFs) -> i64 {
 ///
 /// `path` must point to a readable NUL-terminated pathname and `output` must
 /// point to writable storage for one complete Linux/x86-64 `struct statfs`.
-#[linkage = "internal"]
-#[export_name = "__statfs"]
 #[inline(never)]
 pub unsafe extern "C" fn statfs_body(path: *const c_char, output: *mut StatFs) -> c_int {
     // SAFETY: musl clears every public byte first; caller owns the full writable
@@ -137,8 +135,6 @@ pub unsafe extern "C" fn statfs_body(path: *const c_char, output: *mut StatFs) -
 ///
 /// `descriptor` must remain valid for the call and `output` must point to
 /// writable storage for one complete Linux/x86-64 `struct statfs`.
-#[linkage = "internal"]
-#[export_name = "__fstatfs"]
 #[inline(never)]
 pub unsafe extern "C" fn fstatfs_body(descriptor: c_int, output: *mut StatFs) -> c_int {
     // SAFETY: musl clears every public byte first; caller owns the full writable
@@ -147,16 +143,20 @@ pub unsafe extern "C" fn fstatfs_body(descriptor: c_int, output: *mut StatFs) ->
     c_status(unsafe { fstatfs_raw(descriptor, output) })
 }
 
-// statvfs.c deliberately makes these source bodies local, even in libc.a.
-// `linkage = "internal"` retains that local definition while `inline(never)`
-// keeps its named ELF body alive for the assembler's weak same-address alias.
-// Do not replace either with a wrapper: statvfs/fstatvfs below must keep
-// calling the local bodies.
+// statvfs calls the hidden bodies directly, so a public weak alias can be overridden.
 core::arch::global_asm!(
+    ".hidden {statfs_body}",
+    ".hidden {fstatfs_body}",
+    ".local __statfs",
+    ".set __statfs, {statfs_body}",
     ".weak statfs",
-    ".set statfs, __statfs",
+    ".set statfs, {statfs_body}",
+    ".local __fstatfs",
+    ".set __fstatfs, {fstatfs_body}",
     ".weak fstatfs",
-    ".set fstatfs, __fstatfs",
+    ".set fstatfs, {fstatfs_body}",
+    statfs_body = sym statfs_body,
+    fstatfs_body = sym fstatfs_body,
 );
 
 /// Reproduce musl's Linux `statfs` to public `statvfs` field conversion.

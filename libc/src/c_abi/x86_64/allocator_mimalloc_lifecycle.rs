@@ -127,17 +127,24 @@ unsafe extern "C" fn finalize() {
 // the same image without dispatching it from `.init_array`: no constructor
 // calls the allocator at process startup.
 #[used]
-#[linkage = "internal"]
-#[export_name = "__crabc_x86_owned_mimalloc_process_initializer"]
 static AUTOMATIC_PROCESS_INITIALIZER: unsafe extern "C" fn() = initialize;
 
 // The finalizer stays in the conventional array position.  `_mi_auto_process_done`
 // returns immediately when no allocation ran the lazy initializer.
 #[used]
-#[linkage = "internal"]
-#[export_name = "__crabc_x86_owned_mimalloc_process_finalizer"]
 #[link_section = ".fini_array"]
 static AUTOMATIC_PROCESS_FINALIZER: unsafe extern "C" fn() = finalize;
+
+core::arch::global_asm!(
+    ".hidden {initializer}",
+    ".local __crabc_x86_owned_mimalloc_process_initializer",
+    ".set __crabc_x86_owned_mimalloc_process_initializer, {initializer}",
+    ".hidden {finalizer}",
+    ".local __crabc_x86_owned_mimalloc_process_finalizer",
+    ".set __crabc_x86_owned_mimalloc_process_finalizer, {finalizer}",
+    initializer = sym AUTOMATIC_PROCESS_INITIALIZER,
+    finalizer = sym AUTOMATIC_PROCESS_FINALIZER,
+);
 
 // Phase-only test instrumentation; absent from ordinary allocator products.
 #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]

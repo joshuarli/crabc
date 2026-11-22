@@ -51,6 +51,23 @@ the host and which in the image. The full qualification candidate
 (`./scripts/dev-x86_64.sh qualification-candidate`) takes hours and is the
 integration milestone, not a setup check.
 
+## Rust profiles
+
+Use `release` for optimized checks and `dist` for distribution artifacts. To
+build the hosted facade together with std from the pinned Rust source:
+
+```sh
+scripts/lanes/rust-check.sh sh -ec '
+  RUSTFLAGS="-C link-dead-code=no" cargo build --locked -p crabc-rs \
+    --profile dist -Z build-std=std -Z build-std-features= \
+    --target "$(rustc --print host-tuple)"
+'
+```
+
+The sealed C sysroot builds its helper objects from the pinned Rust source.
+Its static libc keeps separate archive members so applications can override
+individual C symbols.
+
 ## AArch64
 
 AArch64 runs only natively in arm64 Linux, never emulated or on a macOS bind

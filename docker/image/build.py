@@ -267,7 +267,7 @@ def install_rust(root: Path, dist: dict[str, Path], channel: str) -> None:
             "export RUSTUP_IO_THREADS=1\n"
             f"/usr/bin/rustup-init -y --profile minimal --default-toolchain {channel}\n"
             f"rustup target add {RUST_TARGET}\n"
-            "rustup component add rust-src llvm-tools\n"
+            "rustup component add rust-src llvm-tools clippy\n"
             "rustc --version\n"
         ))
     finally:

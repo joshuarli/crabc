@@ -2028,106 +2028,120 @@
       "version": "1.5.7-r2"
     },
     {
-      "channel": "nightly-2026-09-15",
-      "dist_date": "2026-09-15",
+      "channel": "nightly-2026-11-09",
+      "dist_date": "2026-11-09",
       "filename": "channel-rust-nightly.toml",
       "name": "rust-channel-manifest",
       "purpose": "pinned Rust channel manifest",
       "role": "rust-dist",
-      "sha256": "f0c1bc94dd5c23ce4a5aa405a1b81188805e2801589c9f44984b3b5ab17d2136",
+      "sha256": "61ad7ceb52dafd0ef49bfe0a379259d2587039e840986021c49df008640e0d23",
       "size": 923466,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/f0c1bc94dd5c23ce4a5aa405a1b81188805e2801589c9f44984b3b5ab17d2136",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/f0c1bc94dd5c23ce4a5aa405a1b81188805e2801589c9f44984b3b5ab17d2136",
-        "https://static.rust-lang.org/dist/2026-09-15/channel-rust-nightly.toml"
+        "https://oci-blobs.17166969.xyz/sha256/61ad7ceb52dafd0ef49bfe0a379259d2587039e840986021c49df008640e0d23",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/61ad7ceb52dafd0ef49bfe0a379259d2587039e840986021c49df008640e0d23",
+        "https://static.rust-lang.org/dist/2026-11-09/channel-rust-nightly.toml"
       ],
-      "version": "nightly-2026-09-15"
+      "version": "nightly-2026-11-09"
     },
     {
-      "channel": "nightly-2026-09-15",
-      "dist_date": "2026-09-15",
+      "channel": "nightly-2026-11-09",
+      "dist_date": "2026-11-09",
       "filename": "channel-rust-nightly.toml.sha256",
       "name": "rust-channel-manifest-sha256",
       "purpose": "pinned channel manifest checksum",
       "role": "rust-dist",
-      "sha256": "0049b77e2b6121ac3cf1f13acfc33326ead7da72c1a7609f3fcf8bf31ba362b3",
+      "sha256": "9767a51745ae0ab142a8d1864268589bf1517a8b6084e1142e04dc8f284fee78",
       "size": 92,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/0049b77e2b6121ac3cf1f13acfc33326ead7da72c1a7609f3fcf8bf31ba362b3",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/0049b77e2b6121ac3cf1f13acfc33326ead7da72c1a7609f3fcf8bf31ba362b3",
-        "https://static.rust-lang.org/dist/2026-09-15/channel-rust-nightly.toml.sha256"
+        "https://oci-blobs.17166969.xyz/sha256/9767a51745ae0ab142a8d1864268589bf1517a8b6084e1142e04dc8f284fee78",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/9767a51745ae0ab142a8d1864268589bf1517a8b6084e1142e04dc8f284fee78",
+        "https://static.rust-lang.org/dist/2026-11-09/channel-rust-nightly.toml.sha256"
       ],
-      "version": "nightly-2026-09-15"
+      "version": "nightly-2026-11-09"
     },
     {
       "filename": "rustc-nightly-x86_64-unknown-linux-musl.tar.xz",
       "name": "rust-rustc-x86_64-unknown-linux-musl",
       "purpose": "rustc component for x86_64-unknown-linux-musl",
       "role": "rust-dist",
-      "sha256": "faa179147ef1f008a2473c1eaecdc1793142e3413034194959560b1c12ba557c",
-      "size": 110078576,
+      "sha256": "e36cfb908d79b18bbdf389a4a0cdfa76e8681bd9c7780a5c8b674e6b76a0f75d",
+      "size": 109441704,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/faa179147ef1f008a2473c1eaecdc1793142e3413034194959560b1c12ba557c",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/faa179147ef1f008a2473c1eaecdc1793142e3413034194959560b1c12ba557c",
-        "https://static.rust-lang.org/dist/2026-09-15/rustc-nightly-x86_64-unknown-linux-musl.tar.xz"
+        "https://oci-blobs.17166969.xyz/sha256/e36cfb908d79b18bbdf389a4a0cdfa76e8681bd9c7780a5c8b674e6b76a0f75d",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/e36cfb908d79b18bbdf389a4a0cdfa76e8681bd9c7780a5c8b674e6b76a0f75d",
+        "https://static.rust-lang.org/dist/2026-11-09/rustc-nightly-x86_64-unknown-linux-musl.tar.xz"
       ],
-      "version": "2026-09-15"
+      "version": "2026-11-09"
     },
     {
       "filename": "cargo-nightly-x86_64-unknown-linux-musl.tar.xz",
       "name": "rust-cargo-x86_64-unknown-linux-musl",
       "purpose": "cargo component for x86_64-unknown-linux-musl",
       "role": "rust-dist",
-      "sha256": "a905fe818906ad0f63a619ebf97a3146ff7d9f183fa9805dcfd22bcd40b19510",
-      "size": 12303508,
+      "sha256": "4df682002e1f2f58f9e91c6bb7abb4e735f1d5e3a8ca13c2cad3dca4b5334cc5",
+      "size": 12106752,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/a905fe818906ad0f63a619ebf97a3146ff7d9f183fa9805dcfd22bcd40b19510",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/a905fe818906ad0f63a619ebf97a3146ff7d9f183fa9805dcfd22bcd40b19510",
-        "https://static.rust-lang.org/dist/2026-09-15/cargo-nightly-x86_64-unknown-linux-musl.tar.xz"
+        "https://oci-blobs.17166969.xyz/sha256/4df682002e1f2f58f9e91c6bb7abb4e735f1d5e3a8ca13c2cad3dca4b5334cc5",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/4df682002e1f2f58f9e91c6bb7abb4e735f1d5e3a8ca13c2cad3dca4b5334cc5",
+        "https://static.rust-lang.org/dist/2026-11-09/cargo-nightly-x86_64-unknown-linux-musl.tar.xz"
       ],
-      "version": "2026-09-15"
+      "version": "2026-11-09"
     },
     {
       "filename": "rust-std-nightly-x86_64-unknown-linux-musl.tar.xz",
       "name": "rust-rust-std-x86_64-unknown-linux-musl",
       "purpose": "rust-std component for x86_64-unknown-linux-musl",
       "role": "rust-dist",
-      "sha256": "0954607004e948289bda9049114caa89db9fc23ef01d127074820037023d67c2",
-      "size": 41497264,
+      "sha256": "365cba2a2125f2209f0489de27cfb6761f7f95a635206257ebfc8466b3d4c6b7",
+      "size": 41656448,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/0954607004e948289bda9049114caa89db9fc23ef01d127074820037023d67c2",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/0954607004e948289bda9049114caa89db9fc23ef01d127074820037023d67c2",
-        "https://static.rust-lang.org/dist/2026-09-15/rust-std-nightly-x86_64-unknown-linux-musl.tar.xz"
+        "https://oci-blobs.17166969.xyz/sha256/365cba2a2125f2209f0489de27cfb6761f7f95a635206257ebfc8466b3d4c6b7",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/365cba2a2125f2209f0489de27cfb6761f7f95a635206257ebfc8466b3d4c6b7",
+        "https://static.rust-lang.org/dist/2026-11-09/rust-std-nightly-x86_64-unknown-linux-musl.tar.xz"
       ],
-      "version": "2026-09-15"
+      "version": "2026-11-09"
     },
     {
       "filename": "rust-src-nightly.tar.xz",
       "name": "rust-rust-src",
       "purpose": "rust-src component for *",
       "role": "rust-dist",
-      "sha256": "dee5c574fab79b4b45aa24f7260613977d820e62013a7923647c066c10bdaec5",
-      "size": 5927464,
+      "sha256": "68598aa23a0fe6699b6da875656f2f9ec78bb810bfb75c645505f74abf03e77f",
+      "size": 6032880,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/dee5c574fab79b4b45aa24f7260613977d820e62013a7923647c066c10bdaec5",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/dee5c574fab79b4b45aa24f7260613977d820e62013a7923647c066c10bdaec5",
-        "https://static.rust-lang.org/dist/2026-09-15/rust-src-nightly.tar.xz"
+        "https://oci-blobs.17166969.xyz/sha256/68598aa23a0fe6699b6da875656f2f9ec78bb810bfb75c645505f74abf03e77f",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/68598aa23a0fe6699b6da875656f2f9ec78bb810bfb75c645505f74abf03e77f",
+        "https://static.rust-lang.org/dist/2026-11-09/rust-src-nightly.tar.xz"
       ],
-      "version": "2026-09-15"
+      "version": "2026-11-09"
+    },
+    {
+      "filename": "clippy-nightly-x86_64-unknown-linux-musl.tar.xz",
+      "name": "rust-clippy-preview-x86_64-unknown-linux-musl",
+      "purpose": "clippy-preview component for x86_64-unknown-linux-musl",
+      "role": "rust-dist",
+      "sha256": "f0938a183e8198d5131a535d8093e2f55af6c5745f7fd1053e49001fb052c861",
+      "size": 3665456,
+      "urls": [
+        "https://oci-blobs.17166969.xyz/sha256/f0938a183e8198d5131a535d8093e2f55af6c5745f7fd1053e49001fb052c861",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/f0938a183e8198d5131a535d8093e2f55af6c5745f7fd1053e49001fb052c861",
+        "https://static.rust-lang.org/dist/2026-11-09/clippy-nightly-x86_64-unknown-linux-musl.tar.xz"
+      ],
+      "version": "2026-11-09"
     },
     {
       "filename": "llvm-tools-nightly-x86_64-unknown-linux-musl.tar.xz",
       "name": "rust-llvm-tools-preview-x86_64-unknown-linux-musl",
       "purpose": "llvm-tools-preview component for x86_64-unknown-linux-musl",
       "role": "rust-dist",
-      "sha256": "a555496da2a0a4523d1e6c862b8b1e838135c7c931b611f554ceaf7fb93265cf",
-      "size": 107162652,
+      "sha256": "95cfb0fc2fdafadb5fd605a84c19bf00f7b8e0969433a9a9a649ed2dd6dc967c",
+      "size": 107193188,
       "urls": [
-        "https://oci-blobs.17166969.xyz/sha256/a555496da2a0a4523d1e6c862b8b1e838135c7c931b611f554ceaf7fb93265cf",
-        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/a555496da2a0a4523d1e6c862b8b1e838135c7c931b611f554ceaf7fb93265cf",
-        "https://static.rust-lang.org/dist/2026-09-15/llvm-tools-nightly-x86_64-unknown-linux-musl.tar.xz"
+        "https://oci-blobs.17166969.xyz/sha256/95cfb0fc2fdafadb5fd605a84c19bf00f7b8e0969433a9a9a649ed2dd6dc967c",
+        "https://github.com/joshuarli/crabc/releases/download/core-image-inputs/95cfb0fc2fdafadb5fd605a84c19bf00f7b8e0969433a9a9a649ed2dd6dc967c",
+        "https://static.rust-lang.org/dist/2026-11-09/llvm-tools-nightly-x86_64-unknown-linux-musl.tar.xz"
       ],
-      "version": "2026-09-15"
+      "version": "2026-11-09"
     },
     {
       "filename": "musl.tar.gz",

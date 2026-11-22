@@ -10,7 +10,6 @@
 
 use core::arch::global_asm;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use core::convert::Infallible;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use core::ffi::c_void;
 use core::fmt;
@@ -1088,7 +1087,7 @@ pub fn pending() -> Result<SignalSet> {
 /// returning, including when the handler ran on an alternate stack.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
-pub fn suspend(mask: &SignalSet) -> Result<Infallible> {
+pub fn suspend(mask: &SignalSet) -> Result<!> {
     // SAFETY: `mask` provides one readable kernel signal-set word.
     match unsafe { crabc_core::signal::rt_sigsuspend_raw(&mask.0) } {
         Err(error) => Err(error),

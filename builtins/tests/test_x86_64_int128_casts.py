@@ -2,11 +2,15 @@
 from pathlib import Path
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.rust_toolchain import pinned_toolchain
+
 ROOT=Path(__file__).resolve().parents[2]
-PINNED=Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl')
+PINNED=Path(f'/opt/rustup/toolchains/{pinned_toolchain()}-x86_64-unknown-linux-musl')
 
 @unittest.skipUnless((PINNED/'bin/rustc').is_file(),'requires the pinned native x86 environment')
 class Int128CastPhysicalTests(unittest.TestCase):

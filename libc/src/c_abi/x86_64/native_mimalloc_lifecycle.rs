@@ -348,11 +348,17 @@ unsafe extern "C" fn finish_selected_process_in_fini_array() {
 // walk. The dynamic local symbol permits producer verification; it is not a
 // public ABI export. This entry is absent with the default C allocator.
 #[used]
-#[linkage = "internal"]
 #[link_section = ".fini_array"]
-#[cfg_attr(crabc_x86_dynamic_runtime, export_name = "__crabc_x86_native_mimalloc_process_finalizer")]
 static SELECTED_PROCESS_DONE_FINI_ARRAY: unsafe extern "C" fn() =
     finish_selected_process_in_fini_array;
+
+#[cfg(crabc_x86_dynamic_runtime)]
+core::arch::global_asm!(
+    ".hidden {finalizer}",
+    ".local __crabc_x86_native_mimalloc_process_finalizer",
+    ".set __crabc_x86_native_mimalloc_process_finalizer, {finalizer}",
+    finalizer = sym SELECTED_PROCESS_DONE_FINI_ARRAY,
+);
 
 /// Test-only receipt for the selected `.fini_array` process finalizer.
 ///

@@ -7,7 +7,7 @@
 
 use std::{
     alloc::{alloc, dealloc, realloc, Layout},
-    collections::{BTreeMap, BTreeSet},
+    collections::{HashMap, HashSet},
     ffi::{c_char, c_void, CStr},
     ptr,
     sync::{Mutex, MutexGuard, OnceLock},
@@ -26,7 +26,7 @@ use owned_wordexp_results::{
 struct AllocationState {
     attempts: usize,
     fail_at: Option<usize>,
-    live: BTreeMap<usize, Layout>,
+    live: HashMap<usize, Layout>,
     double_frees: usize,
 }
 
@@ -101,7 +101,7 @@ fn reset_allocator(fail_at: Option<usize>) {
     let mut tracker = lock_state();
     assert!(tracker.live.is_empty(), "a prior test leaked owner storage");
     assert_eq!(tracker.double_frees, 0, "a prior test double-freed owner storage");
-    *tracker = AllocationState { attempts: 0, fail_at, live: BTreeMap::new(), double_frees: 0 };
+    *tracker = AllocationState { attempts: 0, fail_at, live: HashMap::new(), double_frees: 0 };
 }
 
 fn fail_next_allocation() {
@@ -116,7 +116,7 @@ fn fail_after_additional_allocations(additional: usize) {
 
 fn allocation_attempts() -> usize { lock_state().attempts }
 
-fn live_pointers() -> BTreeSet<usize> {
+fn live_pointers() -> HashSet<usize> {
     lock_state().live.keys().copied().collect()
 }
 

@@ -399,9 +399,10 @@ class MergedLoaderProvenanceTests(unittest.TestCase):
             "artifact": artifact,
             "cargo": {
                 "argv": ["/opt/cargo/bin/rustup", "run", inventory.PINNED_TOOLCHAIN, "cargo", "rustc", "--locked",
-                         "-p", "crabc-ldso", "--release", "--config", 'profile.release.opt-level="s"',
+                         "-p", "crabc-ldso", "--profile", "dist", "--config", 'profile.dist.opt-level="s"',
                          "--target", inventory.TARGET, "--target-dir", "$BUILD/loader", "--no-default-features",
-                         "--features", inventory.LOADER_FEATURE, "--", "--emit=obj"],
+                         "--features", inventory.LOADER_FEATURE, "--", "--emit=obj=$BUILD/ldso.o",
+                         "--emit=dep-info=$BUILD/ldso.d"],
                 "rustflags": inventory.dynamic_product_contract.LOADER_RUSTFLAGS,
             },
             "compiler_object": {"path": "$BUILD/ldso-localized.o", "sha256": "7" * 64, "size": 226320},

@@ -65,6 +65,7 @@ RUST_COMPONENTS = [("rustc", "x86_64-unknown-linux-musl"),
                    ("cargo", "x86_64-unknown-linux-musl"),
                    ("rust-std", "x86_64-unknown-linux-musl"),
                    ("rust-src", "*"),
+                   ("clippy-preview", "x86_64-unknown-linux-musl"),
                    ("llvm-tools-preview", "x86_64-unknown-linux-musl")]
 
 

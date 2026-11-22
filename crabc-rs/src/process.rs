@@ -26,7 +26,6 @@ use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 #[cfg(feature = "alloc")]
-use core::convert::Infallible;
 use crate::buffer::Buffer;
 use core::ffi::{c_void, CStr};
 use core::fmt;
@@ -437,7 +436,7 @@ impl<'fd> PreparedExec<'fd> {
     }
 
     #[inline]
-    fn exec_no_setup(&self) -> Result<Infallible> {
+    fn exec_no_setup(&self) -> Result<!> {
         // SAFETY: `PreparedExec` owns every NUL-terminated string and both
         // terminal-null pointer arrays for the entire syscall. Linux execve
         // does not return after success.

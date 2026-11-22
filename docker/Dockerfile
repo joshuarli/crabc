@@ -42,7 +42,7 @@ RUN apk add --no-cache \
     && RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' /tmp/rust-toolchain.toml)" \
     && test -n "${RUST_TOOLCHAIN}" \
     && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
-    && rustup component add rust-src llvm-tools
+    && rustup component add rust-src llvm-tools clippy
 
 # Alpine's system musl is intentionally not the oracle. Build the pinned
 # upstream release under /opt so neither libc nor ld-musl in the container is

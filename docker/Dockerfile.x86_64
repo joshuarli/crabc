@@ -78,7 +78,7 @@ RUN test "$(uname -m)" = "x86_64" \
     && rustup target add "${RUST_TARGET}" \
     # Match rust-toolchain.toml so Cargo never mutates an ephemeral test
     # container while resolving the workspace toolchain declaration.
-    && rustup component add rust-src llvm-tools
+    && rustup component add rust-src llvm-tools clippy
 
 COPY compat/upstreams.toml /tmp/upstreams.toml
 COPY docker/install-native-build-tools.py /tmp/install-native-build-tools.py

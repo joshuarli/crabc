@@ -209,17 +209,17 @@ def validate_loader_provenance(product: Path, record: object) -> None:
     rustup_path = rustup.get("path") if isinstance(rustup, dict) else None
     require(isinstance(rustup_path, str) and rustup_path, "producer tool identity lacks rustup path")
     expected_argv = [
-        rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--release",
-        "--config", 'profile.release.opt-level="s"',
+        rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--profile", "dist",
+        "--config", 'profile.dist.opt-level="s"',
         "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
-        "--", "--emit=obj",
+        "--", "--emit=obj=$BUILD/ldso.o", "--emit=dep-info=$BUILD/ldso.d",
     ]
     if ARCH == "aarch64":
         expected_argv = [
-            rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--release",
+            rustup_path, "run", PINNED_TOOLCHAIN, "cargo", "rustc", "--locked", "-p", "crabc-ldso", "--profile", "dist",
             "--target", TARGET, "--target-dir", "$BUILD/loader", "--no-default-features", "--features", LOADER_FEATURE,
             "--config", f'target.{TARGET}.rustflags=["-Ztls-model=initial-exec", "-Ctarget-feature=-outline-atomics"]',
-            "--", "--emit=obj",
+            "--", "--emit=obj=$BUILD/ldso.o", "--emit=dep-info=$BUILD/ldso.d",
         ]
     require(cargo["argv"] == expected_argv and cargo["rustflags"] == ("-Ztls-model=initial-exec -Ctarget-feature=-outline-atomics" if ARCH == "aarch64" else dynamic_product_contract.LOADER_RUSTFLAGS),
             "loader Cargo command or RUSTFLAGS differ")

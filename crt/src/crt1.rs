@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(naked_functions)]
 
 //! Conventional non-PIE application entry object.
 
