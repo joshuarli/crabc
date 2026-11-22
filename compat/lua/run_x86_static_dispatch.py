@@ -126,7 +126,8 @@ def read_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
     state = LUA.allocate_native_run_root(args.work_root)
     payload, roots, validation = supplied_products(args, state)
     if (report["supplied"].get("source") != payload["source"]
-            or report["supplied"].get("preparation") != LUA.artifact_record(args.static_preparation)):
+            or report["supplied"].get("preparation") != admission.recorded_identity(
+                LUA.artifact_record(args.static_preparation), report["supplied"]["checkout"])):
         raise LUA.RunnerError("Lua supplied static report uses a different cohort")
     admission.validate_report_records(report)
     replay = {"passed": True, "validation": validation, "products": {}}
@@ -135,16 +136,20 @@ def read_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
         admission.validate_pinned_input(lane)
         if (lane.get("passed") is not True or set(lane.get("modes", {})) != {"static-et-exec", "static-pie"}
                 or lane["environment"]["sysroot_manifest"] != LUA.owned_static_sysroot(roots[label])[3]
-                or lane["environment"]["sysroot"] != str(roots[label])):
+                or admission.retained_path(lane["environment"]["sysroot"]) != roots[label]):
             raise LUA.RunnerError("Lua supplied static product or mode roster differs")
         for mode in LUA.selected_static_modes(None):
             row = lane["modes"][mode.identifier]
             for role in ("candidate", "reference"):
                 for name in ("lua", "luac"):
                     recorded = row[role]["artifacts"][name]
-                    artifact = LUA.require_physical_regular_file(Path(recorded["artifact"]["path"]), "retained Lua tool")
+                    artifact = LUA.require_physical_regular_file(
+                        admission.retained_path(recorded["artifact"]["path"]), "retained Lua tool")
                     selected_mode = mode if role == "candidate" else LUA.static_reference_mode()
-                    if LUA.static_elf_record(artifact, selected_mode, f"retained {role} {name}") != recorded:
+                    if admission.recorded_identity(
+                        LUA.static_elf_record(artifact, selected_mode, f"retained {role} {name}"),
+                        report["supplied"]["checkout"],
+                    ) != recorded:
                         raise LUA.RunnerError("Lua retained tool ELF evidence differs")
             for name in ("source", "bytecode"):
                 admission.validate_result_comparison(row["workloads"][name])
@@ -153,9 +158,9 @@ def read_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
             if args.replay:
                 work = state / label / mode.identifier
                 work.mkdir(parents=True)
-                paths = {role: {name: Path(row[role]["artifacts"][name]["artifact"]["path"])
+                paths = {role: {name: admission.retained_path(row[role]["artifacts"][name]["artifact"]["path"])
                                 for name in ("lua", "luac")} for role in ("candidate", "reference")}
-                support = Path(lane["work_directory"]) / "source" / lane["manifest"]["contents"]["lua"]["archive_root"] / "src"
+                support = admission.retained_path(lane["work_directory"]) / "source" / lane["manifest"]["contents"]["lua"]["archive_root"] / "src"
                 workloads = LUA.run_static_workloads(paths["candidate"], paths["reference"], support,
                                                     work, args.timeout)
                 if any(workloads[name]["candidate"] != row["workloads"][name]["candidate"]

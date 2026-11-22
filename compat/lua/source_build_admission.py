@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -44,6 +45,28 @@ GATE = "consumer.source-build"
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise LUA.RunnerError(message)
+
+
+def retained_path(value: str | Path) -> Path:
+    """Locate native /workspace evidence in this physical checkout."""
+    path = Path(value)
+    require(".." not in path.parts, "Lua retained path contains traversal")
+    if path.is_relative_to("/workspace"):
+        return ROOT / path.relative_to("/workspace")
+    return path
+
+
+def recorded_identity(value: Any, checkout: str) -> Any:
+    """Compare fresh identities in the retained checkout's path namespace."""
+    if isinstance(value, dict):
+        return {key: recorded_identity(child, checkout) for key, child in value.items()}
+    if isinstance(value, list):
+        return [recorded_identity(child, checkout) for child in value]
+    if isinstance(value, str) and Path(checkout).is_relative_to("/workspace"):
+        path = Path(value)
+        if path.is_relative_to(ROOT):
+            return str(Path("/workspace") / path.relative_to(ROOT))
+    return value
 
 
 def validate_stream(record: object, description: str) -> bytes:
@@ -90,7 +113,7 @@ def validate_report_records(value: object, *, parent: Mapping[str, Any] | None =
 
     if isinstance(value, Mapping):
         if {"path", "sha256", "byte_length"} <= set(value):
-            artifact = Path(str(value["path"]))
+            artifact = retained_path(str(value["path"]))
             require(artifact.is_file(), f"{key} artifact is missing")
             require(
                 artifact.stat().st_size == value["byte_length"]
@@ -204,7 +227,7 @@ def validate_pinned_input(value: Mapping[str, Any]) -> None:
     )
     source_record = value.get("source_archive")
     require(isinstance(source_record, Mapping), "Lua source-build report lacks its pinned source archive")
-    archive = physical_file(Path(str(source_record.get("path", ""))), "Lua source archive")
+    archive = physical_file(retained_path(str(source_record.get("path", ""))), "Lua source archive")
     require(archive.is_relative_to(WORK), "Lua source archive escaped .work/x86_64")
     lua_pin = contents.get("lua")
     require(isinstance(lua_pin, Mapping), "Lua source-build report lacks the Lua source pin")
@@ -318,6 +341,12 @@ def require_current_supplied_products(
 
 def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, object]:
     """Authenticate retained consumer reports against their original owned cohort."""
+    scratch = LUA.native_work_root(WORK / "tmp")
+    with tempfile.TemporaryDirectory(prefix="lua-supplied-admission-", dir=scratch) as temporary:
+        return _admit_supplied(static_report, dynamic_report, Path(temporary))
+
+
+def _admit_supplied(static_report: Path, dynamic_report: Path, state_parent: Path) -> dict[str, object]:
     import run_x86_static_dispatch as STATIC
     import run_x86_dynamic_supplied as SUPPLIED
 
@@ -326,49 +355,48 @@ def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, objec
     static = json.loads(static_path.read_text())
     dynamic = json.loads(dynamic_path.read_text())
     context = static["supplied"]
-    state_parent = WORK / "lua-supplied-admission"
     args = argparse.Namespace(
         read=static_path, replay=False, work_root=state_parent / "static",
-        cohort_checkout=Path(context["checkout"]), static_preparation=Path(context["preparation"]["path"]),
-        installed_sysroot=Path(context["roots"]["primary"]),
-        rebuilt_sysroot=Path(context["roots"]["reproduction"]),
-        extracted_sysroot=Path(context["roots"]["extracted"]),
-        archive_seed=Path(context["archive_seed"]["path"]), timeout=300.0,
+        cohort_checkout=retained_path(context["checkout"]), static_preparation=retained_path(context["preparation"]["path"]),
+        installed_sysroot=retained_path(context["roots"]["primary"]),
+        rebuilt_sysroot=retained_path(context["roots"]["reproduction"]),
+        extracted_sysroot=retained_path(context["roots"]["extracted"]),
+        archive_seed=retained_path(context["archive_seed"]["path"]), timeout=300.0,
     )
     STATIC.read_supplied(args)
     require(dynamic.get("runner") == "crabc-lua-native-x86-dynamic-supplied-cohort"
             and dynamic.get("passed") is True and dynamic.get("result") == "pass",
             "supplied dynamic Lua report did not pass")
-    seal = SUPPLIED.consumer_source_seal()
+    seal = recorded_identity(SUPPLIED.consumer_source_seal(), context["checkout"])
     require(dynamic.get("consumer_source_before") == seal and dynamic.get("consumer_source_after") == seal,
             "supplied dynamic Lua consumer source changed")
     dispatcher = dynamic["dispatcher"]
-    require(dispatcher.get("authoritative_report") == str(dynamic_path)
-            and dispatcher.get("state_root") == str(dynamic_path.parent),
+    require(retained_path(dispatcher.get("authoritative_report", "")) == dynamic_path
+            and retained_path(dispatcher.get("state_root", "")) == dynamic_path.parent,
             "supplied dynamic Lua authoritative report moved")
     validate_report_records(dynamic)
     cohort = dispatcher["cohort"]
     require(cohort["checkout"] == context["checkout"], "Lua consumers use different cohort checkouts")
     state = LUA.allocate_native_run_root(state_parent / "dynamic")
     current, _validation = SUPPLIED.validate_cohort(
-        checkout=Path(cohort["checkout"]), receipt=Path(cohort["receipt"]["path"]),
-        installed=Path(cohort["roots"]["installed"]["path"]),
-        extracted=Path(cohort["roots"]["extracted"]["path"]), state=state,
+        checkout=retained_path(cohort["checkout"]), receipt=retained_path(cohort["receipt"]["path"]),
+        installed=retained_path(cohort["roots"]["installed"]["path"]),
+        extracted=retained_path(cohort["roots"]["extracted"]["path"]), state=state,
     )
-    require(current == cohort, "supplied dynamic Lua cohort changed")
+    require(recorded_identity(current, context["checkout"]) == cohort, "supplied dynamic Lua cohort changed")
     source = LUA.current_source_identity()
     require(cohort.get("source_sha256") == source["source_sha256"],
             "supplied Lua runtime cohort uses different source than the consumer")
     require_current_supplied_products(
-        [Path(context["roots"][label]) for label in STATIC.SUPPLIED_ROOTS],
-        [Path(cohort["roots"][label]["path"]) for label in ("installed", "extracted")], source,
+        [retained_path(context["roots"][label]) for label in STATIC.SUPPLIED_ROOTS],
+        [retained_path(cohort["roots"][label]["path"]) for label in ("installed", "extracted")], source,
     )
     artifacts = {}
     for label in ("installed", "extracted"):
         lane = dynamic[label]
         validate_pinned_input(lane)
-        root = Path(cohort["roots"][label]["path"])
-        require(lane.get("passed") is True and lane["environment"]["sysroot"] == str(root)
+        root = retained_path(cohort["roots"][label]["path"])
+        require(lane.get("passed") is True and retained_path(lane["environment"]["sysroot"]) == root
                 and lane["environment"]["sysroot_manifest"] == DYNAMIC.owned_dynamic_sysroot(root)[3],
                 "supplied dynamic Lua product differs from report")
         for name in ("source", "bytecode"):
