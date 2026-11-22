@@ -206,6 +206,26 @@ def incongruent_dynamic_elf() -> bytes:
 
 
 class SourcePinnedProducerToolsTests(unittest.TestCase):
+    def test_source_tool_manifest_requires_the_current_compiler_identity(self) -> None:
+        paths = evidence.native_compiler_tool_paths()
+        files = {record["path"]: {"path": record["path"], "sha256": "a" * 64}
+                 for record in paths.values()}
+        compiler = paths["rustc"]["path"]
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "image-inputs.json"
+            with mock.patch.object(evidence, "SOURCE_NATIVE_IMAGE_MANIFEST", manifest):
+                manifest.write_text(json.dumps({"files": files}))
+                current = evidence.source_native_compiler_tool_records()
+                self.assertEqual(current["rustc"], {**paths["rustc"], "sha256": "a" * 64})
+                missing = {path: record for path, record in files.items() if path != compiler}
+                malformed = {**files, compiler: {"path": compiler, "sha256": "invalid"}}
+                wrong_path = {**files, compiler: {"path": "/other/rustc", "sha256": "a" * 64}}
+                for records in ({}, missing, malformed, wrong_path):
+                    with self.subTest(records=records):
+                        manifest.write_text(json.dumps({"files": records}))
+                        with self.assertRaisesRegex(evidence.ProductEvidenceError, "source-native image manifest omits"):
+                            evidence.source_native_compiler_tool_records()
+
     def test_arm_linker_receipts_require_the_source_pin_without_live_tools(self) -> None:
         expected = {"path": "/usr/bin/mold", "sha256": "a" * 64}
         with mock.patch.object(evidence, "ARCH", "aarch64"), \
