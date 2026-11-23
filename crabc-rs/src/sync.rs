@@ -519,24 +519,22 @@ impl Condvar {
         let sequence = self.sequence.load(Ordering::Acquire);
         drop(guard);
 
-        loop {
-            // SAFETY: `sequence` is live for the duration of the call and the
-            // null timeout requests an unbounded private wait.
-            match unsafe {
-                crabc_core::thread::futex_wait(
-                    (&self.sequence as *const AtomicU32).cast::<u32>(),
-                    sequence,
-                    true,
-                    core::ptr::null(),
-                )
-            } {
-                Ok(()) | Err(Errno::INTR) | Err(Errno::AGAIN) => break,
-                Err(error) => {
-                    // Preserve the mutex ownership contract even on a kernel
-                    // error while waiting.
-                    let _ = mutex.lock()?;
-                    return Err(error);
-                }
+        // SAFETY: `sequence` is live for the duration of the call and the
+        // null timeout requests an unbounded private wait.
+        match unsafe {
+            crabc_core::thread::futex_wait(
+                (&self.sequence as *const AtomicU32).cast::<u32>(),
+                sequence,
+                true,
+                core::ptr::null(),
+            )
+        } {
+            Ok(()) | Err(Errno::INTR) | Err(Errno::AGAIN) => {}
+            Err(error) => {
+                // Preserve the mutex ownership contract even on a kernel
+                // error while waiting.
+                let _ = mutex.lock()?;
+                return Err(error);
             }
         }
 
