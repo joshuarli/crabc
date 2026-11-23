@@ -13,8 +13,7 @@
    on the initial thread and on a worker, whether it failed, its errno, and
    the error messages it reported. Warnings are counted outside the trace:
    pinned C retries the on-demand page-map commit and warns on each attempt,
-   and the Rust runtime has no page map to retry (see
-   `known-differences.md`, CRABC-MI-STARTUP-PAGE-MAP-FAILURE). Driven by
+   and the Rust runtime has no page map to retry. Driven by
    `compat/allocator/x86_64_m7_gate.py --page-map-differential`. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1

@@ -12,7 +12,8 @@ The owner accepted this recommendation; see Decision.
 
 ## Motivation
 
-[`Child::wait`](../../crabc-rs/src/process_x86_64.rs) accepts `NOHANG`,
+The historical path `crabc-rs/src/process_x86_64.rs` defines `Child::wait`,
+which accepts `NOHANG`,
 `UNTRACED`, `CONTINUED` and future option bits, but takes `self` and returns
 only a status or error. A child may still run after `None`, a stop/continue
 report or an error, and the caller no longer has its safe wait owner.

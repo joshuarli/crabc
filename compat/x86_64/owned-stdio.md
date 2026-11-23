@@ -48,14 +48,7 @@ dynamic kernel/direct PIE/non-PIE cell, and supplied static/static-PIE cell,
 executes that consumer. It neither adds a runtime alias nor establishes mode
 parsing, pathname-stream, or general stdio completion.
 
-The runner retains one pinned-musl static ET_EXEC link using
-`-static -fno-pie -no-pie`, static ET_EXEC and static PIE when a static product
-is supplied, and dynamic PIE/non-PIE through both kernel and direct owned
-loader entry. Every successful run has retained exact argv, stdout, stderr,
-and zero status. It traces installed headers, seals the probe, runner, tool
-roster, selected manifests and trees before and after execution, keeps the one
-object identity, validates every product link receipt, and records/audits each
-copied dynamic execution payload before and after both entries.
+The runner uses the [shared installed-component receipt mechanics](owned-locale.md#shared-installed-component-receipt-mechanics).
 
 `owned_stdio_component_receipt.py` reads the resulting
 `owned-stdio-products.json` directly from physical retained bytes. It rejects

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused pure-Python tests for the Milestone 0 mimalloc oracle harness."""
+"""Focused pure-Python tests for the mimalloc oracle harness."""
 
 from __future__ import annotations
 

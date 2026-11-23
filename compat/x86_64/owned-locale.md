@@ -15,14 +15,16 @@ byte conversion. The same object also checks fixed UTF-8-to-UTF-16LE and
 UTF-32BE-to-UTF-8 conversions plus exact input/output-pointer and remaining
 byte counts for `EILSEQ`, `EINVAL`, partial progress, and `E2BIG`.
 
-The runner uses one pinned-musl link, static ET_EXEC and static PIE when a
-static product is supplied, and dynamic PIE/non-PIE through both kernel and
-direct owned-loader entry. Every successful run has exact retained argv,
-stdout, stderr, and zero status. It traces the installed headers, seals the
-probe, runner, tool roster, selected product manifests and trees before and
-after execution, retains the one object identity, validates every product link
-receipt, and records/audits each copied dynamic execution payload before and
-after its two entries.
+## Shared installed-component receipt mechanics
+
+Each runner retains a pinned-musl static ET_EXEC link using
+`-static -fno-pie -no-pie`, static ET_EXEC and static PIE when a static product
+is supplied, and dynamic PIE/non-PIE through both kernel and direct owned-loader
+entry. Every successful run has exact retained argv, stdout, stderr, and zero
+status. It traces installed headers, seals the probe, runner, tool roster,
+selected product manifests and trees before and after execution, retains the
+one object identity, validates every product link receipt, and records/audits
+each copied dynamic execution payload before and after its entries.
 
 `owned_locale_component_receipt.py validate-report --root ROOT --report PATH`
 reconstructs that retained report. It rehashes the physical sources, object,

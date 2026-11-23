@@ -15,8 +15,8 @@
      is released by a third thread during that allocation, and only then is
      the lock returned. Source `_mi_meta_free` of a Malloc block is a
      lock-free `mi_free`, so the release completes inside the window; the
-     Rust release instead reaches its backing lock there (see
-     known-differences.md). Only the facts that hold for both are emitted.
+     Rust release instead reaches its backing lock there. Only the facts that
+     hold for both are emitted.
   4. `_mi_meta_free`'s non-Malloc (Arena) branch for an exclusive-arena Theap
      slice, against Rust's typed exclusive-arena Theap reservation.
 

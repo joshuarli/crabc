@@ -270,10 +270,8 @@ def validate_api(data: Mapping[str, Any], upstream: Mapping[str, Any]) -> dict[s
 def relative_evidence(path_text: str, *, location: str) -> Path:
     """Resolve a checked-in evidence path from the repository root.
 
-    Coverage evidence is deliberately different from the inventory paths above:
-    it is authored as a repository-relative path, not as a path relative to the
-    metadata file.  Fragments such as ``README.md#section`` are rejected because
-    they are documentation pointers, not independently inspectable evidence.
+    Coverage evidence paths must be repository-relative and identify a file
+    directly, independently of the metadata file's location.
     """
 
     require(isinstance(path_text, str) and path_text, f"{location} has an empty path")

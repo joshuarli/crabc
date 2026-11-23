@@ -45,6 +45,8 @@ python3 compat/x86_64/validate_parity_ledger.py
 
 | Topic | Owner |
 | --- | --- |
+| Build and installation | [docs/build-and-install.md](docs/build-and-install.md) |
+| Development workflow | [docs/development.md](docs/development.md) |
 | Active sequence, freeze, acceptance and retained holds | [plan.md](plan.md) |
 | Scope, oracles, dependencies and safety | [docs/scope.md](docs/scope.md) |
 | Selected behavior and hardening | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |

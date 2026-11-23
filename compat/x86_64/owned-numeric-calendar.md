@@ -34,14 +34,7 @@ digest before and after execution. Its private dynamic roots receive byte-identi
 copies whose digests are checked before, between, and after loader entries; the
 copies are removed before the final owned-product payload audit.
 
-The runner retains one pinned-musl static ET_EXEC link using
-`-static -fno-pie -no-pie`, static ET_EXEC and static PIE when a static product
-is supplied, and dynamic PIE/non-PIE through both kernel and direct owned
-loader entry. Every successful run has retained exact argv, stdout, stderr,
-and zero status. It traces installed headers, seals the probe, runner, tool
-roster, selected manifests and trees before and after execution, keeps the one
-object identity, validates every product link receipt, and records/audits each
-copied dynamic execution payload before and after both entries.
+The runner uses the [shared installed-component receipt mechanics](owned-locale.md#shared-installed-component-receipt-mechanics).
 
 `owned_numeric_calendar_component_receipt.py validate-report --root ROOT
 --report PATH` reconstructs that retained report. It rehashes the physical
@@ -77,11 +70,7 @@ complete-component caller. With neither argument it builds disposable products
 below checkout-local `.work`. Inputs must be physical directories below that
 tree.
 
-The reader is a pinned-native-container interface: invoke it with the checkout
-mounted at `/workspace`, as the runner does. It stores checkout-contained tool
-paths with that fixed mount spelling while retaining their physical hashes, so
-the same report can be reconstructed after a host checkout path changes without
-mistaking host path text for a different compiler or driver.
+The reader uses the [shared pinned-native-container path convention](owned-locale.md#shared-installed-component-receipt-mechanics): it runs with the checkout mounted at `/workspace` and stores checkout-contained tool paths with that fixed spelling while retaining their physical hashes.
 
 This receipt is evidence for these two finite components only. It does not
 close the text/math/locale/stdio family, alter a disposition, claim broad math
