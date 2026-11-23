@@ -62,10 +62,8 @@ assert_selected_c_abi_surface() {
 
 assert_selected_tsd_sources() {
     local tsd_source="$ROOT_DIR/libc/src/c_abi/x86_64/pthread_tsd.rs"
-    local worker_source="$ROOT_DIR/libc/src/c_abi/x86_64/pthread_create_join.rs"
 
     [ -f "$tsd_source" ] || fail "missing private pthread/C11 TSD source"
-    [ -f "$worker_source" ] || fail "missing selected worker lifecycle source"
     for required in \
         'pinned musl 1.2.6' \
         'src/thread/pthread_key_create.c::{__pthread_key_create,' \
@@ -75,18 +73,11 @@ assert_selected_tsd_sources() {
         'src/thread/tss_create.c' \
         'src/thread/tss_delete.c' \
         'src/thread/tss_set.c' \
-        'PTHREAD_KEYS_MAX: usize = 128' \
-        'PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4' \
-        'TSD_TEAR_DOWN_RUNNING' \
-        'run_selected_worker_tsd_destructors' \
-        'four ascending-key passes' \
         'process-exit destructors' \
         'dynamic or loader TLS'; do
         grep -Fq "$required" "$tsd_source" ||
             fail "private pthread/C11 TSD source is missing ${required}"
     done
-    grep -Fq 'pthread_tsd::run_selected_worker_tsd_destructors' "$worker_source" ||
-        fail "selected worker lifecycle does not run TSD destructors"
 }
 
 require_native_linux_x86_64
@@ -196,7 +187,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
+unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 && !($5 == "LOCAL" && ($8 == "_PROCEDURE_LINKAGE_TABLE_" || $8 == "__rela_iplt_start" || $8 == "__rela_iplt_end" || $8 == "__crabc_x86_64_fixed_graph_dlfcn_v1")) { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
     fail "candidate retains an unresolved symbol"

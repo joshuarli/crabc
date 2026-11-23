@@ -106,7 +106,7 @@ def parse_lock(text):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True)
-    parser.add_argument("--scenario", choices=("getset", "delete", "registry"), required=True)
+    parser.add_argument("--scenario", choices=("getset", "delete", "registry", "signal", "signal-worker"), required=True)
     parser.add_argument("--fifo-cpu", type=int)
     parser.add_argument("--watchdog-cpu", type=int)
     parser.add_argument("--stall-ms", type=int, default=300)

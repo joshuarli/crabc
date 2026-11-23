@@ -155,6 +155,7 @@ const PROT_NONE: i64 = 0;
 const PROT_READ_WRITE: i64 = 0x3;
 const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
 const FUTEX_WAIT: i64 = 0;
+const FUTEX_PRIVATE_FLAG: i64 = 128;
 const CLOCK_REALTIME: c_int = 0;
 const NANOS_PER_SECOND: c_long = 1_000_000_000;
 const PAGE_SIZE: usize = 4_096;
@@ -674,8 +675,17 @@ static SELECTED_WORKER_REGISTRY_HEAD: AtomicUsize = AtomicUsize::new(0);
 // shared. Neither mutates the list, so a pthread_kill need not wait for
 // another task's fork syscall. Musl gets the same independence from its
 // separate per-thread kill lock and thread-list lock.
+//
+// A caller that cannot acquire the lock sleeps on a private futex rather than
+// spinning, so a holder preempted on the waiter's own CPU (for example by a
+// higher-priority SCHED_FIFO task) can run and release it. The waiters bit is
+// set before sleeping and every release that could unblock a sleeper clears
+// the whole word or the last shared hold and wakes all sleepers; each woken
+// caller re-evaluates and re-marks the word if it must sleep again.
 static SELECTED_WORKER_REGISTRY_LOCK: AtomicU32 = AtomicU32::new(0);
 const SELECTED_WORKER_REGISTRY_WRITER: u32 = 1 << 31;
+const SELECTED_WORKER_REGISTRY_WAITERS: u32 = 1 << 30;
+const SELECTED_WORKER_REGISTRY_SHARED_MASK: u32 = SELECTED_WORKER_REGISTRY_WAITERS - 1;
 
 // The bootstrapped initial task is not backed by a worker control mapping,
 // but participates in the same locked last-thread transition in both owned
@@ -870,8 +880,8 @@ pub(super) fn process_became_threaded() -> bool {
 fn lock_selected_worker_registry() {
     loop {
         let state = SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Relaxed);
-        if state & SELECTED_WORKER_REGISTRY_WRITER == 0
-            && SELECTED_WORKER_REGISTRY_LOCK
+        if state & SELECTED_WORKER_REGISTRY_WRITER == 0 {
+            if SELECTED_WORKER_REGISTRY_LOCK
                 .compare_exchange_weak(
                     state,
                     state | SELECTED_WORKER_REGISTRY_WRITER,
@@ -879,19 +889,69 @@ fn lock_selected_worker_registry() {
                     Ordering::Relaxed,
                 )
                 .is_ok()
-        {
+            {
+                break;
+            }
+        } else {
+            sleep_on_selected_worker_registry(state);
+        }
+    }
+    loop {
+        let state = SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Acquire);
+        if state & SELECTED_WORKER_REGISTRY_SHARED_MASK == 0 {
             break;
         }
-        core::hint::spin_loop();
+        sleep_on_selected_worker_registry(state);
     }
-    while SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Acquire) != SELECTED_WORKER_REGISTRY_WRITER {
-        core::hint::spin_loop();
+}
+
+/// Sleep until the registry word changes from the observed `state`.
+///
+/// The waiters bit is set by compare-exchange from the observed word before the
+/// futex wait, and the wait expects that exact marked word. A release that
+/// changes the word between those steps makes the wait return immediately, so
+/// no wake is lost. Spurious wakes, `EINTR`, and `EAGAIN` all return to the
+/// caller's re-evaluation loop.
+fn sleep_on_selected_worker_registry(state: u32) {
+    let marked = state | SELECTED_WORKER_REGISTRY_WAITERS;
+    if state & SELECTED_WORKER_REGISTRY_WAITERS == 0
+        && SELECTED_WORKER_REGISTRY_LOCK
+            .compare_exchange(state, marked, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
+        return;
     }
+    // SAFETY: the static lock word is four-byte aligned and lives for the
+    // process; the kernel only compares it with `marked` and queues the task.
+    let _ = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_FUTEX,
+            core::ptr::addr_of!(SELECTED_WORKER_REGISTRY_LOCK) as usize as i64,
+            FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
+            marked as i64,
+            0,
+        )
+    };
+}
+
+/// Wake every task sleeping on the registry word.
+fn wake_selected_worker_registry() {
+    // SAFETY: as in `sleep_on_selected_worker_registry`.
+    let _ = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_FUTEX,
+            core::ptr::addr_of!(SELECTED_WORKER_REGISTRY_LOCK) as usize as i64,
+            FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
+            c_int::MAX as i64,
+        )
+    };
 }
 
 /// Release the bounded registry lock after its local identity operation.
 fn unlock_selected_worker_registry() {
-    SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+    if SELECTED_WORKER_REGISTRY_LOCK.swap(0, Ordering::Release) & SELECTED_WORKER_REGISTRY_WAITERS != 0 {
+        wake_selected_worker_registry();
+    }
 }
 
 /// Hold the registry shared: every mutation is excluded, other shared
@@ -900,20 +960,27 @@ fn unlock_selected_worker_registry() {
 fn lock_selected_worker_registry_shared() {
     loop {
         let state = SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Relaxed);
-        if state & SELECTED_WORKER_REGISTRY_WRITER == 0
-            && SELECTED_WORKER_REGISTRY_LOCK
+        if state & SELECTED_WORKER_REGISTRY_WRITER == 0 {
+            if SELECTED_WORKER_REGISTRY_LOCK
                 .compare_exchange_weak(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
-        {
-            return;
+            {
+                return;
+            }
+        } else {
+            sleep_on_selected_worker_registry(state);
         }
-        core::hint::spin_loop();
     }
 }
 
 /// Release one shared registry hold.
 fn unlock_selected_worker_registry_shared() {
-    SELECTED_WORKER_REGISTRY_LOCK.fetch_sub(1, Ordering::Release);
+    let previous = SELECTED_WORKER_REGISTRY_LOCK.fetch_sub(1, Ordering::Release);
+    if previous & SELECTED_WORKER_REGISTRY_WAITERS != 0
+        && previous & SELECTED_WORKER_REGISTRY_SHARED_MASK == 1
+    {
+        wake_selected_worker_registry();
+    }
 }
 
 /// Acquire one worker's private source-shaped kill/exit exclusion lock.

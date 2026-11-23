@@ -16,6 +16,9 @@
  *   getset    main owner: pthread_setspecific/pthread_getspecific; worker waiter.
  *   delete    worker owner: pthread_key_create/pthread_key_delete; main waiter.
  *   registry  worker owner: pthread_setspecific/pthread_getspecific; worker waiter.
+ *   signal         no real-time policy: a handler calls pthread_getspecific on the main
+ *                  thread while it loops over TSD operations.
+ *   signal-worker  the same with the interrupted thread a worker.
  *
  * Exit status: 0 completed, 77 SCHED_FIFO unavailable, 1 failure.
  */
@@ -26,6 +29,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -190,16 +194,94 @@ static void *owner(void *argument)
     return 0;
 }
 
+static volatile uint32_t handled;
+static pthread_t signal_target;
+
+static void handler(int number)
+{
+    (void)number;
+    if (pthread_getspecific(key) == (void *)(uintptr_t)~(uintptr_t)0) fail("handler observed an impossible value");
+    __atomic_add_fetch(&handled, 1, __ATOMIC_RELEASE);
+}
+
+static void *signal_victim(void *argument)
+{
+    uint64_t operations = 0;
+
+    (void)argument;
+    if (pthread_setspecific(key, (void *)(uintptr_t)0x0a11e5) != 0) fail("victim setspecific failed");
+    signal_target = pthread_self();
+    __atomic_store_n(&waiter_ready, 1, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&shared->stop, __ATOMIC_ACQUIRE)) {
+        if (pthread_setspecific(key, (void *)(uintptr_t)(0x0a11e5 + (operations & 1))) != 0) {
+            fail("victim setspecific failed");
+        }
+        if ((uintptr_t)pthread_getspecific(key) != 0x0a11e5 + (operations & 1)) {
+            fail("victim observed the wrong value");
+        }
+        operations++;
+        shared->owner_ops = operations;
+    }
+    return 0;
+}
+
+static void *signaller(void *argument)
+{
+    uint64_t round;
+    uint64_t deadline;
+
+    (void)argument;
+    while (!__atomic_load_n(&waiter_ready, __ATOMIC_ACQUIRE)) {
+        sleep_ns(100000);
+    }
+    shared->phase = PHASE_FIFO;
+    deadline = now_ms() + budget_ms;
+    for (round = 0; round < rounds && now_ms() < deadline; round++) {
+        uint32_t before = __atomic_load_n(&handled, __ATOMIC_ACQUIRE);
+
+        if (pthread_kill(signal_target, SIGUSR1) != 0) fail("pthread_kill failed");
+        while (__atomic_load_n(&handled, __ATOMIC_ACQUIRE) == before) {
+            sleep_ns(20000);
+        }
+        shared->waiter_rounds = round + 1;
+        sleep_ns(10000 + (long)(round % 7) * 3000);
+    }
+    __atomic_store_n(&shared->stop, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+
+static int run_signal(int victim_on_main)
+{
+    struct sigaction action;
+    pthread_t thread;
+
+    memset(&action, 0, sizeof action);
+    action.sa_handler = handler;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGUSR1, &action, 0) != 0) fail("sigaction failed");
+    if (victim_on_main) {
+        if (pthread_create(&thread, 0, signaller, 0) != 0) fail("signaller create failed");
+        signal_victim(0);
+    } else {
+        if (pthread_create(&thread, 0, signal_victim, 0) != 0) fail("victim create failed");
+        signaller(0);
+    }
+    if (pthread_join(thread, 0) != 0) fail("join failed");
+    shared->phase = PHASE_DONE;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     pthread_t workers[2];
+    int signal_scenario = 0;
     int owner_on_main;
     int waiter_on_main;
     int descriptor;
     int count = 0;
 
     if (argc < 3) {
-        dprintf(2, "usage: %s PROGRESS_FILE getset|delete|registry [rounds burst budget_ms]\n", argv[0]);
+        dprintf(2, "usage: %s PROGRESS_FILE getset|delete|registry|signal|signal-worker [rounds burst budget_ms]\n", argv[0]);
         return 2;
     }
     if (strcmp(argv[2], "getset") == 0) {
@@ -212,6 +294,8 @@ int main(int argc, char **argv)
     } else if (strcmp(argv[2], "registry") == 0) {
         owner_on_main = 0;
         waiter_on_main = 0;
+    } else if (strcmp(argv[2], "signal") == 0 || strcmp(argv[2], "signal-worker") == 0) {
+        signal_scenario = argv[2][6] ? 2 : 1;
     } else {
         dprintf(2, "tsd_fifo_progress: unknown scenario %s\n", argv[2]);
         return 2;
@@ -231,6 +315,7 @@ int main(int argc, char **argv)
     }
     shared->phase = PHASE_SETUP;
     if (pthread_key_create(&key, 0) != 0) fail("key create failed");
+    if (signal_scenario) return run_signal(signal_scenario == 1);
     if (!waiter_on_main && pthread_create(&workers[count++], 0, waiter, 0) != 0) fail("waiter create failed");
     if (!owner_on_main && pthread_create(&workers[count++], 0, owner, 0) != 0) fail("owner create failed");
     if (waiter_on_main) waiter(0);

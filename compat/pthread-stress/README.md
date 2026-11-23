@@ -81,7 +81,7 @@ about one second per trial.
 
 ```text
 scripts/build_x86_64_owned_sysroot.py --output /workspace/.work/x86_64/NAME   # in the pinned image
-compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot .work/x86_64/NAME [--repeat N] [--include-registry]
+compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot .work/x86_64/NAME [--repeat N] [--include-registry] [--include-signal]
 ```
 
 The container needs only `--cap-add SYS_NICE` and `--network none`. The runner
@@ -91,8 +91,15 @@ The default scenarios keep the lock owner on a task that takes only the
 pthread-key lock: `getset` (owner is the main thread, in
 `pthread_setspecific`/`pthread_getspecific`) and `delete` (owner is a worker in
 `pthread_key_create`/`pthread_key_delete`). `--include-registry` adds `registry`,
-two workers calling `pthread_getspecific`/`pthread_setspecific`. A worker's key
-lookup takes the selected-worker registry spin lock owned by
-`libc/src/c_abi/x86_64/pthread_create_join.rs`, so this scenario fails with that
-lock held until its owner stops spinning; it is not part of the default pass
-condition.
+two workers calling `pthread_getspecific`/`pthread_setspecific`, whose lookups
+also take the selected-worker registry lock in
+`libc/src/c_abi/x86_64/pthread_create_join.rs`. Both locks sleep on a private
+futex when contended, so a preempted holder on the waiter's CPU can run.
+
+`--include-signal` adds `signal` and `signal-worker`: no real-time policy, a
+second thread sends SIGUSR1 to a thread looping over TSD operations, and the
+handler calls `pthread_getspecific`. The pinned-musl control completes because
+musl reads the thread's own slot without a lock. The installed product does not
+complete: a handler that interrupts its own thread inside a TSD or registry
+critical section waits for a lock that thread can never release. This case is
+reachable and unfixed, so it is not part of the default pass condition.

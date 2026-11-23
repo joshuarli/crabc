@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Native SCHED_FIFO progress reproducer for the selected pthread-key lock.
 #
-#   compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot HOST_SYSROOT [--repeat N] [--include-registry]
+#   compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot HOST_SYSROOT [--repeat N] [--include-registry] [--include-signal]
 #
 # HOST_SYSROOT is an installed owned static product below this checkout's .work,
 # built in the pinned image with
@@ -17,6 +17,9 @@
 # lookup takes only the selected pthread-key lock. --include-registry adds the
 # worker-to-worker scenario, whose lookups also take the selected-worker registry
 # spin lock owned by pthread_create_join.rs.
+#
+# --include-signal adds signal handlers that call pthread_getspecific on a thread
+# interrupted inside its own TSD operations, with no real-time policy.
 #
 # Exit status: 0 every crabc trial made progress; 1 a crabc trial made no
 # progress (or its control did); 77 SCHED_FIFO or CAP_SYS_NICE is unavailable.
@@ -35,12 +38,14 @@ if [ "${1:-}" != --in-container ]; then
     sysroot=""
     repeat=3
     include_registry=0
+    include_signal=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --sysroot) [ "$#" -ge 2 ] || fail "--sysroot needs a path"; sysroot="$2"; shift 2 ;;
             --repeat) [ "$#" -ge 2 ] || fail "--repeat needs a count"; repeat="$2"; shift 2 ;;
             --include-registry) include_registry=1; shift ;;
-            *) fail "usage: $0 --sysroot HOST_SYSROOT [--repeat N] [--include-registry]" ;;
+            --include-signal) include_signal=1; shift ;;
+            *) fail "usage: $0 --sysroot HOST_SYSROOT [--repeat N] [--include-registry] [--include-signal]" ;;
         esac
     done
     [ -n "$sysroot" ] || fail "--sysroot is required"
@@ -61,13 +66,14 @@ if [ "${1:-}" != --in-container ]; then
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --volume "$ROOT_DIR:/workspace" --workdir /workspace \
         "$image" bash "/workspace/$HERE/run_tsd_fifo_progress.sh" \
-        --in-container "/workspace/${sysroot#"$ROOT_DIR"/}" "$repeat" "$include_registry"
+        --in-container "/workspace/${sysroot#"$ROOT_DIR"/}" "$repeat" "$include_registry" "$include_signal"
     exit
 fi
 
 sysroot="$2"
 repeat="$3"
 include_registry="$4"
+include_signal="$5"
 cd /workspace
 work="$(mktemp -d "$TMPDIR/tsd-fifo.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
@@ -106,6 +112,7 @@ run_trial() {
 
 scenarios=(getset delete)
 [ "$include_registry" -eq 0 ] || scenarios+=(registry)
+[ "$include_signal" -eq 0 ] || scenarios+=(signal signal-worker)
 for scenario in "${scenarios[@]}"; do
     for attempt in $(seq "$repeat"); do
         status=0
