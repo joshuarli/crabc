@@ -3333,7 +3333,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("capabilities", artifact)
         for owner in (
             "compat/upstreams.toml",
-            "docker/Dockerfile.x86_64",
+            "docker/image/sources.lock.json",
             "libc/src/lib.rs",
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/fenv.rs",

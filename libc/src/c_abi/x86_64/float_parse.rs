@@ -43,7 +43,7 @@
  //! The checked assembly is generated from exactly those sources with musl's
  //! x86-64 `-std=c99 -ffreestanding -frounding-math` configuration and private
  //! helper renaming. Generation occurs in the native image pinned by
- //! `docker/Dockerfile.x86_64` (Alpine 3.24.1 digest recorded there,
+ //! `docker/image/sources.lock.json` (Alpine 3.24.1 rootfs digest recorded there,
  //! GCC 15.2.0 at translation time) using the image's
  //! `/usr/local/bin/crabc-x86_64-musl-gcc`. It is checked in so the Rust
  //! static archive never invokes a foreign compiler or links a foreign object.

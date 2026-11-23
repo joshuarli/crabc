@@ -23,7 +23,7 @@ INVENTORY_PATH = ROOT / "compat" / "x86_64" / "header_callable_inventory.py"
 AUDIT_PATH = ROOT / "compat" / "x86_64" / "header_callable_linkage_audit.py"
 RUNNER = ROOT / "compat" / "x86_64" / "run_header_callable_linkage_audit.sh"
 CHECKED_INVENTORY = ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
-DOCKERFILE = ROOT / "docker" / "Dockerfile.x86_64"
+IMAGE_LOCK = ROOT / "docker" / "image" / "sources.lock.json"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 LINKAGE_SPEC_AST_FIXTURE = (
     ROOT
@@ -203,13 +203,29 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertIn('"-E", "-dD"', source)
         self.assertNotIn("parse_header", source)
 
+    @unittest.skipUnless(
+        Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+        "requires the pinned native image",
+    )
     def test_pinned_image_provisions_clang_for_the_canonical_inventory(self) -> None:
-        """The checked AST inventory must be reproducible in its declared image."""
-        runner = RUNNER.read_text(encoding="utf-8")
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        """The image must run the locked clang and emit the JSON AST the inventory reads."""
+        image_lock = json.loads(IMAGE_LOCK.read_text(encoding="utf-8"))
+        locked = [
+            item["version"] for item in image_lock["inputs"]
+            if item.get("role") == "apk" and item["filename"] == f"clang22-{item['version']}.apk"
+        ]
+        self.assertEqual(len(locked), 1)
 
-        self.assertIn("for tool in cargo clang ld nm python3 rustup; do", runner)
-        self.assertIn("        clang \\", dockerfile)
+        clang = shutil.which("clang")
+        self.assertIsNotNone(clang, "the pinned image provides no clang")
+        version = subprocess.run([clang, "--version"], check=True, capture_output=True, text=True).stdout
+        self.assertIn(f"clang version {locked[0].split('-r')[0]}", version)
+        ast = subprocess.run(
+            [clang, "-x", "c", "-Xclang", "-ast-dump=json", "-fsyntax-only", "-"],
+            input="int callable(void);\n", check=True, capture_output=True, text=True,
+        ).stdout
+        declarations = json.loads(ast)["inner"]
+        self.assertIn(("FunctionDecl", "callable"), [(item["kind"], item.get("name")) for item in declarations])
 
     def test_ast_function_discovery_distinguishes_archive_external_from_static_inline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,6 +1,6 @@
 # Native Linux/AArch64 core-foundation evidence image.
 #
-# Same tool set and pins as docker/Dockerfile.x86_64, built natively for
+# Same tool set and pins as docker/image/sources.lock.json, built natively for
 # arm64 inside the provisioned OrbStack Linux/arm64 VM. This image must never
 # be used through emulation. Build it natively on the aarch64 host:
 #   docker build --platform linux/arm64 --tag crabc-core-evidence:aarch64 \

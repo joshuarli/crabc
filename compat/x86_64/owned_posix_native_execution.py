@@ -81,7 +81,7 @@ SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES, *wordexp_policy.wordexp.SOURC
     'compat/x86_64/owned_posix_family_observations.py',
     'compat/x86_64/owned_posix_static_products.py',
     'compat/x86_64/owned_dynamic_qualification.py',
-    'compat/upstreams.toml', 'rust-toolchain.toml', f"docker/Dockerfile.{native_arch()['arch']}",
+    'compat/upstreams.toml', 'rust-toolchain.toml', ("docker/image/sources.lock.json" if native_arch()["arch"] == "x86_64" else "docker/Dockerfile.aarch64"),
 )
 # Family admission is deliberately a consuming phase over the two existing
 # execution receipts. It does not rerun either producer and cannot turn a

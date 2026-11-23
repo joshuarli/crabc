@@ -75,7 +75,7 @@ depends_on = []
 category = "architecture-foundation"
 description = "Pinned musl 1.2.6 x86-64 compiler, headers, loader, and libc identity proof for all native C/POSIX oracle lanes."
 aarch64_gates = ["symbols"]
-source_owners = ["compat/upstreams.toml", "compat/x86_64/musl_oracle_probe.c", "compat/x86_64/run_musl_oracle.sh", "docker/Dockerfile.x86_64", "docker/x86_64-musl-oracle-gcc"]
+source_owners = ["compat/upstreams.toml", "compat/x86_64/musl_oracle_probe.c", "compat/x86_64/run_musl_oracle.sh", "docker/image/sources.lock.json", "docker/x86_64-musl-oracle-gcc"]
 x86_abi_prerequisites = ["Native Linux/x86-64 execution", "pinned musl x86-64 interpreter and libc", "compiler specs that select only the pinned musl sysroot"]
 x86_header_prerequisites = ["Pinned musl 1.2.6 headers selected through the oracle compiler, never Alpine bootstrap or ambient host headers."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh musl-oracle", scope = "Native x86-only source, compiler-specs, ELF-interpreter, and mapped-libc identity proof; it does not select crabc-libc or claim public support." }]
@@ -1503,7 +1503,7 @@ source_owners = [
   "compat/x86_64/header_callable_extension_contract.toml",
   "compat/x86_64/header_callable_extension_contract.py",
   "compat/x86_64/tests/test_header_callable_extension_contract.py",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "compat/upstreams.toml",
   "compat/x86_64/headers-layouts.toml",
   "compat/x86_64/headers-layouts-foundation.toml",
@@ -13376,7 +13376,7 @@ capabilities = ["math.elementary-fenv-sensitive"]
 source_owners = [
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13629,7 +13629,7 @@ id = "static-c-math-cbrt"
 description = "Private native x86 selected-static binary32/binary64 cube-root artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `cbrt` and `cbrtf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `cbrt.c`/`cbrtf.c` retains their binary64 rough estimate, polynomial/Newton operation order, and cbrtf's MXCSR-directed `cvtsd2ss` result conversion, rather than an approximate source rewrite. The record stream covers signed zeros, normal/subnormal finite boundaries, ordinary powers, infinities, quiet/signaling NaNs, every rounding direction, and exception flags; each record also proves that requested and observed rounding directions agree. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `cbrtl`, `fma`/`fmaf`, fmod/remainder/modf, fenv rounding/truncation, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13675,7 +13675,7 @@ id = "static-c-math-exp2"
 description = "Private native x86 selected-static binary32/binary64 base-two exponential artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `exp2` and `exp2f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp2.c`/`exp2f.c` keeps their private binary64/binary32 tables and local range-scaling helpers, so it neither shares selected `math.special` state nor calls ambient libm. The source's `WANT_ROUNDING` branches retain ordinary reduction and explicit subnormal/overflow/underflow behavior through all four MXCSR rounding modes; the record stream covers signed zeros, tiny and subnormal boundaries, reduction points, infinities, quiet/signaling NaNs, results, and exception flags. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `exp2l`, adjacent exp/log/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13723,7 +13723,7 @@ id = "static-c-math-expm1"
 description = "Private native x86 selected-static binary32/binary64 exponential-minus-one artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `expm1` and `expm1f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `expm1.c`/`expm1f.c` is a direct no-call closure: it retains binary64/binary32 range reduction, polynomial reconstruction, raw-subnormal `FORCE_EVAL`, and overflow scaling without tables, ambient libm, or selected `math.special` state. The record stream covers signed zeros, tiny/subnormal and normal boundaries, reduction and overflow thresholds, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `expm1l`, adjacent exp/log/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13771,7 +13771,7 @@ id = "static-c-math-log10"
 description = "Private native x86 selected-static binary32/binary64 base-ten logarithm artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `log10` and `log10f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `log10.c`/`log10f.c` is a direct no-call closure: it retains binary64/binary32 raw classification, subnormal scaling, reduction, polynomial reconstruction, and zero/negative domain arithmetic without tables, ambient libm, or selected `math.special` state. The record stream covers signed-zero divide-by-zero, negative-domain invalid, tiny/subnormal and normal bounds, reduction points, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `log10l`, adjacent log/exp/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13819,7 +13819,7 @@ id = "static-c-math-ceil"
 description = "Private native x86 selected-static binary32/binary64 fixed-direction ceiling artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `ceil` and `ceilf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `ceil.c`/`ceilf.c` retains binary64's raw IEEE exponent classification and `toint` add/subtract operation order, plus binary32's raw fraction-mask transformation and volatile `FORCE_EVAL` addition, rather than a target-intrinsic rewrite. The record stream covers signed zero, finite normal/subnormal boundaries, neighbors around integral values, large finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags; fractional finite values preserve musl's `FE_INEXACT` behavior. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes binary80 `ceill`, floor and all other fixed-direction rounding, fma, fmod, cbrt, fenv API/policy, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13865,7 +13865,7 @@ id = "static-c-math-floor"
 description = "Private native x86 selected-static binary32/binary64 fixed-direction floor artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `floor` and `floorf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `floor.c`/`floorf.c` retains binary64's raw IEEE exponent classification and `toint` add/subtract operation order, plus binary32's raw fraction-mask transformation and volatile `FORCE_EVAL` addition, rather than a target-intrinsic rewrite. The record stream covers signed zero, finite normal/subnormal boundaries, neighbors around integral values, large finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags; fractional finite values preserve musl's `FE_INEXACT` behavior. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes binary80 `floorl`, ceiling and all other fixed-direction rounding, fma, fmod, cbrt, fenv API/policy, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13911,7 +13911,7 @@ id = "static-c-math-round"
 description = "Private native x86 selected-static binary32/binary64 half-away rounding artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `round` and `roundf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `round.c`/`roundf.c` retains sign normalization, binary64/binary32 `toint` add/subtract operation order, and the half-away correction rather than a target-intrinsic rewrite. The record stream covers signed zero, finite normal/subnormal boundaries, integral-neighbor and exact-halfway values, large finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags; nonzero magnitudes below one half preserve musl's `FE_INEXACT` behavior. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes binary80 `roundl`, fenv API/policy, `rint*`/`nearbyint*`, truncation, directed ceiling/floor, fma, fmod, cbrt, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -13957,7 +13957,7 @@ id = "static-c-math-log2"
 description = "Private native x86 selected-static binary32/binary64 logarithm-base-two artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `log2` and `log2f` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `log2.c`/`log2f.c`, two source tables, and four IEEE error-expression providers retains close-to-one reconstruction, subnormal normalization, table reduction, exact powers-of-two behavior, and sign-sensitive zero/domain expressions rather than a target-intrinsic rewrite. The localized data/error closure has no undefined callable symbols and exports neither its tables nor helpers. The record stream covers signed zero, finite normal/subnormal boundaries, power-of-two neighbors, high finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags including musl's divide-by-zero/invalid behavior. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `log2l`, log/log1p/log10 and exp/expm1 families, `exp2`, inverse trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -14105,7 +14105,7 @@ capabilities = ["math.special"]
 source_owners = [
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -14159,7 +14159,7 @@ capabilities = ["math.complex"]
 source_owners = [
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "builtins/UPSTREAM.md",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
@@ -14217,7 +14217,7 @@ capabilities = ["math.elementary-long-double"]
 source_owners = [
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16465,7 +16465,7 @@ id = "static-c-math-exp"
 description = "Private native x86 selected-static binary32/binary64 exponential artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `exp` and `expf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp.c`/`expf.c`, two source tables, and six explicit error-expression providers retains table argument reduction, the close-to-zero rule, scalar polynomial evaluation, large-result `specialcase` reconstruction, gradual subnormal handling, and explicit overflow/underflow expressions rather than an ambient exponential provider. The localized data/error closure has no undefined callable symbols and exports neither its tables nor helpers. The record stream covers signed zero, finite normal/subnormal and threshold boundaries, high finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `expl`, exp2/expm1 and all log families, inverse/direct trigonometry, fma, hypot, fmod/remainder, rounding/truncation/ceiling/floor, roots, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The `exp2f_data.c` source table is a localized implementation detail, not selection of public `exp2f`."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16512,7 +16512,7 @@ id = "static-c-math-cos"
 description = "Private native x86 selected-static binary32/binary64 cosine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `cos` and `cosf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `cos.c`/`cosf.c` plus the exact eleven-source closure retains raw classification, tiny-input inexact behavior, quadrant selection, fixed generic sine/cosine polynomials, moderate/large argument reduction, and fixed multiword `2/pi` data without ambient libm or selected `math.special` state. The localized kernel/reduction closure includes private `floor`/`scalbn` providers, has no undefined callable symbols, and exports neither implementation helpers nor public `sin`/`sinf` spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, quadrant boundaries, moderate and huge reductions, finite extrema, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `cosl`, `sincos*`, public sin/tan/hyperbolic/inverse-trig/log/exp/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16559,7 +16559,7 @@ id = "static-c-math-cosh"
 description = "Private native x86 selected-static binary32/binary64 hyperbolic-cosine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `cosh` and `coshf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `cosh.c`/`coshf.c` plus the exact sixteen-source closure retains raw magnitude classification, exact tiny-input one behavior with inexact evaluation, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, reciprocal exponential reconstruction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `coshl`, public sinh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16606,7 +16606,7 @@ id = "static-c-math-asinh"
 description = "Private native x86 selected-static binary32/binary64 inverse-hyperbolic-sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `asinh` and `asinhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `asinh.c`/`asinhf.c` plus the exact fifteen-source closure retains raw sign/magnitude classification, signed tiny-input behavior, log-plus-ln2 large reconstruction, reciprocal-square-root middle reconstruction, log1p near-one reconstruction, and final sign restoration without ambient libm or selected `math.special` state. The localized log/square-root closure includes private log/log1p/sqrt providers, tables, and IEEE error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public log/log1p/sqrt spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, log1p/middle/large-reconstruction thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `asinhl`, public acosh/atanh/cosh/sinh/tanh and direct trigonometry, public log/log1p/sqrt/exp/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized log/logf and square-root tables are implementation details, not selection of their public entries."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16653,7 +16653,7 @@ id = "static-c-math-exp10f"
 description = "Private native x86 selected-static GNU binary32 decimal-exponential artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves strong `exp10f` and musl's weak same-address `pow10f` alias into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp10f.c` plus the exact twelve-source closure retains raw integral/fractional splitting, the exact `[-7, 7]` decimal table, binary32 fractional exp2 reconstruction, binary64 large-magnitude fallback, and explicit overflow/underflow expressions without ambient libm or selected `math.special` state. The localized closure includes private modff/exp2/exp2f providers, exp tables, and IEEE error-expression providers, has no undefined callable symbols, and exports neither an implementation helper nor public modf/exp2 spellings. The record stream calls both aliases for signed zero, tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned `exp10f` and the required weak alias reject compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary64 `exp10`/`pow10`, binary80 `exp10l`/`pow10l`, public modf/exp2/exp/pow functions, other elementary math, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized exp data tables are implementation details, not selection of public exp/exp2 entries."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16700,7 +16700,7 @@ id = "static-c-math-sinh"
 description = "Private native x86 selected-static binary32/binary64 hyperbolic-sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sinh` and `sinhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `sinh.c`/`sinhf.c` plus the exact sixteen-source closure retains raw sign/magnitude classification, signed tiny-input behavior, stable expm1 reconstruction, the fixed expm1 polynomial/reduction, and overflow-safe exponential scaling without ambient libm or selected `math.special` state. The localized exponent closure includes private exp/expm1, `__expo2`, tables, and error-expression providers, has no undefined callable symbols, and exports neither implementation helpers nor public exp/expm1 spellings. The record stream covers signed zero, tiny/subnormal and normal bounds, expm1/reconstruction and overflow thresholds, high finite values, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned definitions reject weak compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary80 `sinhl`, public cosh/tanh and direct/inverse trigonometry, public exp/expm1/log/pow functions, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized `exp_data.c` and `exp2f_data.c` tables are implementation details, not selection of public exp/exp2 entries."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16747,7 +16747,7 @@ id = "static-c-math-exp10"
 description = "Private native x86 selected-static GNU binary64 decimal-exponential alias artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves strong `exp10` and musl's weak same-address `pow10` alias into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `exp10.c` plus the exact eleven-source closure retains raw integral/fractional splitting, the exact `[-15, 15]` decimal table, fractional exp2 reconstruction, and large-magnitude pow fallback without ambient libm or selected `math.special` state. The localized closure includes private modf/exp2/pow/fabs providers, exp/pow tables, and IEEE error-expression helpers; it has no undefined callable symbols and exports neither implementation helpers nor public provider spellings. The record stream calls both aliases for signed zero, tiny/subnormal and normal bounds, table and fallback thresholds, overflow/underflow, infinities, quiet/signaling NaNs, raw results, requested/observed rounding directions, and exception flags. Strong target-owned `exp10` and the required weak alias reject compiler-builtins fallback. Existing fenv entries only reset and observe MXCSR; this artifact does not select fenv API/policy. It excludes binary32 `exp10f`/`pow10f`, binary80 `exp10l`/`pow10l`, public modf/exp2/pow/fabs functions, other elementary math, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support. The localized data tables are implementation details, not selection of public exp2 or pow entries."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16796,7 +16796,7 @@ id = "static-c-math-log"
 description = "Private native x86 selected-static binary32/binary64 natural logarithm artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `log` and `logf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `log.c`/`logf.c` plus their direct source closure retains private binary64/binary32 tables and domain helpers: raw classification, subnormal normalization, close-to-one directed-zero handling, reduction, polynomial reconstruction, and zero/negative domain arithmetic without ambient libm or selected `math.special` state. The record stream covers signed-zero divide-by-zero, negative-domain invalid, tiny/subnormal and normal bounds, close-to-one values, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `logl`, adjacent log1p/log2/log10/exp/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16844,7 +16844,7 @@ id = "static-c-math-sin"
 description = "Private native x86 selected-static binary32/binary64 sine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sin` and `sinf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `sin.c`/`sinf.c` plus their direct source closure retains private fixed kernel, argument-reduction, and floor/scalbn providers: raw classification, small-input handling, quadrant selection, moderate/large reduction, fixed multiword `2/pi` data, and polynomial reconstruction without ambient libm or selected `math.special` state. The record stream covers signed zeros, tiny/subnormal and normal bounds, quadrant boundaries, moderate and huge reductions, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `sinl`, `sincos*`, adjacent cos/tan/hyperbolic/inverse-trig/log/exp/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16892,7 +16892,7 @@ id = "static-c-math-tan"
 description = "Private native x86 selected-static binary32/binary64 tangent artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `tan` and `tanf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `tan.c`/`tanf.c` plus their direct source closure retains private fixed kernel, argument-reduction, and floor/scalbn providers: raw classification, small-input handling, quotient-parity quadrant selection, moderate/large reduction, fixed multiword `2/pi` data, and polynomial reconstruction without ambient libm or selected `math.special` state. The record stream covers signed zeros, tiny/subnormal and normal bounds, pole-adjacent quadrant boundaries, moderate and huge reductions, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `tanl`, `sincos*`, adjacent sin/cos/hyperbolic/inverse-trig/log/exp/pow functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16940,7 +16940,7 @@ id = "static-c-math-tanh"
 description = "Private native x86 selected-static binary32/binary64 hyperbolic-tangent artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `tanh` and `tanhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `tanh.c`/`tanhf.c` plus their direct source closure retains binary64/binary32 absolute-value classification, subnormal force-evaluation, source threshold selection, saturation, and signed-result reconstruction. Matching private `expm1.c`/`expm1f.c` providers are renamed and local, so neither public `expm1` nor ambient libm enters the candidate. The record stream covers signed zero, raw subnormal and normal bounds, both threshold neighborhoods, saturation boundaries, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `tanhl`, tan/sin/cos, adjacent sinh/cosh and inverse-hyperbolic functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -16988,7 +16988,7 @@ id = "static-c-math-atanh"
 description = "Private native x86 selected-static binary32/binary64 inverse-hyperbolic-tangent artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `atanh` and `atanhf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `atanh.c`/`atanhf.c` plus their direct source closure retains binary64/binary32 absolute-value classification, subnormal force-evaluation, tiny-input, half-branch, pole, and domain behavior with signed-result reconstruction. Matching private `log1p.c`/`log1pf.c` providers are renamed and local, so neither public `log1p` nor ambient libm enters the candidate. The record stream covers signed zero, raw subnormal and normal bounds, tiny-input and half-branch neighborhoods, pole/domain boundaries, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `atanhl`, atan/tanh/sin/cos, adjacent asinh/acosh and hyperbolic functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -17036,7 +17036,7 @@ id = "static-c-math-acosh"
 description = "Private native x86 selected-static binary32/binary64 inverse-hyperbolic-cosine artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `acosh` and `acoshf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `acosh.c`/`acoshf.c` plus their direct source closure retains binary64/binary32 below-one domain classification, near-one log1p/square-root reconstruction, middle two-to-large logarithmic branch selection, and NaN behavior. Matching private `log.c`/`logf.c`, `log1p.c`/`log1pf.c`, and `sqrt.c`/`sqrtf.c` providers plus their fixed data and typed domain helpers are renamed and local, so neither public math sibling nor ambient libm enters the candidate. The record stream covers signed zero, raw subnormal and normal below-one values, near-one and two branch neighborhoods, binary64/binary32 large-cutoff boundaries, finite extrema, infinities, quiet/signaling NaNs, results, and exception flags through all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `acoshl`, acos/asinh/atanh/tanh/sin/cos/cosh/sinh functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -17084,7 +17084,7 @@ id = "static-c-math-sincos"
 description = "Private native x86 selected-static GNU binary32/binary64 dual-output trigonometric artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `sincos` and `sincosf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `sincos.c`/`sincosf.c` plus their direct source closure retains binary64/binary32 raw classification, small-input behavior, source quadrant selection, NaN/large-argument behavior, and source-ordered output stores. Matching private `__sin.c`/`__cos.c`, `__sindf.c`/`__cosdf.c`, and pio2 reduction providers plus local floor/scalbn support are renamed and local, so neither public `sin`/`cos` sibling nor ambient libm enters the candidate. The record stream covers independent and aliased output pointers; signed zero; raw subnormal and normal values; quadrant and large-reduction neighborhoods; finite extrema; infinities; quiet/signaling NaNs; both result payloads; exception flags; and all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `sincosl`, public sin/cos functions, tan and hyperbolic/inverse-trig functions, fenv API/policy, fmod/remainder/modf, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -17132,7 +17132,7 @@ id = "static-c-math-pow"
 description = "Private native x86 selected-static binary32/binary64 scalar power artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `pow` and `powf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `pow.c`/`powf.c` plus their direct source closure retains binary64/binary32 raw classification, signed-integral-exponent rules, signed-zero parity, zero/pole and infinity/NaN behavior, fixed logarithm/exponential table paths, and typed overflow/underflow helpers. Matching private exp/pow/exp2f/powf table data, invalid/overflow/underflow/xflow helpers, and `fabs.c` provider are renamed and local, so public exp/log/exp2/fabs siblings and ambient libm cannot enter the candidate. The record stream covers signed zero and integral/exact/nonintegral exponent parity, domain/pole inputs, finite logarithm/exponential paths, raw subnormal/normal boundaries, overflow/underflow, finite extrema, infinities, quiet/signaling NaNs, result payloads, exception flags, and all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `powl`, public exp/log/exp2/fabs functions, fma, fmod/remainder/modf, fenv API/policy, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
-  "docker/Dockerfile.x86_64",
+  "docker/image/sources.lock.json",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
@@ -20749,7 +20749,7 @@ status = "foundation-verified"
 [[family.verified_artifact]]
 id = "dynamic-pie-scrt1-startup"
 description = "Private native x86 Rust-produced `Scrt1.o` dynamic-PIE startup artifact within still-planned `crt.dynamic-startup`, not a selected CRT family. It preserves the original SysV entry stack, aligns the call frame, reaches one bounded Rust startup handoff without GOT/TLS access, and follows pinned musl 1.2.6 x86-64's null `rtld_fini` convention rather than inventing a `%rdx` loader-finalizer ABI. A freestanding candidate-only six-argument `__libc_start_main` probe proves candidate preinit/init/main/fini callback order and the null finalizer; a separate pinned-musl dynamic-PIE launch compares observable `IMF` main-image behavior but does not infer candidate callback consumption. The launch checks candidate `ET_DYN` PIE, one pinned `PT_INTERP`, one `DT_NEEDED=libc.so`, and retained private revision-one `CRABC` owned-CRT marker; the builder rejects a forged marker. GNU-property/CET/ISA metadata parity is deliberately excluded. It does not select crabc-libc, crabc-ldso, RuntimeV1, a loader-to-CRT handoff, loader TLS, static-link helper closure, dlfcn, installed CRT/sysroot, family completion, or public x86 support."
-source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_Scrt1.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_array_boundaries.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/fixtures/dynamic_startup_fixture_x86_64.c", "crt/fixtures/dynamic_startup_lifecycle_fixture_x86_64.c", "crt/tests/test_x86_64_dynamic_startup.py", "crt/x86_64-dynamic-startup.md", "crt/x86_64-static-pie.md", "compat/x86_64/run_musl_oracle.sh", "docker/Dockerfile.x86_64", "scripts/dev-x86_64.sh"]
+source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_Scrt1.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_array_boundaries.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/fixtures/dynamic_startup_fixture_x86_64.c", "crt/fixtures/dynamic_startup_lifecycle_fixture_x86_64.c", "crt/tests/test_x86_64_dynamic_startup.py", "crt/x86_64-dynamic-startup.md", "crt/x86_64-static-pie.md", "compat/x86_64/run_musl_oracle.sh", "docker/image/sources.lock.json", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["The Linux x86-64 dynamic-PIE entry receives the original argc/argv/envp/auxv stack in `%rsp`; the entry preserves it in r15, clears rbp, realigns rsp to 16 bytes, and has one direct R_X86_64_PLT32 handoff to the defined `__crabc_x86_64_dynamic_start` symbol before normal Rust code.", "The early entry has no GOT or TLS relocation and does not capture entry `%rdx`; pinned musl 1.2.6 x86-64 Scrt1's private `_start_c` passes a null sixth `rtld_fini` argument to `__libc_start_main`.", "The candidate object carries one exact allocated SHT_NOTE `.note.crabc.owned-crt` `CRABC` type 0x43525401 revision one marker, retained inside a final PIE PT_NOTE range. It is a future-admission marker only; no current crabc loader consumes it.", "A no-interpreter ET_EXEC fixture resolves the real candidate Scrt1.o's six-argument boundary, requires null rtld_fini, and proves forward preinit/init plus reverse fini callback order `PQIJKMYXF`. Separately, the evidence links candidate Scrt1.o/crti.o/crtn.o against only the pinned musl interpreter and libc.so, checks EM_X86_64 ET_DYN, pinned PT_INTERP, and exactly DT_NEEDED libc.so, then compares its musl-owned constructor/main/destructor output with pinned-musl Scrt1.o. GNU-property/CET/ISA metadata parity is excluded."]
 x86_header_prerequisites = ["The fixture compiles only against the pinned musl 1.2.6 headers and does not establish installed crabc headers, an owned compiler driver, or a public CRT link specification."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh crt-dynamic-startup", scope = "Native x86 private dynamic-PIE CRT evidence first verifies the pinned-musl oracle, then compares pinned-musl and Rust-produced Scrt1.o/crti.o/crtn.o links with the pinned interpreter/libc. It proves the musl x86 null-finalizer convention, bounded entry shape, musl-owned `IMF` launch behavior, ET_DYN/PT_INTERP/DT_NEEDED identity, retained SHT_NOTE/PT_NOTE marker, and forged-marker rejection. A separate no-interpreter candidate-only ET_EXEC fixture invokes the supplied callbacks and proves `PQIJKMYXF` forward/reverse lifecycle order; `IMF` does not claim pinned musl consumed candidate callbacks. It does not select candidate libc, candidate ldso, loader handoff/TLS, RuntimeV1, sysroot, family completion, GNU-property/CET/ISA metadata parity, or public x86 support." }]
@@ -20767,7 +20767,7 @@ oracle = [{ kind = "artifact-provenance", source = "crabc x86 direct-rust CRT bu
 [[family.verified_artifact]]
 id = "dynamic-pie-link-contract"
 description = "Private native x86 dynamic-PIE Rust CRT link-contract artifact inside still-planned `crt.dynamic-startup`, not a selected CRT family. It builds exactly Rust-produced `Scrt1.o`/`crti.o`/`crtn.o` plus one pinned-musl-compiled fixture under `-nostdlib -nostartfiles`, then rejects ambient musl `Scrt1.o`, crtbegin/crtend, libgcc, sanitizer, and compiler-runtime substitution from the final link map. The final ET_DYN has exactly one pinned-musl PT_INTERP and one PT_DYNAMIC, only DT_NEEDED=libc.so, lifecycle DT_INIT/DT_FINI/DT_INIT_ARRAY/DT_FINI_ARRAY tags, entry exactly at the Rust `_start`, global crti/crtn `_init`/`_fini`, and a defined direct `__crabc_x86_64_dynamic_start` helper. Its permitted unresolved dynamic boundary is only musl `__libc_start_main`, `write`, `_exit`, plus the intentionally weak private owned-CRT record; `__stack_chk_fail` and unwind/compiler-runtime helpers reject the artifact. Pinned musl owns the observed `IMF` constructor/main/destructor launch. It does not select candidate libc, crabc-ldso, RuntimeV1, loader-to-CRT handoff/TLS, static-link helper closure, an installed CRT/sysroot/compiler driver, full dynamic startup, family completion, or public x86 support."
-source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_Scrt1.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/fixtures/dynamic_startup_fixture_x86_64.c", "crt/tests/test_x86_64_dynamic_link_contract.py", "crt/x86_64-dynamic-link-contract.md", "compat/x86_64/run_musl_oracle.sh", "docker/Dockerfile.x86_64", "scripts/dev-x86_64.sh"]
+source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_Scrt1.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/fixtures/dynamic_startup_fixture_x86_64.c", "crt/tests/test_x86_64_dynamic_link_contract.py", "crt/x86_64-dynamic-link-contract.md", "compat/x86_64/run_musl_oracle.sh", "docker/image/sources.lock.json", "scripts/dev-x86_64.sh"]
 x86_abi_prerequisites = ["The explicit `-nostdlib -nostartfiles` dynamic PIE link names exactly Rust-produced Scrt1.o, crti.o, the fixture, and crtn.o; its link map rejects ambient musl Scrt1.o, crtbegin/crtend, libgcc, sanitizers, and compiler runtime objects.", "The x86-64 ET_DYN ELF entry equals global Rust `_start`; `_init` and `_fini` remain global function boundaries from crti/crtn, and `__crabc_x86_64_dynamic_start` is defined directly in the executable.", "Exactly one PT_INTERP names pinned musl ld-musl-x86_64.so.1; exactly one PT_DYNAMIC has DT_NEEDED libc.so and DT_INIT/DT_FINI/DT_INIT_ARRAY/DT_FINI_ARRAY. The only allowed unresolved symbols are __libc_start_main, write, _exit, and weak __crabc_x86_64_owned_crt_handoff."]
 x86_header_prerequisites = ["The fixture is compiled only against pinned musl 1.2.6 headers; this proves no installed crabc x86 header tree, compiler driver, or sysroot surface."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh crt-dynamic-link-contract", scope = "Native x86 private dynamic-PIE link-contract evidence first verifies the pinned-musl oracle, builds the exact Rust CRT object trio and fixture with -nostdlib/-nostartfiles, and rejects ambient CRT/compiler substitutions using the final linker map. It proves ET_DYN/PT_INTERP/PT_DYNAMIC/DT_NEEDED and entry/init/fini/direct-helper boundaries before launching musl-owned IMF. It does not select candidate libc, candidate ldso, RuntimeV1, loader handoff/TLS, static-link helper closure, an installed CRT/sysroot/compiler driver, family completion, or public x86 support." }]

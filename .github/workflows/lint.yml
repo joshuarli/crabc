@@ -22,14 +22,24 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    env:
-      CRABC_X86_64_CORE_IMAGE: crabc-ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build the native image
-        run: docker build --platform linux/amd64 -f docker/Dockerfile.x86_64 -t crabc-ci .
+      - name: Restore native image cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .work/x86_64/image-cache/image.tar
+          key: core-image-${{ runner.os }}-${{ hashFiles('docker/image/**', 'docker/x86_64-mold-gcc', 'docker/x86_64-musl-oracle-gcc', 'compat/x86_64/core_image.py') }}
+      - name: Select the containerd image store
+        run: |
+          if ! docker info --format '{{.DriverStatus}}' | grep -Fq io.containerd.snapshotter; then
+            { cat /etc/docker/daemon.json 2>/dev/null || echo '{}'; } | jq '.features["containerd-snapshotter"] = true' > "$RUNNER_TEMP/daemon.json"
+            sudo install -m 644 "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+            sudo systemctl restart docker
+          fi
+      - name: Load the pinned core image
+        run: ./scripts/dev-x86_64.sh ci-image
       - name: Fetch locked dependencies
         run: scripts/lanes/rust-check.sh cargo fetch --locked
       - name: lint

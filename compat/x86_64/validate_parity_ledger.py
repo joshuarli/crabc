@@ -178,7 +178,7 @@ SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH = (
 )
 ACCESS_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_access_header_abi.sh"
 XATTR_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_xattr_header_abi.sh"
-X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
+X86_64_IMAGE_LOCK_PATH = ROOT / "docker" / "image" / "sources.lock.json"
 QUALIFICATION_POSIX_ABI_CONTRACT_PATH = (
     ROOT / "compat" / "x86_64" / "qualification_posix_abi.json"
 )
@@ -3855,7 +3855,7 @@ def validate_header_layout_foundation_manifest(
         family["source_owners"], "family[libc.headers-layouts].source_owners"
     )
     for owner in (
-        "docker/Dockerfile.x86_64",
+        "docker/image/sources.lock.json",
         "compat/upstreams.toml",
         "compat/x86_64/headers-layouts-foundation.toml",
         "compat/x86_64/headers-layouts.toml",
@@ -4301,7 +4301,10 @@ def validate_header_layout_foundation_manifest(
     )
 
     uapi_verifier = uapi_verifier_path.read_text(encoding="utf-8")
-    dockerfile = X86_64_EVIDENCE_DOCKERFILE_PATH.read_text(encoding="utf-8")
+    image_lock = json.loads(X86_64_IMAGE_LOCK_PATH.read_text(encoding="utf-8"))
+    uapi_entries = [item for item in image_lock["inputs"] if item.get("name") == "linux-uapi"]
+    require(len(uapi_entries) == 1, "image lock must contain one Linux UAPI input")
+    locked_uapi = uapi_entries[0]
     for phrase in (
         f"readonly LINUX_UAPI_HEADER_COUNT={EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT}",
         "readonly LINUX_UAPI_HEADER_MANIFEST_SHA256="
@@ -4309,16 +4312,16 @@ def validate_header_layout_foundation_manifest(
         "header_manifest_sha256=${LINUX_UAPI_HEADER_MANIFEST_SHA256}",
     ):
         require(phrase in uapi_verifier, f"Linux UAPI verifier omits fixed {phrase}")
-    for phrase in (
-        f"ARG LINUX_UAPI_VERSION={EXPECTED_LINUX_5_10_UAPI_VERSION}",
-        f"ARG LINUX_UAPI_SHA256={EXPECTED_LINUX_5_10_UAPI_SOURCE_SHA256}",
-        f"ARG LINUX_UAPI_HEADER_COUNT={EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT}",
-        "ARG LINUX_UAPI_HEADER_MANIFEST_SHA256="
-        f"{EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256}",
-        "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-${LINUX_UAPI_VERSION}.tar.xz",
-        "sha256sum -c -",
+    for key, expected in (
+        ("version", EXPECTED_LINUX_5_10_UAPI_VERSION),
+        ("sha256", EXPECTED_LINUX_5_10_UAPI_SOURCE_SHA256),
+        ("header_count", EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT),
+        ("header_manifest_sha256", EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256),
+        ("install_arch", "x86"),
     ):
-        require(phrase in dockerfile, f"x86 evidence Dockerfile omits fixed UAPI {phrase}")
+        require(locked_uapi.get(key) == expected, f"image lock Linux UAPI {key} drifted")
+    require("https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.tar.xz" in locked_uapi.get("urls", []),
+            "image lock Linux UAPI upstream drifted")
 
     closure_diagnostics = manifest["closure_diagnostic"]
     require(
@@ -8637,7 +8640,7 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
     )
     for owner in (
         "compat/upstreams.toml",
-        "docker/Dockerfile.x86_64",
+        "docker/image/sources.lock.json",
         "libc/Cargo.toml",
         "libc/src/lib.rs",
         "libc/src/c_abi/x86_64/static_c_abi.rs",

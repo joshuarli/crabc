@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import stat
 import tempfile
 import subprocess
@@ -12,7 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DOCKERFILE = ROOT / "docker" / "Dockerfile.x86_64"
+IMAGE_LOCK = ROOT / "docker" / "image" / "sources.lock.json"
 UPSTREAMS = ROOT / "compat" / "upstreams.toml"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
 UAPI_RUNNER = ROOT / "compat" / "x86_64" / "run_linux_5_10_uapi.sh"
@@ -41,7 +42,9 @@ class CandidateHeaderClosureTests(unittest.TestCase):
         return path.read_text(encoding="utf-8")
 
     def test_linux_uapi_export_is_fixed_in_image_and_runtime_verifier(self) -> None:
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        entries = [item for item in json.loads(IMAGE_LOCK.read_text(encoding="utf-8"))["inputs"] if item.get("name") == "linux-uapi"]
+        self.assertEqual(len(entries), 1)
+        locked_uapi = entries[0]
         verifier = self.assert_valid_bash(UAPI_RUNNER)
         with UPSTREAMS.open("rb") as stream:
             upstreams = tomllib.load(stream)
@@ -59,18 +62,11 @@ class CandidateHeaderClosureTests(unittest.TestCase):
             },
         )
 
-        for phrase in (
-            "ARG LINUX_UAPI_VERSION=5.10",
-            f"ARG LINUX_UAPI_SHA256={LINUX_UAPI_SOURCE_SHA256}",
-            "ARG LINUX_UAPI_HEADER_COUNT=935",
-            f"ARG LINUX_UAPI_HEADER_MANIFEST_SHA256={LINUX_UAPI_HEADER_MANIFEST_SHA256}",
-            "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-${LINUX_UAPI_VERSION}.tar.xz",
-            "make -C \"/tmp/linux-${LINUX_UAPI_VERSION}\" ARCH=x86 headers_install",
-            "--http1.1 --continue-at - --retry 5",
-            "sha256sum -c -",
-        ):
-            self.assertIn(phrase, dockerfile)
-        self.assertNotIn("RUN --mount=", dockerfile)
+        self.assertEqual(locked_uapi["version"], upstreams["linux_5_10_uapi"]["version"])
+        self.assertEqual(locked_uapi["sha256"], upstreams["linux_5_10_uapi"]["sha256"])
+        self.assertEqual(locked_uapi["header_count"], upstreams["linux_5_10_uapi"]["exported_header_count"])
+        self.assertEqual(locked_uapi["header_manifest_sha256"], upstreams["linux_5_10_uapi"]["exported_header_manifest_sha256"])
+        self.assertIn(upstreams["linux_5_10_uapi"]["source"], locked_uapi["urls"])
 
         for phrase in (
             "readonly LINUX_UAPI_ROOT=/opt/linux-5.10-uapi",

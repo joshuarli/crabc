@@ -92,7 +92,7 @@ SOURCE_FILES = (
     "compat/x86_64/dynamic-product-state.json",
     "compat/x86_64/loader-libc-tls-runtime-v1.toml",
     "compat/upstreams.toml",
-    f"docker/Dockerfile.{'x86_64' if ARCH == 'x86_64' else 'aarch64'}",
+    "docker/image/sources.lock.json" if ARCH == "x86_64" else "docker/Dockerfile.aarch64",
     f"docker/{ARCH}-musl-oracle-gcc",
     "scripts/dev-x86_64.sh",
 )

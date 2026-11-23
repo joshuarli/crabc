@@ -74,7 +74,13 @@ if ARCH == "aarch64":
     LINUX_UAPI_SOURCE_SHA256 = docker_arg("LINUX_UAPI_SHA256")
     LINUX_UAPI_HEADER_MANIFEST_SHA256 = docker_arg("LINUX_UAPI_HEADER_MANIFEST_SHA256")
 else:
-    LINUX_UAPI_HEADER_MANIFEST_SHA256 = CONTRACT_LINUX_UAPI_HEADER_MANIFEST_SHA256
+    entries = [item for item in json.loads((ROOT / "docker/image/sources.lock.json").read_text(encoding="utf-8"))["inputs"] if item.get("name") == "linux-uapi"]
+    if len(entries) != 1:
+        raise ValueError("expected one locked Linux UAPI input")
+    uapi = entries[0]
+    LINUX_UAPI_VERSION = uapi["version"]
+    LINUX_UAPI_SOURCE_SHA256 = uapi["sha256"]
+    LINUX_UAPI_HEADER_MANIFEST_SHA256 = uapi["header_manifest_sha256"]
 MUSL_ORACLE_MARKER = {
     "format": "crabc-pinned-musl-oracle-v1",
     "version": MUSL_VERSION,
@@ -88,7 +94,7 @@ LINUX_UAPI_MARKER = {
     "source_sha256": LINUX_UAPI_SOURCE_SHA256,
     "architecture": ARCH,
     "install_arch": "arm64" if ARCH == "aarch64" else "x86",
-    "header_count": docker_arg("LINUX_UAPI_HEADER_COUNT") if ARCH == "aarch64" else "935",
+    "header_count": docker_arg("LINUX_UAPI_HEADER_COUNT") if ARCH == "aarch64" else str(uapi["header_count"]),
     "header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
 }
 
