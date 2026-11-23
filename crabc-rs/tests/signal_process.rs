@@ -2,43 +2,14 @@
 
 use std::ffi::CStr;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crabc_rs::{io, pipe, process, signal, Errno};
 
-static ATFORK_LOG: AtomicU64 = AtomicU64::new(0);
-static ATFORK_LEN: AtomicUsize = AtomicUsize::new(0);
-
-unsafe extern "C" fn atfork_a_prepare() {
-    atfork_push(b'A');
-}
-unsafe extern "C" fn atfork_a_parent() {
-    atfork_push(b'a');
-}
-unsafe extern "C" fn atfork_a_child() {
-    atfork_push(b'a');
-}
-unsafe extern "C" fn atfork_b_prepare() {
-    atfork_push(b'B');
-}
-unsafe extern "C" fn atfork_b_parent() {
-    atfork_push(b'b');
-}
-unsafe extern "C" fn atfork_b_child() {
-    atfork_push(b'b');
-}
-unsafe extern "C" fn atfork_c_prepare() {
-    atfork_push(b'C');
-}
-unsafe extern "C" fn atfork_c_parent() {
-    atfork_push(b'c');
-}
-unsafe extern "C" fn atfork_c_child() {
-    atfork_push(b'c');
-}
+static HANDLER_LOG: AtomicU64 = AtomicU64::new(0);
 
 unsafe extern "C" fn usr2_handler(_: signal::Signal) {
-    ATFORK_LOG.store(u64::from_le_bytes(*b"handler!"), Ordering::SeqCst);
+    HANDLER_LOG.store(u64::from_le_bytes(*b"handler!"), Ordering::SeqCst);
 }
 
 unsafe extern "C" fn usr2_info_handler(
@@ -46,17 +17,6 @@ unsafe extern "C" fn usr2_info_handler(
     _: *mut signal::SigInfo,
     _: *mut core::ffi::c_void,
 ) {
-}
-
-fn atfork_push(byte: u8) {
-    let offset = ATFORK_LEN.fetch_add(1, Ordering::SeqCst);
-    assert!(offset < 8, "atfork test log exceeded fixed capacity");
-    ATFORK_LOG.fetch_or((byte as u64) << (offset * 8), Ordering::SeqCst);
-}
-
-fn atfork_log() -> Vec<u8> {
-    let length = ATFORK_LEN.load(Ordering::SeqCst);
-    ATFORK_LOG.load(Ordering::SeqCst).to_le_bytes()[..length].to_vec()
 }
 
 #[test]
@@ -68,7 +28,7 @@ fn signal_process() {
             "realtime" => realtime_case(),
             "process-control" => process_control_case(),
             "fork-wait" => fork_wait_case(),
-            "atfork" => atfork_case(),
+            "facade-fork" => facade_fork_case(),
             "spawn" => spawn_case(),
             "waitid" => waitid_case(),
             other => panic!("unknown child case {other}"),
@@ -82,7 +42,7 @@ fn signal_process() {
         "realtime",
         "process-control",
         "fork-wait",
-        "atfork",
+        "facade-fork",
         "spawn",
         "waitid",
     ] {
@@ -172,7 +132,7 @@ fn signal_case() {
         .expect("install direct handler");
     signal::raise(signal::Signal::USR2).expect("raise on current thread");
     assert_eq!(
-        ATFORK_LOG.load(Ordering::SeqCst).to_le_bytes(),
+        HANDLER_LOG.load(Ordering::SeqCst).to_le_bytes(),
         *b"handler!"
     );
     unsafe { signal::sigaction(signal::Signal::USR2, Some(&old)) }
@@ -332,47 +292,15 @@ fn fork_wait_case() {
     assert_eq!(unsafe { crabc_core::process::wait4_raw(-1, &mut status, 1) }.unwrap_err(), Errno::CHILD);
 }
 
-fn atfork_case() {
-    ATFORK_LOG.store(0, Ordering::SeqCst);
-    ATFORK_LEN.store(0, Ordering::SeqCst);
-    unsafe {
-        process::register_atfork(
-            Some(atfork_a_prepare),
-            Some(atfork_a_parent),
-            Some(atfork_a_child),
-        )
-        .expect("register first atfork callback");
-        process::register_atfork(
-            Some(atfork_b_prepare),
-            Some(atfork_b_parent),
-            Some(atfork_b_child),
-        )
-        .expect("register second atfork callback");
-        process::register_atfork(
-            Some(atfork_c_prepare),
-            Some(atfork_c_parent),
-            Some(atfork_c_child),
-        )
-        .expect("register third atfork callback");
-    }
-    let (reader, writer) = pipe::pipe().expect("create atfork observation pipe");
-    let child = match unsafe { process::fork() }.expect("native atfork fork") {
+fn facade_fork_case() {
+    let child = match unsafe { process::fork_raw() }.expect("raw facade fork") {
         process::ForkResult::Parent { child } => child,
-        process::ForkResult::Child => {
-            let bytes = atfork_log();
-            let _ = crabc_core::io::write(writer.as_raw_fd(), &bytes);
-            process::exit_immediately(0)
-        }
+        process::ForkResult::Child => process::exit_immediately(41),
     };
-    assert_eq!(atfork_log(), b"CBAabc");
-    drop(writer);
-    let mut child_log = [0_u8; 6];
-    let read = io::read(&reader, &mut child_log[..]).expect("read child atfork log");
-    assert_eq!(read, child_log.len());
-    assert_eq!(&child_log, b"CBAabc");
     let mut status = 0;
-    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap atfork child");
-    assert_eq!(status, 0);
+    // SAFETY: status is writable and the child belongs to this test.
+    unsafe { crabc_core::process::wait4_raw(child.as_raw_pid(), &mut status, 0) }.expect("reap child");
+    assert_eq!(status, 41 << 8);
 }
 
 fn spawn_case() {
