@@ -74,7 +74,7 @@ assert_signal_aliases() {
     done
 }
 
-# A final static link localizes the archive's strong signal and weak aliases;
+# A final static link may localize the archive's strong signal and weak aliases;
 # the archive and pinned-musl checks above keep their exact bindings.
 assert_linked_signal_aliases() {
     local symbols_path="$1" label="$2"
@@ -216,7 +216,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "opt-in archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+"$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE \
     -DCRABC_SIGNAL_LEGACY_ALIASES_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
