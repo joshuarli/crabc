@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import aarch64_parity_inventory as inventory
+import core_image
 import dynamic_product_contract as dynamic_product
 import generate_c_abi_evidence_matrix as c_abi_matrix
 import generate_qualification_manifest as qualification_manifest
@@ -730,6 +731,18 @@ def build_report(qualification_receipt: Path | None = None) -> dict[str, Any]:
         "schema": SCHEMA,
         "frozen_baseline": frozen_baseline,
         "campaign": {
+            "core_images": {
+                "x86_64": core_image.CORE_IMAGE_ID,
+                "aarch64": core_image.AARCH64_CORE_IMAGE_ID,
+            },
+            "rust_toolchain": tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"],
+            "historical_image_reproduction": {
+                "date": "2026-11-21",
+                "source_commit": "b82313a51",
+                "x86_image_prefix": "sha256:c689abaa",
+                "rust_toolchain": "nightly-2026-09-15",
+                "scope": "cold capsule and two-build reproduction; not evidence for current images",
+            },
             "qualification_profile": profile,
             "deferred_families": deferred_families,
             "performance_qualified": False,

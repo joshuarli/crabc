@@ -21,7 +21,18 @@ The Docker daemon must be running and reachable by your user, and it must use
 the containerd image store (the default for new Docker 29 installs), because
 that store gives the loaded image the ID pinned in `compat/x86_64/core_image.py`.
 
-A cold setup downloads about 805 MB of locked image inputs and builds the image from them. On a shared 2026 threadripper host, a pristine ubuntu:24.04 capsule took 7m50s for `scripts/setup-dev` and 14m35s through all checks below.
+The current toolchain is `nightly-2026-11-09`. The pinned x86 image is
+`sha256:b243d937bf906259565a2e3e1b4162a6d1162a5209405995b12a62a9beccd394`;
+the native arm image is
+`sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`.
+The authoritative image IDs are in `compat/x86_64/core_image.py`.
+
+The 2026-11-21 cold-capsule setup and two-build reproduction are historical:
+they used x86 image `sha256:c689abaa…`, `nightly-2026-09-15` and source
+`b82313a51`. They do not establish reproducibility or setup timings for the
+current pair. That cold setup downloaded about 805 MB; on a shared 2026
+threadripper host the capsule took 7m50s for `scripts/setup-dev` and 14m35s
+through the checks below.
 
 ## Host packages
 
