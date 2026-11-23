@@ -59,7 +59,9 @@ for internal, public in (
     ]
     public_rows = [
         row for row in symbols.get(public, [])
-        if row[4] == "WEAK" and row[5] == "DEFAULT"
+        if (row[4] == "WEAK" or
+            label in ("static-join", "static-pie-join") and row[4] == "LOCAL") and
+        row[5] == "DEFAULT"
     ]
     assert internal_rows, (label, internal, internal_bind, internal_visibility,
                            symbols.get(internal, []))
