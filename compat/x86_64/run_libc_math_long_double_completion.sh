@@ -90,7 +90,7 @@ fi
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf realpath sort wc python3; do
+for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objcopy objdump readelf realpath sort wc python3; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -291,17 +291,18 @@ fi
 # One feature-gated archive must also resolve every selected elementary/fenv
 # provider together. The focused leaf runners retain the behavioral oracle;
 # this aggregate only ratchets the shared static-link closure and ELF ABI.
-	printf '{ local: _R*; _ZN*; };\n' >"$work_dir/rust-private.exports"
 	aggregate_link=("$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start \
 	-Wl,--no-undefined -Wl,--gc-sections \
-	-Wl,--version-script="$work_dir/rust-private.exports" \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S \
 	"$archive" -o "$aggregate_candidate")
 record_math_argv "$work_dir/aggregate-link.argv.json" "${aggregate_link[@]}"
 "${aggregate_link[@]}"
+aggregate_localize=(objcopy --wildcard '--localize-symbol=_R*' '--localize-symbol=_ZN*' "$aggregate_candidate")
+record_math_argv "$work_dir/aggregate-localize.argv.json" "${aggregate_localize[@]}"
+"${aggregate_localize[@]}"
 readelf --symbols --wide "$aggregate_candidate" >"$aggregate_symbols"
 readelf --program-headers --wide "$aggregate_candidate" >"$aggregate_headers"
 readelf --dynamic --wide "$aggregate_candidate" >"$aggregate_dynamic" || true
