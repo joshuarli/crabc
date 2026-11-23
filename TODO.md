@@ -29,12 +29,12 @@ Next: 23
 - **Effort:** L
 - **Design:** docs/rfc/CRAB-8-linux-aarch64-feature-completion.md
 
-### CRAB-11 · P3 · pthread_getspecific takes a process-wide spin lock
+### CRAB-11 · P2 · pthread_getspecific takes a process-wide spin lock
 
 - **Area:** Thread-specific data
 - **Where:** libc/src/c_abi/x86_64/pthread_tsd.rs:182-195,397-414,431-456,357-384
 - **Problem:** Every pthread_getspecific/setspecific on every thread takes SELECTED_TSD_LOCK, a pure spin CAS with no futex fallback, and pthread_key_delete holds it while scanning the worker registry. musl reads the caller's own slot lock-free. Under SCHED_FIFO a spinner can livelock against a preempted holder on the same CPU, and all TSD access serializes process-wide.
-- **Recommendation:** Make current-thread get/set lock-free over the existing per-thread atomics, rejecting deleted keys with a per-key generation as musl does; keep a futex lock only for key create/delete.
+- **Recommendation:** D25 M4 owns the progress question. It is correctness, not waived cost. Reproduce natively with pinned affinity, SCHED_FIFO priorities and an external watchdog. If it reproduces, fix progress with the smallest correct design (e.g. lock-free current-thread get/set over per-thread atomics with per-key generations as musl does, futex only for create/delete), preserving key deletion, destructors, fork and worker-mapping lifetime. If the environment cannot run it, record the missing proof and keep this open. Contention cost alone stays deferred.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
 
@@ -43,7 +43,7 @@ Next: 23
 - **Area:** Process-global state ownership
 - **Where:** crabc-rs/src/process.rs:1890-1924,1941-1965,1985-2069; docs/design/architecture.md:36
 - **Problem:** architecture.md says neither crabc-core nor crabc-rs may own libc or loader singleton state, but crabc-rs keeps its own static-mut atfork table and spin lock. C pthread_atfork handlers do not run on crabc_rs::process::fork and facade handlers do not run on C fork, each linked copy of crabc-rs has its own table, and a prepare callback that registers another handler spins forever on the non-reentrant lock.
-- **Recommendation:** Route facade atfork registration to libc's single registry through the existing RuntimeV1 bridge; otherwise document the split semantics and single-copy requirement in the public API and architecture.md.
+- **Recommendation:** Owner chose deletion (option B); the bridge design is closed. D25 M3 removes the AArch64 facade `process::{fork, register_atfork}` and its registry from `lane/crab12-facade-atfork` `e41d722fe`, keeping raw unsafe fork, prepared-exec, `Child` and C `fork`/`pthread_atfork` coverage. Close after both-arch focused builds, process/signal native tests and arm `verify_signal_process.py` pass.
 - **Fix with:** api-surface-and-module-boundaries
 - **Effort:** M
 
@@ -52,7 +52,7 @@ Next: 23
 - **Area:** Core image / qualification inputs
 - **Where:** docker/Dockerfile.x86_64; compat/x86_64/validate_parity_ledger.py:181,4321; compat/x86_64/header_callable_inventory.py:71; compat/x86_64/native_abi_inventory.py:95; compat/x86_64/owned_posix_native_execution.py:84; compat/x86_64/parity.toml (`source_owners`)
 - **Problem:** `docker/image/build.py` now builds the x86 image from `docker/image/sources.lock.json`, but the parity ledger, header inventories and evidence-input digests still read UAPI and Alpine pins from `Dockerfile.x86_64`, which no build consumes. The two records can drift without any check failing.
-- **Recommendation:** Move each reader to the lock (or to `build.py`'s constants), then delete `Dockerfile.x86_64` and its `source_owners` entries in one change, refreshing the affected evidence inputs.
+- **Recommendation:** D25 M2. Move each reader and the `ci.yml`/`lint.yml` image build (`CRABC_X86_64_CORE_IMAGE=crabc-ci`) to the canonical `build.py`/lock build or its verified pin with cache reuse, then delete `Dockerfile.x86_64` and its `source_owners` entries in one change, refreshing the affected evidence inputs.
 - **Fix with:** single-source-of-truth
 - **Effort:** M
 
@@ -61,6 +61,6 @@ Next: 23
 - **Area:** Qualification harness
 - **Where:** compat/x86_64/owned_resolver_alias_contract_reader.py `_source_identity`; compat/x86_64/owned_resolver_family.py `_validate_admission_sources`; compat/x86_64/compiler_helper_evidence.py `_source_seal`, `_aggregate_record`
 - **Problem:** The CRAB-19 fix (`source_seal.same_evidence`) lets readers accept a recollected seal that differs only in revision, but these readers bind a retained git revision outside the seal pattern (`selected_source {revision, tree, source_sha256}` and `checkout {revision, clean}`) and compare it with the current HEAD. A resumed candidate whose later steps run at a different revision with the same product source therefore still fails at the resolver alias and compiler-helper readers. Not reproduced in a full run.
-- **Recommendation:** Record a product-source seal in these receipts and compare it with `same_product`, keeping the tree/clean checks, then add the same move-HEAD regression the CRAB-19 tests use.
+- **Recommendation:** D25 M5. Record a product-source seal in these receipts and compare it with `same_product`, keeping the tree/clean and changed-during-collection checks. Test both a harness-only HEAD move (accepted, `fresh: false`) and a product or evidence-input change (rejected).
 - **Fix with:** none
 - **Effort:** S

@@ -152,8 +152,8 @@ no bulk cleanup, branch deletion or unrelated process termination on stop.
 
 ## Continuous integration and completion
 
-Follow [plan.md](../plan.md#standard-procedures) and use the pinned native x86
-environment. Never run `scripts/dev.sh`, emulate AArch64 or invoke the frozen
+Follow [plan.md](../plan.md#standard-procedures) and use the pinned native
+environment for the target architecture. Never run `scripts/dev.sh`, emulate AArch64 or invoke the frozen
 allocator runner. Examples for scoped work:
 
 ```sh
@@ -245,11 +245,11 @@ Family acceptance dependencies do not serialize independent implementation. Read
 routing and helpers; this owner direction overrides their serial-first and
 performance-readiness scheduling defaults. Keep status small; Git is history.
 
-The active target is native Linux/x86-64 on an x86-64 host. Linux/AArch64,
-the public target, is converging onto the same runtime under the accepted
-[CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md): it runs only
-natively in an arm64 Linux VM with its own disk on the Apple Silicon host,
-never emulated and never on a macOS bind mount. The macOS facade backend (CRAB-7) is deferred.
+Under D25 the milestone covers native Linux/x86-64 and Linux/AArch64 at one SHA
+([D25](../plan.md#d25-dual-native-milestone)). AArch64 follows
+[CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md) host rules: it runs only
+natively in an arm64 Linux VM with its own ext4 disk, never emulated and never
+on a macOS bind mount. The macOS facade backend (CRAB-7) is deferred.
 
 
 ## Check environments

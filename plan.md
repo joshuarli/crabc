@@ -10,17 +10,67 @@ Git retains the earlier plans; do not maintain a second handoff or log.
 
 ## Status and first action
 
-**Paused 2026-11-21** (A5 closeout, [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md)). Resume prompt: "continue A5: build a candidate from main plus the declaration, run x86 and arm fresh at that SHA, fix each blocker through its owning producer". First commands: on a fresh x86-64 Linux host, `git clone https://github.com/joshuarli/crabc && cd crabc && scripts/setup-dev` ([development setup](docs/development.md)); the arm half runs in an OrbStack arm64 Linux VM on the macOS host ([AArch64](docs/development.md#aarch64)).
-Hosts: x86 on a fresh Linux box; the x86 core image is now built reproducibly from `docker/image/sources.lock.json` (pin `sha256:c689abaa…` in `compat/x86_64/core_image.py`, inputs mirrored in stuff OCI `crabc/image-inputs:x86_64` and the `core-image-inputs` GitHub release). Verified: two cold threadripper builds reproduce the pin (18m37s for both). A cold ubuntu:24.04 capsule from a fresh clone of `b82313a51` (later commits are docs only) passed `scripts/setup-dev` (pinned ID reproduced), `rust-check`, parity ledger, `owned-exit-gate`, `mimalloc-secure-environment` and a clean `git status` in 14m35s; the pin changed from `6610b286…`, so the next candidate is built on the new image. STUF-104 (stuff edge caches blob 404s) makes the stuff mirror miss in some regions; builds fall through to the GitHub release.
-Last accepted revision: `crab8/integration` `ec8937a39`, merged to main on owner direction before acceptance; continue on main. It holds CRAB-17 exit gate, CRAB-18 secure-execution allocator environment (native-shadow and default C backend via `-Denviron=(*__crabc_allocator_environ())`), CRAB-13, CRAB-14, CRAB-16, CRAB-19 and CRAB-20, each failing-then-passing on its owning producer (CRAB-17/18 natively on both arches). Green on focused suites; the Linux host `compat/x86_64/tests` run fails only six image-only modules plus pre-existing `test_owned_posix_family_execution` container-mount and `test_qualification_candidate` cases. No full candidate has completed at it.
-Candidate procedure: F2 closeout step 5. Branch = main + `git cherry-pick 5be77042f` (declaration), then `python3 -B compat/x86_64/aarch64_parity_inventory.py` (223/223, no diff) and `validate_parity_ledger.py` (25/1); dry-run must show 86 steps/0 blockers/4 attachments; run `./scripts/dev-x86_64.sh qualification-candidate --work .work/<arch>/feature-complete --profile correctness --inputs .work/<arch>/inputs.json` from a `scripts/lanes/prepare-worktree.sh` checkout on native x86 and native arm64 Linux. Acceptance needs both `complete: true, fresh: true` at one SHA, then a status-only commit; that also records x86 F2 acceptance.
-Last candidate: `lane/a5-final8` `909d825dc` (= `ec8937a39` + declaration), stopped for wind-down: x86 passed steps 00–02 and stopped at 03 `posix-family`; arm stopped at 01. SIGTERM ended both cleanly (status 143, no orphan containers). Not accepted; rebuild after CRAB-12.
-Parked `lane/crab12-facade-atfork` `e41d722fe` (origin): owner-approved option B removing the AArch64-only facade `process::{fork, register_atfork}` and its registry. Unverified (interrupted before any build). Retry: finish the commit with a `!` subject and `BREAKING CHANGE:` footer, then `scripts/lanes/rust-check.sh` on both arches and the crabc-rs signal/process native tests and `compat/crabc-rs/verify_signal_process.py` in native arm64; integrate only when green. This product change is why the next candidate must be rebuilt.
-Next slice: land CRAB-12, rebuild the candidate on the new integration head, run both arches fresh, and repair each blocker on main, using same-product resume for harness-only fixes.
-Arm host notes: use native arm64 Linux only (never macOS docker or emulation); the work directory must be ext4 or another filesystem with a nonzero statvfs `f_files` (btrfs breaks it), with at least ~40M inodes. Old orb images and worktrees were deleted; prepare a fresh ext4 volume. Uncommitted leftovers from 8 orb worktrees are on `park/orb-*` (origin), never integrated.
-Superseded and parked candidates: `lane/a5-final`–`final8`, `lane/a5-pnative`; earlier F2 candidates `lane/f2-fresh-final`–`final7` and the F2 repair/proof branches. Cherry-picked history (contained in main): `lane/a1-*`, `lane/a2-*`, `a3-*`, `a4-*`, `a5-cohort`, `a5-dynamic-roster*`; their unpicked commits on a2-fixtures, a4-abi2 (28), a4-abi3, a4-builder3, a4-corpus, a4-resolver-network2 (5), a4-tests-harness (2), a5-cohort, a5-dynamic-roster2 (4) and a5-dynamic-roster3 (3), plus `chore(lane)` preservation commits on a4-builder-evidence, a4-product-fixes, a4-wordexp and a4-x86-restore, were never integrated. Deleting any needs `-D`, the owner's call.
-Earlier F2 holds (permission-held fixtures, access refusals, `math/pow` reconciliation, CRAB-5/CRAB-6 observations) are recorded in this file at `8fb1553b6`; preserve them, never retry denied actions, and keep CRAB-6 unresolved.
-Debt: CRAB-22 (retire `Dockerfile.x86_64` readers), CRAB-21 (two readers still bind the resume revision), CRAB-9, CRAB-10, CRAB-11, CRAB-15 in TODO.md. Performance stays deferred; do not start F3 or frozen Rust allocator work.
+**Active 2026-11-23: D25 dual-native correctness milestone** (owner direction).
+Goal: one shared runtime whose build inputs, validation machinery, installed
+products and native x86-64 and AArch64 results agree at one fixed SHA. Work the
+[D25 sequence](#d25-dual-native-milestone) from current main in parallel lanes;
+step M6 is the only acceptance attempt. Convergence is already on main by owner
+direction; pre-merge sequencing in CRAB-8 and earlier Status no longer blocks.
+
+Current environment facts (verify, do not trust): `rust-toolchain.toml` selects
+`nightly-2026-11-09` since `6161b069d`, which also rebuilt both core images
+(`compat/x86_64/core_image.py`: x86 `sha256:b243d937…`, arm `sha256:7b7cd03d…`).
+The 2026-11-21 cold-capsule and two-build reproduction results proved the earlier
+`c689abaa…` image on the earlier nightly at `b82313a51`; they are historical and
+prove nothing about the current pair. Three active arm source-image manifests
+(`owned_resolver_alias_image_inputs_aarch64.json`,
+`owned_resolver_network_image_inputs_aarch64.json`,
+`owned_classic_netdb_image_inputs_aarch64.json`) still name
+`nightly-2026-09-15`. CI (`ci.yml`, `lint.yml`) still builds the retired
+`docker/Dockerfile.x86_64` as `crabc-ci`.
+Last accepted revision: none for F2. Last integrated checkpoint before D25:
+`ec8937a39` (CRAB-13/14/16/17/18/19/20), no full candidate completed. Last
+candidate `lane/a5-final8` `909d825dc` was stopped for wind-down (x86 at step 03,
+arm at 01); not accepted, never resumed.
+Hosts: x86 on native Linux ([development setup](docs/development.md)); arm in a
+native arm64 Linux VM whose work directory is ext4 (nonzero statvfs `f_files`,
+roughly 40M inodes; btrfs breaks it), never macOS Docker or emulation.
+Uncommitted orb leftovers stay on `park/orb-*`, never integrated.
+Superseded and parked candidates: `lane/a5-final`–`final8`, `lane/a5-pnative`,
+`lane/f2-fresh-final`–`final7` and the F2 repair/proof branches; unpicked commits
+on earlier `lane/a2-*`–`a5-*` branches were never integrated. Deleting any needs
+`-D`, the owner's call.
+Debt outside D25: CRAB-9 and CRAB-10 apply only as local repair rules (M7).
+CRAB-6 stays open. Earlier F2 holds (permission-held fixtures, access refusals,
+CRAB-5/CRAB-6 observations) are recorded at `8fb1553b6`; preserve them and never
+retry denied actions. Performance stays deferred; do not start F3 or Rust allocator work.
+
+## D25 dual-native milestone
+
+**D25 — owner decision, 2026-11-23.** It replaces the A5/F2 resume handoff and
+extends F2 acceptance to both native architectures at one SHA. F2 closeout steps
+1–6 still govern each candidate. Use "integrated checkpoint" for reviewed code on
+main and reserve "accepted" for completed qualification. M1–M5 are independent
+lanes unless noted; integrate coherent reviewed batches and continue without
+waiting for steering when the next step is clear.
+
+| Step | Work | Exit proof |
+| --- | --- | --- |
+| M1 — environment | Collect actual tool identities from the current pinned native arm image and repair the three stale arm manifests together, keeping their independent expected identities and hash checks (never copy x86 values or relabel old outputs). Run their product and resolver readers natively. Add one small structured check, for both arches, that the current toolchain's expected compiler path appears in every active relevant source-image manifest; native collection still establishes the hashes. Reconcile `docs/development.md` and `campaign-status` with the current image/source pair. Then freeze toolchain, images, profiles and dependencies for the acceptance window; batch any later change a demonstrated correctness blocker forces. | Manifest readers pass natively on arm; the new check fails on the old manifests and passes on the repaired ones; setup docs name the current pins and label the old capsule historical. |
+| M2 — CRAB-22 | Move `ci.yml`/`lint.yml` to `docker/image/build.py` + `sources.lock.json` (or its verified pinned result) with cache reuse, migrate every remaining `Dockerfile.x86_64` reader (parity ledger, header/ABI inventories, `owned_posix_native_execution`, `parity.toml` `source_owners`) in the same change, then delete the recipe once it has no consumers. Keep the fast host builder/dispatcher tests. Add a bounded native installed-product smoke (existing runners, selected static and dynamic behavior). It runs M1's consistency check and claims only that; it never stands in for the seven-gate milestone, and CI does not run the full chain. | `rg Dockerfile.x86_64` finds no active consumer; CI catches the old manifest mismatch and runs real installed behavior. |
+| M3 — CRAB-12 | Adapt `lane/crab12-facade-atfork` `e41d722fe` (unverified material) to current main. Remove only the AArch64 facade `process::fork`, `process::register_atfork` and their registry. Keep the documented unsafe raw fork, prepared-exec (errors, cleanup, `Child` ownership), libc C `fork`/`pthread_atfork` and existing state-repair and callback-ordering coverage. Docs and coverage references name the current shared C owner; keep arch-specific qualifications where APIs still differ. `!` subject plus `BREAKING CHANGE:` footer. Do not reopen the bridge design or treat this as license to shrink other obligations. | `scripts/lanes/rust-check.sh` focused builds and crabc-rs process/signal native tests on both arches, plus `compat/crabc-rs/verify_signal_process.py` in native arm64; then integrate and close CRAB-12. |
+| M4 — CRAB-11 correctness | Separate TSD contention cost (deferred under D23) from progress. Build a bounded native reproducer: controlled affinity and `SCHED_FIFO` priorities, external watchdog, waiter spinning on `SELECTED_TSD_LOCK` while the preempted owner shares its CPU. If reproduced, fix the progress mechanism with the smallest correct design after reading the pinned musl oracle and current ownership; preserve key deletion, destructors, fork interaction and worker-mapping lifetime, and rerun the affected pthread producer. If the environment cannot run it (for example no `CAP_SYS_NICE`), record exactly which proof is missing and keep CRAB-11 open as a correctness item. Unrelated lock optimization stays out. | Reproducer fails before and passes after the fix under the watchdog, plus the pthread producer; or a recorded missing-proof statement. |
+| M5 — CRAB-21 and product boundaries | Finish the reader paths (`owned_resolver_alias_contract_reader._source_identity`, `owned_resolver_family._validate_admission_sources`, `compiler_helper_evidence._source_seal`/`_aggregate_record`) that reject a same-product development resume only because the Git revision moved, using the existing source-seal/content-identity model. Keep the checks on product content, tool/image identity, inputs, retained outputs, clean source and changed-during-collection. Test both a permitted harness-only revision change and a forbidden product or evidence-input change. Development reuse stays `fresh: false`. Separately run the owning installed-product producers and readers for the recent toolchain (`6161b069d`), symbol-localization and linker-fixture (`9c8056050`) repairs; a unit fixture alone does not close them. | Both resume cases behave as stated in the owning readers; the named producers/readers pass natively. |
+| M6 — candidate | After M1–M5 pass their focused producers, build one clean candidate from main plus the provisional declaration (F2 closeout step 5; regenerate it rather than reuse `5be77042f` if the ledger moved). Inspect the actual dry-run for blockers; capability totals and provisional declarations are readiness inputs only. Run all seven correctness gates natively on x86-64 and AArch64 at the same SHA with full product-mode, hardening, ABI, Lua and Rust std/LTO/unwind obligations and the accepted page-size limit and gaps. On failure: classify (runtime, test/oracle, reader/publication, environment), one owner plus independent review, prove through the smallest test and the owning producer/reader, resume unchanged products only where contracts allow, then one fresh run after all known repairs. Keep healthy checkouts and environments fixed; never run full candidates to discover whether a local fix worked. | Both native summaries report `complete: true` and `fresh: true` at one SHA with complete gates and accounting validated. |
+| M7 — report | A status-only commit records the tested commit, both image IDs, both candidate results and evidence paths, installed artifacts, supported linkage/hardening modes, intentional differences, unresolved observations (CRAB-6), tested platform/page-size coverage and deferred performance qualification. It does not restart acceptance. Then propose, without starting it, the next phase: one real downstream consumer through the installed sysroot, followed by measured performance and memory work with the existing harness. | Status names accepted evidence; next phase proposed to the owner. |
+
+Local repair rules during D25: when a lane touches a test family, replace its
+redundant source-text mirrors with behavioral checks (CRAB-9); when repairing a
+blocked producer, move duplicated architecture facts into `native_arch.py`
+(CRAB-10). Keep useful ABI and dispatch checks. No whole-repository test
+rewrite, rename campaign, provenance framework, new architecture, macOS backend
+or Rust allocator work. CRAB-6: on recurrence use its existing diagnostics; never
+widen the wait or call it fixed after unrelated green reruns.
 
 ## Goal and completion boundary
 
@@ -32,7 +82,8 @@ hardening and real consumers. Use the pinned C mimalloc backend. New work that
 closes this already-selected surface is authorized; new platforms, unrelated
 APIs and the frozen Rust allocator port are outside this campaign.
 
-Feature-complete means all selected obligations have current behavioral proof,
+Feature-complete means all selected obligations have current behavioral proof
+on both native x86-64 and AArch64 (D25),
 all 223 capability mappings and 25 nonperformance family obligations are closed
 (or any genuinely inapplicable case is justified within the existing profile),
 and one clean integrated commit passes all seven correctness gates with a
@@ -130,12 +181,12 @@ selected blocker remains.
 6. **Accept once and stop.** Record the exact tested SHA, product source digest,
    candidate/chain evidence paths, seven-gate result, 223 accounted mappings,
    25 closed nonperformance families, hold reconciliation and any unresolved
-   observations in Status. Reconcile historical `math/pow` against actual
-   aggregate case evidence. Missing required proof keeps F2 open. A later
+   observations in Status. Missing required proof keeps F2 open. A later
    status-only commit reports that tested SHA; it neither claims its own SHA was
    tested nor requires another full run just to record acceptance. Any change
    to product, test, gate or contract inputs needs the applicable checks and a
-   fresh accepted candidate. Leave performance explicitly deferred, preserve
+   fresh accepted candidate. Under D25 every step here applies to both native
+   candidates at one SHA. Leave performance explicitly deferred, preserve
    unresolved observations such as CRAB-6 without claiming them fixed, and stop.
 
 ## Performance and memory waiver
@@ -229,12 +280,14 @@ alongside implementation; it does not wait until optimization.
    machinery. Keep caller-visible coverage and necessary ABI/purity boundaries.
 4. **One writer per file set.** The coordinator resolves cross-lane edits; no
    worker invents a local substitute for another owner's shared interface.
-5. **Native x86-64 only on this host.** F2 lanes stay x86-64. AArch64 work
-   follows CRAB-8 on the arm64 VM host and its own branches; never emulate it
-   or refresh old baselines to absorb drift.
-6. **Pins stay.** Do not change `rust-toolchain.toml`, `compat/upstreams.toml`,
-   the Alpine base digest or pinned core image. Do not run the destructive
-   `./scripts/dev-x86_64.sh image` rebuild as routine preparation.
+5. **Native execution per architecture.** Under D25 both arches are in F2:
+   x86-64 runs on native x86 Linux, AArch64 only in its native arm64 Linux VM.
+   Never emulate either or refresh old baselines to absorb drift.
+6. **Pins stay.** After D25 M1 freezes them, do not change `rust-toolchain.toml`,
+   `compat/upstreams.toml`, the Alpine base digest or either pinned core image
+   except as one deliberate batch forced by a demonstrated correctness blocker.
+   Do not run the destructive `./scripts/dev-x86_64.sh image` rebuild as routine
+   preparation.
 7. **Repository work only.** No unrelated host changes, release or publication.
    The coordinator may commit reviewed changes to main under the owner's direct
    commit instruction; workers never commit, switch branches, stash or push.
@@ -272,7 +325,7 @@ parallel framework. Do not turn the feature campaign back into a reduction tour.
 Diagnose the exact failure. After two materially different unsuccessful attempts,
 hand the bounded problem and raw evidence to an expert/reviewer or park it with a
 retry condition, then refill the slot. A shared blocker gets one owner. Permission,
-profile expansion, frozen allocator, CRAB-8 AArch64 or pin work remains out of F2 scope;
+profile expansion, frozen allocator or unbatched pin work remains out of F2 scope;
 park only the dependent slice. A denied tool action is stopped with its exact
 reason preserved; do not reroute it. No destructive cleanup on stop.
 
@@ -282,6 +335,7 @@ D23/D24 override earlier numerical cost/structure budgets, mandatory measurement
 R3-before-feature sequencing and restrictions on selected-feature parallel lanes.
 They do not change these boundaries:
 
+- **D25** extends F2 to both native architectures; D23/D24 still apply.
 - **D1/D9:** allocator-attributed observations stay labeled, never hidden.
 - **D2:** generated musl assembly and its generators stay untouched.
 - **D4/D5/D14:** matched LLVM and quiet-host rules still govern any qualifying
@@ -295,13 +349,13 @@ They do not change these boundaries:
   remains excluded from its machinery cleanup.
 - `77e5dfc3` explicitly records closure of the October 25 C-ABI admission hold.
   Do not assign that admitted family as missing implementation; its current
-  F2 aggregate must still pass. No explicit `math/pow` closure is recorded:
-  reconcile the retained failing case against the unmodified required aggregate
-  in the accepted candidate, and fix it only if still failing. Name that case
-  and evidence in closeout rather than inferring a pass from family counts.
-  Never trim the libc-test aggregate, change backends or invent an exception.
-  Preserve `.work/tmp/pow-discriminator-*`; this review did not replay those
-  host-local records.
+  F2 aggregate must still pass.
+- **Math reference (closed).** `7a8839caf`/`f3edf363c` admit exact corrected
+  binary64 power identities and `f4aa674bf` bounds arm64 musl departures by
+  named difference contracts with rejection tests. Preserve that fix and its
+  tests; do not reopen it as an unresolved investigation. A new failing math
+  case in a candidate is an ordinary blocker under F2 closeout step 2. Never trim
+  the libc-test aggregate or invent an exception.
 - Existing `archive/*`, `cohort/*`, `integration/*`, `lane/*`, `parked/*`,
   `proof/*`, `recovery/*` and `review/*` branches are not automatically adopted.
   Never merge parked allocator branches. New scoped lanes use reviewed current
@@ -312,15 +366,16 @@ They do not change these boundaries:
 
 ## Needs environment
 
-Native product/correctness execution requires the pinned x86-64 images and their
-existing fixtures/network capabilities. If unavailable, preserve the exact command
+Native product/correctness execution requires the pinned x86-64 and AArch64
+images on native hosts and their existing fixtures/network capabilities. M4
+needs real-time scheduling permission for its reproducer. If unavailable, preserve the exact command
 and blocker, continue host-side checks and other independent slices, and leave F2
 open. PMUs, a quiet host and delegated cgroup memory accounting are only F3 needs;
 their absence cannot block feature completion.
 
 ## Non-goals
 
-New architectures or non-Linux runtimes; AArch64 execution inside F2 (CRAB-8 owns it); Rust allocator-port
+New architectures or non-Linux runtimes; Rust allocator-port
 restart or backend replacement; new cryptographic/numerical algorithms; weaker
 semantics, safety, hardening or tests; a new orchestration/validation framework;
 whole-toolchain integration; public-support promotion without authorization.

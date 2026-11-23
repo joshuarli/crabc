@@ -4,9 +4,9 @@ A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
 owned CRT and compiler builtins, and an idiomatic `crabc-rs` facade. Narrow
 scope must not weaken ordinary Unix semantics.
 
-## Current direction — 2026-11-17
+## Current direction — 2026-11-23
 
-Read [Status](plan.md#status-and-first-action) and [F2 closeout](plan.md#f2-closeout) before dispatch. The active candidate and phase govern.
+Read [Status](plan.md#status-and-first-action), [D25](plan.md#d25-dual-native-milestone) and [F2 closeout](plan.md#f2-closeout) before dispatch. The goal is one dual-native (x86-64 and AArch64) correctness milestone at one SHA; the active step governs.
 Feature completeness comes first; performance and memory budgets are waived until then. See [campaign rules](docs/lanes.md#campaign-operating-rules).
 User direction governs, then [docs/scope.md](docs/scope.md) and [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then `plan.md`.
 This is a local, undeployed greenfield libc: crash reproduction, fault injection, fuzzing and differential tests on repository-owned code are defensive correctness work ([local correctness work](docs/scope.md#local-correctness-work)).
