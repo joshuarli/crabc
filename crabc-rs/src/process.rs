@@ -15,9 +15,13 @@
 //! the read-only typed
 //! fcntl(F_GETLK) record-lock query, the process-global umask exchange, and
 //! the direct `exit_group` termination `exit_immediately`.
-//! Generic raw fork/exec/wait control and the larger process facade remain
-//! AArch64-only until each of their target-sized records and state transitions
-//! has an independent x86-64 contract.
+//! `fork_raw` performs the raw fork-equivalent clone with no atfork handlers
+//! or runtime-state repair; it is public on AArch64 and private to prepared
+//! exec on x86-64. The facade owns no atfork registry and exposes no generic
+//! `fork` on either architecture, because that process-global singleton state
+//! belongs to libc. Generic raw exec/wait control and the larger process
+//! facade remain AArch64-only until each of their target-sized records and
+//! state transitions has an independent x86-64 contract.
 
 use bitflags::bitflags;
 
@@ -47,8 +51,6 @@ pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
 pub use crate::signal::{Pid, Signal};
-#[cfg(target_arch = "aarch64")]
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Queries or requests Linux's raw program break.
 ///
@@ -2358,183 +2360,3 @@ pub use native_fork::{fork_raw, ForkResult};
 
 #[cfg(target_arch = "x86_64")]
 use native_fork::{fork_raw, ForkResult};
-
-#[cfg(target_arch = "aarch64")]
-mod native_atfork {
-    use super::*;
-/// Registers callbacks around `fork` and prepared `spawn` operations.
-///
-/// Prepare callbacks run in reverse registration order; parent and child
-/// callbacks run in registration order. The registry is fixed-capacity to keep
-/// the child path allocation-free, matching crabc's existing C atfork bound.
-///
-/// # Safety
-///
-/// Every callback must be valid for the process lifetime. In particular, a
-/// child callback may run after a multithreaded fork and therefore must obey
-/// the same async-signal-safety restrictions as [`fork`]'s child result. Do
-/// not allocate, lock unrelated state, unwind, or invoke arbitrary Rust/C
-/// facilities from a child callback.
-#[inline]
-pub unsafe fn register_atfork(
-    prepare: Option<unsafe extern "C" fn()>,
-    parent: Option<unsafe extern "C" fn()>,
-    child: Option<unsafe extern "C" fn()>,
-) -> Result<()> {
-    atfork_lock();
-    let count = ATFORK_COUNT.load(Ordering::Relaxed);
-    if count == ATFORK_CAPACITY {
-        atfork_unlock();
-        return Err(crate::Errno::NOMEM);
-    }
-    // SAFETY: The atfork lock serializes mutation; `count` was checked to fit
-    // the static array. Registered callbacks are copied function pointers.
-    unsafe {
-        core::ptr::addr_of_mut!(ATFORK_CALLBACKS)
-            .cast::<AtFork>()
-            .add(count)
-            .write(AtFork {
-                prepare,
-                parent,
-                child,
-            })
-    };
-    ATFORK_COUNT.store(count + 1, Ordering::Release);
-    atfork_unlock();
-    Ok(())
-}
-
-/// Forks with the native atfork registry around the raw clone boundary.
-///
-/// # Safety
-///
-/// The child restrictions are identical to [`fork_raw`]. Registered atfork
-/// child callbacks additionally run in that restricted state. This does not
-/// invoke C ABI `pthread_atfork` callbacks: crabc-rs owns its direct native
-/// facade registry and never crosses the public C ABI to perform a syscall.
-#[inline]
-pub unsafe fn fork() -> Result<ForkResult> {
-    let has_handlers = unsafe { atfork_prepare() };
-    let all_signals = !0_u64;
-    let mut old_mask = 0_u64;
-    // Blocking signals across clone prevents a handler from observing the
-    // native atfork registry while it is between prepare and child/parent
-    // completion. Failure is retained as a non-fatal kernel condition; clone
-    // itself still supplies the definitive result.
-    let mask_changed =
-        unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &all_signals, &mut old_mask).is_ok() };
-    let result = unsafe { fork_raw() };
-    if has_handlers {
-        match result {
-            Ok(ForkResult::Child) => unsafe { atfork_child() },
-            Ok(ForkResult::Parent { .. }) | Err(_) => unsafe { atfork_parent() },
-        }
-    }
-    if mask_changed {
-        // SAFETY: `old_mask` is the initialized word returned by the earlier
-        // successful mask query, and no Rust memory survives this syscall.
-        let _ =
-            unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &old_mask, core::ptr::null_mut()) };
-    }
-    result
-}
-
-
-
-const ATFORK_CAPACITY: usize = 64;
-
-#[derive(Clone, Copy)]
-struct AtFork {
-    prepare: Option<unsafe extern "C" fn()>,
-    parent: Option<unsafe extern "C" fn()>,
-    child: Option<unsafe extern "C" fn()>,
-}
-
-const EMPTY_ATFORK: AtFork = AtFork {
-    prepare: None,
-    parent: None,
-    child: None,
-};
-
-// This process-global registry intentionally belongs to the native facade,
-// rather than the stateless syscall crate. It uses fixed storage so callback
-// execution after fork never allocates. C `pthread_atfork` retains its own C
-// ABI registry; this avoids a public-C-ABI call from crabc-rs.
-static mut ATFORK_CALLBACKS: [AtFork; ATFORK_CAPACITY] = [EMPTY_ATFORK; ATFORK_CAPACITY];
-static ATFORK_COUNT: AtomicUsize = AtomicUsize::new(0);
-static ATFORK_LOCK: AtomicBool = AtomicBool::new(false);
-
-#[inline]
-fn atfork_lock() {
-    while ATFORK_LOCK
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        core::hint::spin_loop();
-    }
-}
-
-#[inline]
-fn atfork_unlock() {
-    ATFORK_LOCK.store(false, Ordering::Release);
-}
-
-#[inline]
-unsafe fn atfork_prepare() -> bool {
-    if ATFORK_COUNT.load(Ordering::Acquire) == 0 {
-        return false;
-    }
-    atfork_lock();
-    let count = ATFORK_COUNT.load(Ordering::Acquire);
-    let callbacks = core::ptr::addr_of!(ATFORK_CALLBACKS).cast::<AtFork>();
-    let mut index = count;
-    while index != 0 {
-        index -= 1;
-        // SAFETY: The lock prevents concurrent registration and `index` is
-        // bounded by the atomically published array length.
-        let callback = unsafe { (*callbacks.add(index)).prepare };
-        if let Some(callback) = callback {
-            // SAFETY: `register_atfork` documents the callback contract.
-            unsafe { callback() };
-        }
-    }
-    true
-}
-
-#[inline]
-unsafe fn atfork_parent() {
-    atfork_finish(false)
-}
-
-#[inline]
-unsafe fn atfork_child() {
-    atfork_finish(true)
-}
-
-#[inline]
-unsafe fn atfork_finish(is_child: bool) {
-    let count = ATFORK_COUNT.load(Ordering::Acquire);
-    let callbacks = core::ptr::addr_of!(ATFORK_CALLBACKS).cast::<AtFork>();
-    let mut index = 0;
-    while index < count {
-        // SAFETY: The prepare-side lock is still held and `index` is bounded
-        // by the atomically published callback count.
-        let callback = unsafe {
-            if is_child {
-                (*callbacks.add(index)).child
-            } else {
-                (*callbacks.add(index)).parent
-            }
-        };
-        if let Some(callback) = callback {
-            // SAFETY: `register_atfork` documents the callback contract.
-            unsafe { callback() };
-        }
-        index += 1;
-    }
-    atfork_unlock();
-}
-
-}
-#[cfg(target_arch = "aarch64")]
-pub use native_atfork::{fork, register_atfork};
