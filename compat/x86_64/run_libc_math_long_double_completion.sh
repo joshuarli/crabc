@@ -291,10 +291,12 @@ fi
 # One feature-gated archive must also resolve every selected elementary/fenv
 # provider together. The focused leaf runners retain the behavioral oracle;
 # this aggregate only ratchets the shared static-link closure and ELF ABI.
+	printf '{ local: _R*; _ZN*; };\n' >"$work_dir/rust-private.exports"
 	aggregate_link=("$ORACLE_CC" -fuse-ld=bfd -std=c11 -D_GNU_SOURCE -DCRABC_MATH_ELEMENTARY_FENV_SENSITIVE_AGGREGATE_FREESTANDING \
 	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
 	-fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start \
 	-Wl,--no-undefined -Wl,--gc-sections \
+	-Wl,--version-script="$work_dir/rust-private.exports" \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c \
 	compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_start.S \
 	"$archive" -o "$aggregate_candidate")
