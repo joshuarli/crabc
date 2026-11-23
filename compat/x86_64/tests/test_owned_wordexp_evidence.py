@@ -263,7 +263,8 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
         previous_umask = os.umask(0o077)
         try:
             with contextlib.redirect_stdout(output), unittest.mock.patch.object(
-                    self.module, "validate_report", side_effect=validate):
+                    self.module, "validate_report", side_effect=validate), \
+                    unittest.mock.patch.object(self.module, "_prune_executions"):
                 self.module._publish_report(report_path, {"execution": record}, {})
         finally:
             os.umask(previous_umask)
@@ -306,6 +307,160 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
         (self.root / "lib/extra-alias").symlink_to("libc.so.1")
         with self.assertRaises(self.module.EvidenceError):
             self.module.validate_execution_root(self.root, record)
+
+class OwnedWordexpPrunedExecutionTests(unittest.TestCase):
+    MODE = "static-et-exec"
+
+    def setUp(self) -> None:
+        self.module = load_module()
+        self.base = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(self.base, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+        self.work = self.base / "work"
+        self.case = next(name for name in self.module.WORD_EXP_CASES if self.module._case_spec(name)[0] == "normal")
+        self.label = f"{self.MODE}-{self.case}"
+        self.execution = self.work / "execution" / self.label
+        consumer = self.module.MODE_SPECS[self.MODE][2]
+        self.sources = {"candidate": self.work / "linked-consumer", "oracle": self.work / "oracle-source",
+                        "shell": self.base / "fixture/bin/sh", "dependency": self.base / "fixture/lib/libfixture.so"}
+        payloads = {"candidate": (b"owned consumer\n", 0o755), "oracle": (b"musl oracle\n", 0o755),
+                    "shell": (b"sealed external shell\n", 0o755), "dependency": (b"shell dependency\n", 0o644)}
+        for name, path in self.sources.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payloads[name][0])
+            path.chmod(payloads[name][1])
+        try:
+            self.module._make_private_null(self.base / "fixture/dev/null", "test source null")
+            self.module._make_private_null(self.execution / "dev/null", "test execution null")
+        except self.module.EvidenceError as error:
+            self.skipTest(f"requires a private character-device node: {error}")
+        for relative, name in ((consumer, "candidate"), ("oracle", "oracle"), ("bin/sh", "shell"),
+                               ("lib/libfixture.so", "dependency")):
+            target = self.execution / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(self.sources[name].read_bytes())
+            target.chmod(payloads[name][1])
+        (self.execution / "wordexp-tmp").mkdir(mode=0o755)
+        (self.execution / "wordexp-tmp").chmod(0o755)
+        self.record = self.module.record_execution_root(
+            self.execution, product_files={}, product_aliases={},
+            consumers={"candidate": consumer, "oracle": "oracle"},
+            fixture_files={"shell": "bin/sh", "shell-dependency": "lib/libfixture.so"},
+            fixture_devices={"null": "dev/null"},
+        )
+        self.record["root"] = self.module._mounted(ROOT, self.execution)
+        self.report = {"cells": {self.label: {"execution": self.record}}}
+
+    def binding(self):
+        return self.module._validate_execution_binding(
+            ROOT, self.work, self.label, self.MODE, "normal", self.record, None,
+            self.sources["candidate"], self.sources["oracle"],
+            (self.base / "fixture", {"shell": "bin/sh", "shell-dependency": "lib/libfixture.so"}, {"null": "dev/null"}),
+            [], {}, {})
+
+    def prune(self):
+        self.module._prune_executions(self.work, self.report)
+
+    def test_replay_still_binds_the_unpruned_root(self) -> None:
+        self.assertEqual(self.binding(), self.execution)
+
+    def test_pruned_execution_is_removed_and_still_binds_the_report_record(self) -> None:
+        self.prune()
+        self.assertFalse((self.work / "execution").exists())
+        self.assertTrue((self.work / "execution-pruned.json").is_file())
+        self.assertEqual(self.binding(), self.execution)
+
+    def test_pruned_execution_rejects_changed_consumer_fixture_or_source(self) -> None:
+        self.prune()
+        for name, message in (("candidate", "consumer binding differs"), ("oracle", "consumer binding differs"),
+                              ("shell", "external fixture binding differs"),
+                              ("dependency", "external fixture binding differs")):
+            with self.subTest(name=name):
+                path = self.sources[name]
+                original = path.read_bytes()
+                path.write_bytes(original + b"changed after the run\n")
+                try:
+                    with self.assertRaisesRegex(self.module.EvidenceError, message):
+                        self.binding()
+                finally:
+                    path.write_bytes(original)
+        self.binding()
+
+    def test_pruned_execution_rejects_a_record_that_differs_from_its_tombstone(self) -> None:
+        self.prune()
+        changed = json.loads(json.dumps(self.record))
+        changed["consumers"]["candidate"]["sha256"] = "0" * 64
+        self.record = changed
+        with self.assertRaisesRegex(self.module.EvidenceError, "pruned execution record differs"):
+            self.binding()
+
+    def test_pruned_execution_rejects_edited_missing_or_restored_tombstones(self) -> None:
+        self.prune()
+        tombstone = self.work / "execution-pruned.json"
+        original = tombstone.read_text()
+        value = json.loads(original)
+        for description, edit in (
+            ("digest", lambda item: item["cells"].__setitem__(self.label, "0" * 64)),
+            ("label", lambda item: item["cells"].pop(self.label)),
+            ("schema", lambda item: item.__setitem__("schema", "other")),
+            ("field", lambda item: item.__setitem__("extra", True)),
+        ):
+            with self.subTest(description=description):
+                edited = json.loads(original)
+                edit(edited)
+                tombstone.write_text(json.dumps(edited))
+                with self.assertRaises(self.module.EvidenceError):
+                    self.binding()
+        tombstone.write_text(original)
+        self.binding()
+        self.execution.mkdir(parents=True)
+        with self.assertRaisesRegex(self.module.EvidenceError, "pruned execution root is present"):
+            self.binding()
+        shutil.rmtree(self.work / "execution")
+        tombstone.unlink()
+        with self.assertRaises(self.module.EvidenceError):
+            self.binding()
+
+    def test_prune_refuses_roots_the_report_does_not_record(self) -> None:
+        (self.work / "execution/unrecorded").mkdir()
+        with self.assertRaisesRegex(self.module.EvidenceError, "unrecorded execution root"):
+            self.prune()
+        self.assertTrue(self.execution.is_dir())
+        self.assertFalse((self.work / "execution-pruned.json").exists())
+
+    def publish(self, validate):
+        report_path = self.work / "owned-wordexp-products.json"
+        output = io.StringIO()
+        previous_umask = os.umask(0o077)
+        try:
+            with contextlib.redirect_stdout(output), unittest.mock.patch.object(
+                    self.module, "validate_report", side_effect=validate):
+                self.module._publish_report(report_path, self.report, {})
+        finally:
+            os.umask(previous_umask)
+        return report_path
+
+    def test_publication_prunes_only_after_the_full_replay_and_validates_the_pruned_state(self) -> None:
+        states = []
+
+        def validate(checkout, path, expected):
+            states.append((self.execution.is_dir(), (self.work / "execution-pruned.json").is_file()))
+
+        report_path = self.publish(validate)
+        self.assertEqual(states, [(True, False), (False, True)])
+        self.assertFalse((self.work / "execution").exists())
+        self.assertEqual(report_path.stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.work / "execution-pruned.json").stat().st_mode & 0o777, 0o644)
+
+    def test_rejected_report_keeps_every_execution_root(self) -> None:
+        def validate(checkout, path, expected):
+            raise self.module.EvidenceError("rejected")
+
+        with self.assertRaises(self.module.EvidenceError):
+            self.publish(validate)
+        self.assertTrue((self.execution / "bin/sh").is_file())
+        self.assertFalse((self.work / "execution-pruned.json").exists())
+
 
 class OwnedWordexpCommandBindingTests(unittest.TestCase):
     def test_temporary_fixture_requires_private_mode_and_complete_cleanup(self) -> None:
@@ -667,6 +822,35 @@ class OwnedWordexpReplaySealTests(unittest.TestCase):
                                                    "mode": self.module._mode(self.execution / "lib/keep")}},
             "product_aliases": {}, "consumers": {}, "fixtures": {}, "fixture_devices": {},
         }
+        with self.assertRaisesRegex(self.module.EvidenceError, "product file binding differs"):
+            self.module._validate_execution_binding(
+                ROOT, self.work, "dynamic-pie-kernel-normal", "dynamic-pie-kernel", "normal", record,
+                self.product, self.work / "candidate", self.work / "oracle",
+                (self.work, {}, {"null": "dev/null"}), ["lib/ld-musl-x86_64.so.1"],
+                source_files, source_aliases,
+            )
+
+
+    def test_pruned_cell_rejects_a_product_changed_after_the_run(self) -> None:
+        runtime = self.execution / "runtime"
+        record = {
+            "root": self.module._mounted(ROOT, self.execution),
+            "product_files": {"manifest": {"path": "share/crabc/manifest.json",
+                                             "sha256": self.module._sha(self.execution / "share/crabc/manifest.json"),
+                                             "mode": self.module._mode(self.execution / "share/crabc/manifest.json")},
+                              "product:runtime": {"path": "runtime", "sha256": self.module._sha(runtime),
+                                                  "mode": self.module._mode(runtime)},
+                              "product:lib/keep": {"path": "lib/keep",
+                                                   "sha256": self.module._sha(self.execution / "lib/keep"),
+                                                   "mode": self.module._mode(self.execution / "lib/keep")}},
+            "product_aliases": {}, "consumers": {}, "fixtures": {}, "fixture_devices": {},
+        }
+        self.module._prune_executions(self.work, {"cells": {"dynamic-pie-kernel-normal": {"execution": record}}})
+        (self.product / "runtime").write_bytes(b"product changed after the pruned run\n")
+        source_files = {name: self.module._sha(self.product / name)
+                        for name in ("share/crabc/manifest.json", "runtime", "lib/keep")}
+        source_aliases = {name: os.readlink(self.product / name)
+                          for name in ("lib/ld-musl-x86_64.so.1", "lib/keep-alias")}
         with self.assertRaisesRegex(self.module.EvidenceError, "product file binding differs"):
             self.module._validate_execution_binding(
                 ROOT, self.work, "dynamic-pie-kernel-normal", "dynamic-pie-kernel", "normal", record,

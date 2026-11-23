@@ -980,6 +980,124 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
         self.assertNotIn("outside-directory/secret", record["artifacts"][qualification.relative(leaf)])
 
+    def run_pruning_leaf(self, case, leaf, *, status=0, product="installed"):
+        for suffix in (".log", ".json"):
+            (self.work / "qualification-cases" / product / (case + suffix)).unlink(missing_ok=True)
+
+        def execute(command, **arguments):
+            arguments["stdout"].write(f"leaf passed; evidence: {leaf}\n".encode())
+            return subprocess.CompletedProcess(command, status)
+
+        with mock.patch.object(qualification.subprocess, "run", side_effect=execute), \
+             mock.patch.object(qualification, "require_live_oracle"):
+            qualification.run_case(self.work, product, case)
+
+    def pruning_leaf(self, name="pruning-leaf"):
+        leaf = self.work / "leaf-artifacts" / name
+        self.put(f"leaf-artifacts/{name}/consumer", b"retained consumer")
+        self.put(f"leaf-artifacts/{name}/scenario.stdout", b"observed output")
+        for mode in ("dynamic-pie", "dynamic-non-pie"):
+            self.put(f"leaf-artifacts/{name}/{mode}-root/usr/lib/libc.so", b"copied product runtime " + mode.encode())
+            self.put(f"leaf-artifacts/{name}/{mode}-root/consumer", b"copied consumer")
+        self.put(f"leaf-artifacts/{name}/kept/nested-root/note", b"only top-level roots are execution copies")
+        (leaf / "dynamic-pie-root/lib").mkdir()
+        (leaf / "dynamic-pie-root/lib/ld.so").symlink_to("../usr/lib/libc.so")
+        return leaf
+
+    def test_passing_case_prunes_execution_roots_and_keeps_their_digest_record(self):
+        leaf = self.pruning_leaf()
+        self.run_pruning_leaf("cycle", leaf)
+
+        self.assertFalse((leaf / "dynamic-pie-root").exists())
+        self.assertFalse((leaf / "dynamic-non-pie-root").exists())
+        self.assertEqual((leaf / "consumer").read_bytes(), b"retained consumer")
+        self.assertTrue((leaf / "kept/nested-root/note").is_file())
+        record = qualification.read(self.work / "qualification-cases/installed/cycle.json")
+        key = qualification.relative(leaf)
+        self.assertEqual(set(record["pruned"][key]), {"dynamic-pie-root", "dynamic-non-pie-root"})
+        self.assertTrue(all(len(value) == 64 for value in record["pruned"][key].values()))
+        self.assertFalse(any(name.startswith(("dynamic-pie-root", "dynamic-non-pie-root"))
+                             for name in record["artifacts"][key]))
+        self.assertIn("kept/nested-root/note", record["artifacts"][key])
+        qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
+        qualification.validate_case(record, "installed", "cycle", self.source, self.manifest, contents=False)
+
+    def test_pruned_case_still_rejects_changed_unrecorded_or_restored_evidence(self):
+        leaf = self.pruning_leaf()
+        self.run_pruning_leaf("cycle", leaf)
+        record_path = self.work / "qualification-cases/installed/cycle.json"
+        record = qualification.read(record_path)
+
+        def rejected(message):
+            with self.assertRaisesRegex(qualification.QualificationError, message):
+                qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
+
+        (leaf / "consumer").write_bytes(b"replacement consumer")
+        rejected("leaf artifact evidence changed")
+        (leaf / "consumer").write_bytes(b"retained consumer")
+        qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
+
+        self.put("leaf-artifacts/pruning-leaf/extra-root/file", b"unrecorded root")
+        rejected("leaf artifact evidence changed")
+        shutil.rmtree(leaf / "extra-root")
+
+        restored = leaf / "dynamic-pie-root"
+        restored.mkdir()
+        rejected("pruned execution root")
+        restored.rmdir()
+
+        record = qualification.read(record_path)
+        record["pruned"][qualification.relative(leaf)]["dynamic-pie-root"] = "short"
+        rejected("pruned execution root")
+
+    def test_changed_pruned_digest_makes_the_case_receipt_stale(self):
+        leaf = self.pruning_leaf()
+        self.run_pruning_leaf("cycle", leaf)
+        record_path = self.work / "qualification-cases/installed/cycle.json"
+        before = qualification.collect(self.work)
+        record = qualification.read(record_path)
+        key = qualification.relative(leaf)
+        record["pruned"][key]["dynamic-pie-root"] = "0" * 64
+        record_path.write_text(json.dumps(record, sort_keys=True))
+        after = qualification.collect(self.work)
+        self.assertNotEqual(before["cases"], after["cases"])
+
+    def test_failed_or_unvalidated_case_keeps_every_execution_root(self):
+        leaf = self.pruning_leaf("failed-leaf")
+        with self.assertRaisesRegex(qualification.QualificationError, "coverage case failed: installed/cycle"):
+            self.run_pruning_leaf("cycle", leaf, status=1)
+        self.assertTrue((leaf / "dynamic-pie-root/usr/lib/libc.so").is_file())
+        self.assertTrue((leaf / "dynamic-non-pie-root/consumer").is_file())
+        self.assertFalse((self.work / "qualification-cases/installed/cycle.json").exists())
+
+        leaf = self.pruning_leaf("unvalidated-leaf")
+        with mock.patch.object(qualification, "_product_identity", side_effect=[self.manifest, "f" * 64]):
+            with self.assertRaisesRegex(qualification.QualificationError, "changed during coverage case"):
+                self.run_pruning_leaf("cli", leaf)
+        self.assertTrue((leaf / "dynamic-pie-root/usr/lib/libc.so").is_file())
+        self.assertFalse((self.work / "qualification-cases/installed/cli.json").exists())
+
+    def test_interrupted_prune_keeps_the_case_incomplete(self):
+        leaf = self.pruning_leaf()
+        with mock.patch.object(qualification.shutil, "rmtree", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_pruning_leaf("cycle", leaf)
+        self.assertFalse((self.work / "qualification-cases/installed/cycle.json").exists())
+
+    def test_namespace_and_native_corpus_cases_keep_their_roots_for_their_readers(self):
+        for case in ("loader-synthetic", "package-corpus"):
+            with self.subTest(case=case):
+                leaf = self.pruning_leaf(f"{case}-leaf")
+                self.run_pruning_leaf(case, leaf)
+                self.assertTrue((leaf / "dynamic-pie-root/usr/lib/libc.so").is_file())
+                record = qualification.read(self.work / f"qualification-cases/installed/{case}.json")
+                self.assertNotIn("pruned", record)
+
+    def test_receipt_written_before_pruning_support_still_validates(self):
+        record = qualification.read(self.work / "qualification-cases/installed/cycle.json")
+        self.assertNotIn("pruned", record)
+        qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
+
     def test_failed_leaf_reports_its_failure_even_when_its_diagnostic_reads_like_evidence(self):
         """A leaf's "<label> evidence: <reason>" diagnostic is not a retained root.
 

@@ -41,6 +41,8 @@ ORACLE_PATHS['compiler_wrapper'] = f'/usr/local/bin/crabc-{ARCH}-musl-gcc'
 ORACLE_PATHS['loader'] = f'/opt/musl-1.2.6/{MUSL_LOADER}'
 SCHEMA = "crabc.x86_64-owned-wordexp-products/v5"
 EXPECTED_INPUT_SCHEMA = "crabc.x86_64-owned-wordexp-expected-native-inputs/v1"
+PRUNED_EXECUTIONS = "execution-pruned.json"
+PRUNED_EXECUTIONS_SCHEMA = "crabc.x86_64-owned-wordexp-pruned-executions/v1"
 SOURCE_MOUNT = "/workspace"
 TARGET = f"{ARCH}-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
@@ -1152,14 +1154,68 @@ def _require_live_oracle(work: Path, oracle: dict) -> None:
         fail('live pinned oracle differs from retained inputs')
 
 
+def _execution_record_digest(record: object) -> str:
+    return sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _prune_executions(work: Path, report: Mapping[str, Any]) -> None:
+    """Replace validated execution roots by the digest of each recorded execution.
+
+    The tombstone is written before any root is removed, and only for the exact
+    roster the report records, so a rejected or interrupted run keeps its roots.
+    """
+    root = work / "execution"
+    if not os.path.lexists(root):
+        return
+    root = _physical(root, "wordexp execution directory", directory=True)
+    cells = report.get("cells") if isinstance(report, Mapping) else None
+    cells = cells if isinstance(cells, Mapping) else {}
+    digests: dict[str, str] = {}
+    for entry in sorted(root.iterdir()):
+        cell = cells.get(entry.name)
+        if not isinstance(cell, Mapping) or "execution" not in cell:
+            fail(f"unrecorded execution root: {entry.name}")
+        digests[entry.name] = _execution_record_digest(cell["execution"])
+    if set(digests) != set(cells):
+        fail("wordexp execution roster differs from the report")
+    _write_json(work / PRUNED_EXECUTIONS, {"schema": PRUNED_EXECUTIONS_SCHEMA, "cells": digests})
+    try:
+        shutil.rmtree(root)
+    except OSError as error:
+        raise EvidenceError(f"cannot prune validated execution roots: {error}") from error
+
+
+def _load_pruned_executions(work: Path) -> dict[str, str] | None:
+    path = work / PRUNED_EXECUTIONS
+    if not os.path.lexists(path):
+        return None
+    path = _physical(path, "wordexp pruned execution record", directory=False)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise EvidenceError("wordexp pruned execution record is not valid JSON") from error
+    value = _exact_dict(value, {"schema", "cells"}, "wordexp pruned execution record")
+    cells = value["cells"]
+    if (value["schema"] != PRUNED_EXECUTIONS_SCHEMA or not isinstance(cells, dict)
+            or not all(isinstance(label, str) and isinstance(digest, str) and len(digest) == 64
+                       and set(digest) <= set("0123456789abcdef") for label, digest in cells.items())):
+        fail("wordexp pruned execution record contract differs")
+    return cells
+
+
 def _publish_report(report_path: Path, report: dict, expected_native_inputs: dict) -> None:
     """Finish retention before validation and publication of the sealed report.
 
     The outer dynamic collector applies this same policy again. Applying it
     here makes that operation idempotent; presealed regular-file identities
     are still checked unchanged, never regenerated after permission changes.
+    Only after the full replay accepts every execution root are the roots
+    replaced by their recorded digests; the pruned state is replayed again.
     """
     _write_json(report_path, report)
+    qualification.make_retained_evidence_readable(report_path.parent)
+    validate_report(ROOT, report_path, expected_native_inputs)
+    _prune_executions(report_path.parent, report)
     qualification.make_retained_evidence_readable(report_path.parent)
     validate_report(ROOT, report_path, expected_native_inputs)
     print(f"owned wordexp products: evidence: {report_path.parent}")
@@ -1539,11 +1595,21 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
                                 source_product_aliases: Mapping[str, str]) -> Path:
     execution = _exact_dict(execution, {"root", "product_files", "product_aliases", "consumers", "fixtures", "fixture_devices"},
                             f"wordexp cell {label} execution")
-    execution_root = _local_mounted(root, execution["root"], f"wordexp cell {label} execution root")
-    expected_root = _physical(work / "execution" / label, f"wordexp cell {label} expected execution root", directory=True)
-    if execution_root != expected_root:
-        fail("wordexp execution root path differs")
-    _validate_temporary_fixture(execution_root, retained=True)
+    pruned = _load_pruned_executions(work)
+    if pruned is None:
+        execution_root = _local_mounted(root, execution["root"], f"wordexp cell {label} execution root")
+        expected_root = _physical(work / "execution" / label, f"wordexp cell {label} expected execution root", directory=True)
+        if execution_root != expected_root:
+            fail("wordexp execution root path differs")
+        _validate_temporary_fixture(execution_root, retained=True)
+    else:
+        execution_root = work / "execution" / label
+        if execution["root"] != str(Path(SOURCE_MOUNT) / execution_root.relative_to(root)):
+            fail("wordexp execution root path differs")
+        if pruned.get(label) != _execution_record_digest(execution):
+            fail("wordexp pruned execution record differs from its tombstone")
+        if os.path.lexists(work / "execution"):
+            fail("wordexp pruned execution root is present")
     fixture_root, fixture_paths, fixture_devices = fixture
     product_files, product_aliases, fixture_expected, device_expected = _expected_execution_maps(
         dynamic_product, fixture_paths, fixture_devices, shell_case, overrides,
@@ -1581,9 +1647,10 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
                         for name, relative in device_expected.items()}
     if execution.get("fixture_devices") != expected_devices:
         fail("wordexp execution external fixture device binding differs")
-    local = dict(execution)
-    local["root"] = str(execution_root)
-    validate_execution_root(execution_root, local)
+    if pruned is None:
+        local = dict(execution)
+        local["root"] = str(execution_root)
+        validate_execution_root(execution_root, local)
     return execution_root
 
 
@@ -1695,6 +1762,9 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
     expected_cell_labels = {f"{mode}-{case}" for mode in expected_modes for case in WORD_EXP_CASES}
     if not isinstance(cells, dict) or set(cells) != expected_cell_labels:
         fail("wordexp execution cell roster differs")
+    pruned_cells = _load_pruned_executions(work)
+    if pruned_cells is not None and set(pruned_cells) != expected_cell_labels:
+        fail("wordexp pruned execution roster differs")
     if cell is not None and cell not in expected_cell_labels:
         fail("wordexp diagnostic cell is not in the execution roster")
     for mode in sorted(expected_modes):
@@ -1723,7 +1793,7 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
                                                          source_product_aliases if dynamic_product is not None else {})
             suffix = list(arguments)
             environment = CELL_ENVIRONMENT
-            mounted_execution = _mounted(root, execution_root)
+            mounted_execution = str(Path(SOURCE_MOUNT) / execution_root.relative_to(root))
             expected_oracle = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", mounted_execution, "/oracle", *suffix]
             program = "/" + MODE_SPECS[mode][2]
             expected_candidate = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", mounted_execution]

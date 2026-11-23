@@ -19,6 +19,7 @@ import json
 import os
 import re
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -486,6 +487,55 @@ def artifact_snapshot(log: Path, source_mount: str, *, contents: bool = True) ->
     return result
 
 
+def execution_root_digests(case: str, artifacts: dict) -> dict[str, dict[str, str]]:
+    """Name each top-level execution-root copy and the digest of its sealed tree.
+
+    Namespace and native corpus cases keep every root for their own readers.
+    """
+    if case in DNS_CASES or case in LOADER_CORPUS_CASES:
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for directory, entries in artifacts.items():
+        for name, entry in entries.items():
+            if "/" in name or not name.endswith("-root") or entry["type"] != stat.S_IFDIR:
+                continue
+            tree = {path: value for path, value in entries.items() if path == name or path.startswith(name + "/")}
+            result.setdefault(directory, {})[name] = hashlib.sha256(
+                json.dumps(tree, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return result
+
+
+def prune_execution_roots(artifacts: dict, pruned: dict[str, dict[str, str]]) -> dict:
+    """Delete validated execution-root copies; return the evidence that remains."""
+    for directory, roots in pruned.items():
+        for name in roots:
+            try:
+                shutil.rmtree(evidence_path(ROOT / directory / name))
+            except OSError as error:
+                raise QualificationError(f"cannot prune validated execution root {directory}/{name}: {error}") from error
+    return {directory: {name: entry for name, entry in entries.items()
+                        if name.split("/", 1)[0] not in pruned.get(directory, {})}
+            for directory, entries in artifacts.items()}
+
+
+def validate_pruned_roots(record: dict, case: str) -> None:
+    if "pruned" not in record:
+        return
+    pruned = record["pruned"]
+    require(isinstance(pruned, dict) and pruned and case not in DNS_CASES and case not in LOADER_CORPUS_CASES
+            and set(pruned) <= set(record["artifacts"]), "pruned execution root record is malformed")
+    for directory, roots in pruned.items():
+        require(isinstance(roots, dict) and roots, "pruned execution root record is malformed")
+        for name, tree in roots.items():
+            require(isinstance(name, str) and name.endswith("-root") and "/" not in name
+                    and isinstance(tree, str) and re.fullmatch(r"[0-9a-f]{64}", tree) is not None,
+                    "pruned execution root record is malformed")
+            require(not any(entry.split("/", 1)[0] == name for entry in record["artifacts"][directory]),
+                    "pruned execution root is also recorded as retained evidence")
+            path = ROOT / directory / name
+            require(not path.exists() and not path.is_symlink(), f"pruned execution root is present: {directory}/{name}")
+
+
 def retained_case_scratch(work: Path) -> Path | None:
     """Select the cohort's physical scratch only when its runner reserved it."""
 
@@ -703,12 +753,16 @@ def _run_case(work: Path, product: str, case: str, source: str, manifest: str,
         isolation["isolation_temporary"] = str(temporary)
     elif case in LOADER_CORPUS_CASES:
         isolation["isolation_command"] = command
+    artifacts = artifact_snapshot(log, str(ROOT))
+    pruned = execution_root_digests(case, artifacts)
+    if pruned:
+        artifacts = prune_execution_roots(artifacts, pruned)
     write_new(destination / (case + ".json"), {
-        **isolation,
+        **isolation, **({"pruned": pruned} if pruned else {}),
         "schema": SCHEMA, "product": product, "case": case, "script": script,
         "entry_mode": mode, "source_sha256": source, "manifest_sha256": manifest,
         "log": relative(log), "log_sha256": digest(log), "exit_status": 0,
-        "source_mount": str(ROOT), "artifacts": artifact_snapshot(log, str(ROOT)),
+        "source_mount": str(ROOT), "artifacts": artifacts,
     })
 
 
@@ -770,8 +824,10 @@ def validate_case(record: dict, product: str, case: str, source: str, manifest: 
     elif case in LOADER_CORPUS_CASES:
         work = (ROOT / record.get("log", "")).parents[2]
         expected["isolation_command"] = case_command(work, product, case, record.get("source_mount"))
-    require(set(record) == set(expected) | {"log", "log_sha256", "source_mount", "artifacts"}, "coverage record fields drifted")
+    require(set(record) - {"pruned"} == set(expected) | {"log", "log_sha256", "source_mount", "artifacts"},
+            "coverage record fields drifted")
     require(all(record.get(key) == value for key, value in expected.items()), "stale or mismatched coverage record")
+    validate_pruned_roots(record, case)
     log = evidence_path(ROOT / record["log"])
     if not contents:
         require(artifact_snapshot(log, record["source_mount"], contents=False) == without_digests(record["artifacts"]),
