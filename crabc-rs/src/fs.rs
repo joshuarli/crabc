@@ -2672,7 +2672,7 @@ pub fn statfs<P: PathArg>(path: P) -> Result<StatFs> {
     path.into_with_c_str(|path| {
         let mut statfs = MaybeUninit::<StatFs>::uninit();
         // SAFETY: `PathArg` keeps the C string live and `StatFs` is complete.
-        crabc_core::fs::statfs(path, statfs.as_mut_ptr().cast())?;
+        unsafe { crabc_core::fs::statfs(path, statfs.as_mut_ptr().cast())? };
         // SAFETY: a successful syscall initialized the complete output record.
         Ok(unsafe { statfs.assume_init() })
     })

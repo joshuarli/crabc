@@ -504,8 +504,13 @@ pub unsafe fn statfs_raw(path: *const u8, buffer: *mut u8) -> Result<()> {
 
 /// Queries filesystem statistics for a C path without using libc or TLS
 /// `errno`.
+///
+/// # Safety
+///
+/// `buffer` must designate writable storage for the complete target Linux
+/// `struct statfs` layout selected for this target.
 #[inline]
-pub fn statfs(path: &CStr, buffer: *mut u8) -> Result<()> {
+pub unsafe fn statfs(path: &CStr, buffer: *mut u8) -> Result<()> {
     // SAFETY: `CStr` establishes the pathname contract; the caller
     // supplies the output-layout contract.
     unsafe { statfs_raw(path.as_ptr().cast(), buffer) }
