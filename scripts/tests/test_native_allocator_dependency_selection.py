@@ -128,15 +128,11 @@ class NativeAllocatorDependencySelectionTests(unittest.TestCase):
         self.assertEqual(builder.parse_args([]).allocator_backend, 'accepted-c')
         self.assertEqual(builder.parse_args(['--allocator-backend', 'native-shadow']).allocator_backend, 'native-shadow')
 
-    def test_x86_target_has_no_cargo_c_allocator_dependency(self):
-        target = MANIFEST['target']['cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))']
+    def test_linux_targets_have_no_cargo_c_allocator_dependency(self):
+        target = MANIFEST['target']['cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little"))']
         self.assertNotIn('libmimalloc-sys', target['dependencies'])
-
-    def test_paused_aarch64_c_dependency_is_unconditional(self):
-        target = MANIFEST['target']['cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))']
-        dependency = target['dependencies']['libmimalloc-sys']
-        self.assertNotIn('optional', dependency)
-        self.assertEqual(dependency['version'], '0.1.49')
+        for target in MANIFEST['target'].values():
+            self.assertNotIn('libmimalloc-sys', target.get('dependencies', {}))
 
 
 if __name__ == '__main__':

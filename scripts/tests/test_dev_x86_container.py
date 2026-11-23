@@ -100,7 +100,7 @@ exit 64
             dynamic = input_root / "dynamic-product"; dynamic.mkdir()
             result = self.invoke(
                 bindir, capture, "unwinder-owned-cleanup",
-                ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic)),
+                ("--provider-vendor", str(provider.relative_to(ROOT)), "--static-sysroot", str(static.relative_to(ROOT)), "--dynamic-sysroot", str(dynamic.relative_to(ROOT))),
                 CRABC_X86_64_WORK_DIR=str(work_root),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -142,7 +142,7 @@ exit 64
             dynamic = work_root / "dynamic-product"; dynamic.mkdir()
             result = self.invoke(
                 bindir, capture, "unwinder-owned-cleanup",
-                ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic)),
+                ("--provider-vendor", str(provider.relative_to(ROOT)), "--static-sysroot", str(static.relative_to(ROOT)), "--dynamic-sysroot", str(dynamic.relative_to(ROOT))),
                 CRABC_X86_64_WORK_DIR=str(work_root),
             )
             self.assertEqual(result.returncode, 2)
@@ -170,7 +170,7 @@ exit 64
             dynamic = input_root / "dynamic-product"; dynamic.mkdir()
             result = self.invoke(
                 bindir, capture, "unwinder-owned-cleanup",
-                ("--provider-vendor", str(provider), "--static-sysroot", str(static), "--dynamic-sysroot", str(dynamic),
+                ("--provider-vendor", str(provider.relative_to(ROOT)), "--static-sysroot", str(static.relative_to(ROOT)), "--dynamic-sysroot", str(dynamic.relative_to(ROOT)),
                  "--mixed-source-generated-compile-diagnostics-only"),
                 CRABC_X86_64_WORK_DIR=str(work_root),
             )

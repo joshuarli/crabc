@@ -69,6 +69,8 @@ class PrepareWorktreeTests(unittest.TestCase):
         )
         rust_check.chmod(0o755)
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", primary / "scripts/dev-x86_64.sh")
+        for name in ("native_arch.py", "core_image.py", "source_seal.py"):
+            shutil.copy2(ROOT / "compat/x86_64" / name, primary / "compat/x86_64" / name)
         shutil.copy2(ROOT / "compat/x86_64/qualification_candidate.py",
                      primary / "compat/x86_64/qualification_candidate.py")
         fetch = primary / "compat/corpus/fetch_x86.py"
@@ -122,12 +124,12 @@ class PrepareWorktreeTests(unittest.TestCase):
         return subprocess.run(
             ["bash", str(self.lane / "scripts/dev-x86_64.sh"), "lua-static-source-build",
              "--cohort-checkout", str(self.lane),
-             "--static-preparation", str(preparation),
-             "--installed-sysroot", str(work / "installed"),
-             "--rebuilt-sysroot", str(work / "rebuilt"),
-             "--extracted-sysroot", str(work / "extracted"),
+             "--static-preparation", str(preparation.relative_to(self.lane)),
+             "--installed-sysroot", str((work / "installed").relative_to(self.lane)),
+             "--rebuilt-sysroot", str((work / "rebuilt").relative_to(self.lane)),
+             "--extracted-sysroot", str((work / "extracted").relative_to(self.lane)),
              "--archive-seed", archive_seed,
-             "--work-root", str(work / "fresh-output"),
+             "--work-root", str((work / "fresh-output").relative_to(self.lane)),
              "--invalid-test-flag", "value"],
             cwd=self.lane, capture_output=True, text=True, check=False,
         )
