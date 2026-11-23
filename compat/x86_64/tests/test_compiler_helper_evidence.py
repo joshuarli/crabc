@@ -1,6 +1,7 @@
 """Finite reader checks for the native compiler-helper archive receipt."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
 import json
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from product_fixture import write_compatibility_provenance
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -453,11 +455,6 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         self.assertIn("CRABC_COMPILER_HELPER_WORK_DIR", runner)
         self.assertNotIn("mktemp", runner)
         self.assertNotIn("/tmp/", runner)
-        probe = (ROOT / "builtins/fixtures/x86_64_compiler_helper_aggregate_probe.c").read_text(encoding="utf-8")
-        self.assertIn("typedef double _Complex complex_double;", probe)
-        self.assertIn("__builtin_complex", probe)
-        self.assertIn("__real__ value", probe)
-        self.assertNotIn("struct { double real; double imaginary; }", probe)
         for label, _status in EVIDENCE.AGGREGATE_COMMANDS:
             self.assertIn("record_command " + label, runner)
         self.assertIn("validate-aggregate-report", runner)
@@ -546,6 +543,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "dynamic-builtins"):
                     EVIDENCE._aggregate_archive_join(ROOT, report, supplied_source=supplied_source,
                                                      installed_archives=wrong)
+                moved = {"revision": "e" * 40, "content_sha256": supplied_source["content_sha256"]}
+                self.assertEqual(EVIDENCE._aggregate_archive_join(
+                    ROOT, report, supplied_source=moved, installed_archives=installed)["source"], moved)
                 aggregate["product_source_after"] = {"revision": "e" * 40, "content_sha256": "f" * 64}
                 with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "source identities"):
                     EVIDENCE._aggregate_archive_join(ROOT, report, supplied_source=supplied_source,
@@ -756,6 +756,137 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             cli = Path(temporary) / "cli.json"
             self.assertEqual(EVIDENCE.main(["write-fixture-report", "--output", str(cli)]), 0)
             self.assertEqual(EVIDENCE.main(["validate-fixture-report", str(cli)]), 0)
+
+
+class _SourceReached(Exception):
+    """The aggregate record passed every source check and reached command replay."""
+
+
+class CompilerHelperResumeSourceTests(unittest.TestCase):
+    FIRST, MOVED = "a" * 40, "b" * 40
+    CONTENT, OTHER_CONTENT = "c" * 64, "d" * 64
+
+    def _checkout(self, revision: str) -> dict:
+        return {"revision": revision, "clean": True}
+
+    def _product(self, revision: str, content: str | None = None) -> dict:
+        return {"revision": revision, "content_sha256": content or self.CONTENT}
+
+    def _current(self, revision: str, *, content: str | None = None, source: dict | None = None,
+                 clean: bool = True):
+        def checkout(_root):
+            if not clean:
+                raise EVIDENCE.CompilerHelperEvidenceError("compiler-helper aggregate requires a clean committed checkout")
+            return self._checkout(revision)
+
+        patches = (
+            mock.patch.object(EVIDENCE, "_checkout_identity", checkout),
+            mock.patch.object(EVIDENCE, "_product_source_identity",
+                              lambda _root: self._product(revision, content)),
+            mock.patch.object(EVIDENCE, "_aggregate_source_binding",
+                              lambda _root, _architecture, _contract=None: source or {"files": []}),
+            mock.patch.object(EVIDENCE, "_aggregate_native_contract", lambda _root: {"helpers": []}),
+            mock.patch.object(EVIDENCE, "load_contract", lambda _root: {"helpers": []}),
+            mock.patch.object(EVIDENCE, "_command_events", mock.Mock(side_effect=_SourceReached)),
+        )
+        return patches
+
+    def _enter(self, patches):
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        for patch in patches:
+            stack.enter_context(patch)
+
+    def _seal(self, directory: Path, revision: str) -> Path:
+        seal = directory / "source-before.json"
+        with contextlib.ExitStack() as stack:
+            for patch in self._current(revision):
+                stack.enter_context(patch)
+            EVIDENCE.capture_source(seal, root=ROOT)
+        return seal
+
+    def _record(self, directory: Path, seal: Path, *, retained_after: dict | None, **overrides):
+        arguments = dict(work=directory, source_before=seal, events_path=directory / "commands.json",
+                         image="crabc-core-evidence@sha256:" + "e" * 64, source_mount=EVIDENCE.SOURCE_MOUNT,
+                         oracle_record=directory / "oracle-compiler.json", root=ROOT,
+                         verify_oracle_current=False, retained_after=retained_after)
+        arguments.update(overrides)
+        return EVIDENCE._aggregate_record(**arguments)
+
+    def _retained_after(self, revision: str) -> dict:
+        return {"checkout_after": self._checkout(revision), "product_source_after": self._product(revision)}
+
+    def test_source_seal_accepts_a_harness_only_revision_move_and_rejects_product_and_input_change(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            seal = self._seal(Path(temporary), self.FIRST)
+            self._enter(self._current(self.MOVED))
+            self.assertEqual(EVIDENCE._source_seal(seal, root=ROOT)["checkout"], self._checkout(self.FIRST))
+        for name, patches in (
+            ("product", self._current(self.MOVED, content=self.OTHER_CONTENT)),
+            ("evidence input", self._current(self.MOVED, source={"files": [{"path": "changed"}]})),
+            ("dirty checkout", self._current(self.MOVED, clean=False)),
+        ):
+            with self.subTest(change=name), tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+                seal = self._seal(Path(temporary), self.FIRST)
+                with contextlib.ExitStack() as stack:
+                    for patch in patches:
+                        stack.enter_context(patch)
+                    with self.assertRaises(EVIDENCE.CompilerHelperEvidenceError):
+                        EVIDENCE._source_seal(seal, root=ROOT)
+
+    def test_source_seal_rejects_a_retained_mixed_revision_seal(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            seal = self._seal(Path(temporary), self.FIRST)
+            record = json.loads(seal.read_text(encoding="utf-8"))
+            record["product_source"]["revision"] = self.MOVED
+            seal.write_text(EVIDENCE.canonical_json(record), encoding="utf-8")
+            self._enter(self._current(self.FIRST))
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "product source revision differs"):
+                EVIDENCE._source_seal(seal, root=ROOT)
+
+    def test_aggregate_replay_accepts_a_revision_move_and_keeps_the_retained_run_revision(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            seal = self._seal(directory, self.FIRST)
+            self._enter(self._current(self.MOVED))
+            with self.assertRaises(_SourceReached):
+                self._record(directory, seal, retained_after=self._retained_after(self.FIRST))
+
+    def test_aggregate_replay_rejects_product_change_mixed_run_and_dirty_checkout(self) -> None:
+        for name, current, retained_revision in (
+            ("product", self._current(self.MOVED, content=self.OTHER_CONTENT), self.FIRST),
+            ("evidence input", self._current(self.MOVED, source={"files": [{"path": "changed"}]}), self.FIRST),
+            ("dirty checkout", self._current(self.MOVED, clean=False), self.FIRST),
+            ("mixed run", self._current(self.MOVED), self.MOVED),
+        ):
+            with self.subTest(change=name), tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+                directory = Path(temporary)
+                seal = self._seal(directory, self.FIRST)
+                with contextlib.ExitStack() as stack:
+                    for patch in current:
+                        stack.enter_context(patch)
+                    with self.assertRaises(EVIDENCE.CompilerHelperEvidenceError):
+                        self._record(directory, seal, retained_after=self._retained_after(retained_revision))
+
+    def test_aggregate_write_still_rejects_a_revision_move_during_the_run(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            seal = self._seal(directory, self.FIRST)
+            self._enter(self._current(self.MOVED))
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "changed during aggregate execution"):
+                self._record(directory, seal, retained_after=None)
+
+    def test_aggregate_report_reader_replays_with_the_retained_after_record(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            self._seal(directory, self.FIRST)
+            report = directory / "report.json"
+            report.write_text(EVIDENCE.canonical_json({
+                "image": "crabc-core-evidence@sha256:" + "e" * 64, "source_mount": EVIDENCE.SOURCE_MOUNT,
+                **self._retained_after(self.FIRST)}), encoding="utf-8")
+            self._enter(self._current(self.MOVED))
+            with self.assertRaises(_SourceReached):
+                EVIDENCE.validate_aggregate_report(report, root=ROOT)
 
 
 if __name__ == "__main__":

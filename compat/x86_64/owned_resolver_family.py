@@ -988,8 +988,8 @@ def _validate_admission_sources(
     alias_paths, alias_result = replays["resolver-alias-private-bodies"]
     alias_report = _read_json(alias_paths["report"], "resolver alias admission report")
     selected = alias_report.get("selected_source")
-    require(isinstance(selected, dict) and selected.get("revision") == source["revision"]
-            and selected.get("source_sha256") == source["content_sha256"],
+    require(isinstance(selected, dict)
+            and source_seal.same_product({"content_sha256": selected.get("source_sha256")}, source),
             "resolver alias source identity differs at admission")
     # The alias reader returns a validated summary rather than the raw report.
     # Replay that boundary before comparing the saved assessment result.

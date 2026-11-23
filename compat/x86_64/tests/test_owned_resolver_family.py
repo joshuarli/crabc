@@ -402,7 +402,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         }))
         request_components["classic-netdb"]["report"] = self._relative(classic_report)
         source = {
-            "revision": "r" * 40, "content_sha256": "c" * 64,
+            "revision": "a" * 40, "content_sha256": "c" * 64,
             "static_preparation": family._identity(ROOT, ROOT / request_components["resolver-family-cohort"]["static_preparation"]),
             "dynamic_qualification": family._identity(ROOT, ROOT / request_components["resolver-family-cohort"]["dynamic_qualification"]),
         }
@@ -478,6 +478,18 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                     family.admission_facts(ROOT, path)
             finally:
                 changed_work.unlink()
+
+            moved = {**source, "revision": "b" * 40}
+            with (mock.patch.object(cohort, "_canonical_products", return_value=(moved, products)),
+                  mock.patch.object(static.source_seal, "seal", return_value={
+                      "revision": moved["revision"], "content_sha256": moved["content_sha256"]})):
+                self.assertEqual(family.admission_facts(ROOT, path)["source"]["revision"], moved["revision"])
+            product_changed = {**source, "content_sha256": "d" * 64}
+            with (mock.patch.object(cohort, "_canonical_products", return_value=(product_changed, products)),
+                  mock.patch.object(static.source_seal, "seal", return_value={
+                      "revision": moved["revision"], "content_sha256": product_changed["content_sha256"]})):
+                with self.assertRaisesRegex(family.ResolverFamilyError, "not bound to current source|cohort binding"):
+                    family.admission_facts(ROOT, path)
 
             source_mutations = (
                 ("resolver-network-physical", network_file, "receipt", "resolver-network source"),

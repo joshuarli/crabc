@@ -479,9 +479,10 @@ def _aggregate_archive_join(root: Path, aggregate_report: Path, *, supplied_sour
     require(aggregate_report.is_relative_to(Path(root).absolute() / ".work"),
             "compiler-helper aggregate report is outside checkout work")
     aggregate = validate_aggregate_report(aggregate_report, root=Path(root).absolute())
-    expected_source = aggregate.get("product_source_after")
-    require(same(aggregate.get("product_source_before"), supplied_source)
-            and same(expected_source, supplied_source),
+    import source_seal
+
+    require(source_seal.same_product(aggregate.get("product_source_before"), supplied_source)
+            and source_seal.same_product(aggregate.get("product_source_after"), supplied_source),
             "compiler-helper aggregate and supplied products use different source identities")
     archive = aggregate.get("artifacts", {}).get("libcrabc-builtins.a") if type(aggregate.get("artifacts")) is dict else None
     require(type(archive) is dict and type(archive.get("sha256")) is str
@@ -1576,15 +1577,36 @@ def capture_source(output: Path, *, root: Path = ROOT) -> dict[str, Any]:
     return record
 
 
+def _retained_checkout(value: object, description: str) -> dict[str, Any]:
+    require(type(value) is dict and set(value) == {"revision", "clean"} and value["clean"] is True
+            and type(value["revision"]) is str and re.fullmatch(r"[0-9a-f]{40}", value["revision"]) is not None,
+            f"compiler-helper {description} checkout identity differs")
+    return value
+
+
+def _retained_run_revision(checkout: object, product_source: object, description: str) -> str:
+    """Return the one revision a retained checkout and product seal were taken at."""
+
+    checkout = _retained_checkout(checkout, description)
+    require(type(product_source) is dict and set(product_source) == {"revision", "content_sha256"}
+            and product_source["revision"] == checkout["revision"],
+            f"compiler-helper {description} product source revision differs")
+    return checkout["revision"]
+
+
 def _source_seal(path: Path, *, root: Path) -> dict[str, Any]:
+    import source_seal
+
     path = _physical_file(path, "compiler-helper source seal")
     record = _read_json(path, "compiler-helper source seal")
     architecture = native_arch()["arch"]
     schema = SOURCE_SEAL_SCHEMA if architecture == "x86_64" else "crabc.aarch64-compiler-helper-source-seal/v1"
     require(type(record) is dict and set(record) == {"schema", "source", "checkout", "product_source"}
             and record["schema"] == schema, "compiler-helper source seal fields differ")
-    require(same(record["source"], _aggregate_source_binding(root, architecture)) and same(record["checkout"], _checkout_identity(root))
-            and same(record["product_source"], _product_source_identity(root)),
+    _retained_run_revision(record["checkout"], record["product_source"], "source seal")
+    _checkout_identity(root)
+    require(same(record["source"], _aggregate_source_binding(root, architecture))
+            and source_seal.same_product(record["product_source"], _product_source_identity(root)),
             "compiler-helper source changed")
     return record
 
@@ -2070,7 +2092,18 @@ def _aggregate_artifacts(work: Path) -> dict[str, Any]:
 
 def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, image: str,
                       source_mount: str, oracle_record: Path, root: Path,
-                      verify_oracle_current: bool) -> dict[str, Any]:
+                      verify_oracle_current: bool,
+                      retained_after: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build the aggregate record at the current product source.
+
+    A write has no retained record and must run at the revision it began at. A
+    replay passes the retained record's `checkout_after` and
+    `product_source_after`: the product source and clean checkout are
+    recollected, and the retained run revision is kept as recorded.
+    """
+
+    import source_seal
+
     require(type(image) is str and IMAGE_PATTERN.fullmatch(image) is not None,
             "compiler-helper pinned image identity differs")
     architecture = native_arch()["arch"]
@@ -2079,8 +2112,17 @@ def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, ima
     current = _aggregate_source_binding(root, architecture, contract)
     current_checkout = _checkout_identity(root)
     current_product_source = _product_source_identity(root)
-    require(same(before["source"], current) and same(before["checkout"], current_checkout)
-            and same(before["product_source"], current_product_source),
+    if retained_after is None:
+        after_checkout, after_product_source = current_checkout, current_product_source
+    else:
+        after_checkout = _retained_checkout(retained_after.get("checkout_after"), "aggregate")
+        after_product_source = retained_after.get("product_source_after")
+        _retained_run_revision(after_checkout, after_product_source, "aggregate")
+        require(source_seal.same_product(after_product_source, current_product_source),
+                "compiler-helper source changed during aggregate execution")
+    require(same(before["source"], current) and same(before["checkout"], after_checkout)
+            and source_seal.same_product(before["product_source"], current_product_source)
+            and same(before["product_source"], after_product_source),
             "compiler-helper source changed during aggregate execution")
     require(source_mount == SOURCE_MOUNT, "compiler-helper source mount differs")
     events = _command_events(work, events_path, root=root, source_mount=source_mount)
@@ -2108,9 +2150,9 @@ def _aggregate_record(work: Path, source_before: Path, events_path: Path, *, ima
         "source_before": before["source"],
         "source_after": current,
         "checkout_before": before["checkout"],
-        "checkout_after": current_checkout,
+        "checkout_after": after_checkout,
         "product_source_before": before["product_source"],
-        "product_source_after": current_product_source,
+        "product_source_after": after_product_source,
         "contract": contract,
         "artifacts": artifacts,
         "provenance": _work_identity(work, work / "libcrabc-builtins.a.provenance.json", "aggregate provenance"),
@@ -2151,7 +2193,7 @@ def validate_aggregate_report(report_path: Path, *, root: Path = ROOT) -> dict[s
     expected = _aggregate_record(work, work / "source-before.json", work / "commands.json",
                                  image=report["image"], source_mount=report["source_mount"],
                                  oracle_record=work / "oracle-compiler.json", root=Path(root).absolute(),
-                                 verify_oracle_current=False)
+                                 verify_oracle_current=False, retained_after=report)
     require(same(report, expected), "compiler-helper aggregate report does not reconstruct")
     return report
 

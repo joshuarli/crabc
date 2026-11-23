@@ -550,6 +550,25 @@ def _source_identity(root: Path, preparation: Path) -> dict[str, str]:
     return {'revision': revision, 'tree': tree, 'source_sha256': current['content_sha256']}
 
 
+def _retained_source_identity(root: Path, retained: Any, current: Mapping[str, Any], description: str) -> dict[str, Any]:
+    """Bind a retained source claim to the current product source, not to the current revision.
+
+    The retained revision and tree are a recorded pair that must agree in Git;
+    validity compares only the product source digest.
+    """
+    retained = exact(retained, {'revision', 'tree', 'source_sha256'}, description)
+    require(all(type(retained[key]) is str for key in retained)
+            and re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', retained['revision']) is not None
+            and re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', retained['tree']) is not None,
+            f'{description} identity differs')
+    require(source_seal.same_product({'content_sha256': retained['source_sha256']},
+                                     {'content_sha256': current['source_sha256']}),
+            f'{description} is not the current product source')
+    require(_git(root, 'rev-parse', retained['revision'] + '^{tree}') == retained['tree'],
+            f'{description} revision and tree differ')
+    return retained
+
+
 def _source_paths(root: Path) -> dict[str, Path]:
     return {
         'core_image': root / 'compat/x86_64/core_image.py',
@@ -1242,7 +1261,9 @@ def _validate_product_cohort_links(root: Path, source: Mapping[str, Any], static
             and (root / primary['path']).resolve(strict=True) == static_product.resolve(strict=True),
             'static preparation primary product differs')
     anchor = read_json(product_report, 'loader-debug product report')
-    require(anchor.get('source_commit') == source['revision'] and anchor.get('source_sha256') == source['source_sha256'],
+    require(type(anchor.get('source_commit')) is str
+            and re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', anchor['source_commit']) is not None
+            and anchor.get('source_sha256') == source['source_sha256'],
             'loader-debug product source cohort differs')
     artifacts = anchor.get('artifacts')
     require(type(artifacts) is dict, 'loader-debug product artifacts differ')
@@ -1446,8 +1467,9 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_product: Pat
             and same(begin['inputs'], report['inputs'])
             and same(begin['product_input_modes'], report['product_input_modes']),
             'resolver pre-execution input capture differs')
-    require(collection['source_revision'] == source['revision'] and same(report['selected_source'], source)
-            and same(report['collector'], source), 'resolver selected/collector source differs')
+    selected = _retained_source_identity(root, report['selected_source'], source, 'resolver selected source')
+    _retained_source_identity(root, report['collector'], source, 'resolver collector source')
+    require(collection['source_revision'] == selected['revision'], 'resolver selected/collector source differs')
     origin_root = _validate_inputs(report, receipt_root, root, Path(static_product), Path(dynamic_product), Path(product_report),
                                    Path(static_preparation), Path(elf_facts), Path(base_inventory))
     require(receipt_root.is_relative_to(root / '.work'), 'resolver host receipt root differs')
@@ -1575,10 +1597,11 @@ def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_prod
     begin, begin_record = _collection_begin(work)
     source, _paths = _admit_current_collection(root, static_product, dynamic_product,
                                                 product_report, static_preparation, elf_facts, base_inventory)
-    require(same(begin['collection'], {'image': image, 'source_revision': source['revision']})
-            and same(begin['selected_source'], source) and same(begin['product_input_modes'], LINK_INPUT_MODES),
+    selected = _retained_source_identity(root, begin['selected_source'], source, 'resolver selected source')
+    require(same(begin['collection'], {'image': image, 'source_revision': selected['revision']})
+            and same(begin['product_input_modes'], LINK_INPUT_MODES),
             'resolver selected cohort changed after command execution')
-    origin_root = _validate_inputs({'selected_source': source, 'inputs': begin['inputs']}, work, root,
+    origin_root = _validate_inputs({'selected_source': selected, 'inputs': begin['inputs']}, work, root,
                                    static_product, dynamic_product, product_report,
                                    static_preparation, elf_facts, base_inventory,
                                    verify_image_sources=True)
@@ -1604,7 +1627,7 @@ def collect_report(*, root: Path, work: Path, static_product: Path, dynamic_prod
     report = {
         'schema': SCHEMA, 'status': STATUS, 'component': COMPONENT,
         'collection': begin['collection'], 'collection_begin': begin_record,
-        'selected_source': source, 'collector': source, 'inputs': inputs,
+        'selected_source': selected, 'collector': source, 'inputs': inputs,
         'selected_products': {'static': ['static_driver', 'static_manifest', 'static_libc'],
                               'dynamic': ['dynamic_driver', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader'],
                               'product_report': 'product_report'},

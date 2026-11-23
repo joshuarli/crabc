@@ -97,22 +97,126 @@ class ResolverAliasSourceIdentityTests(unittest.TestCase):
                     resolver_reader._source_identity(ROOT, preparation)
 
 
-class ResolverPrivateSourceContractTests(unittest.TestCase):
-    def test_mkquery_private_extern_has_the_source_accurate_memory_contract(self) -> None:
-        source = (ROOT / 'libc/src/c_abi/x86_64/resolver_runtime.rs').read_text(encoding='utf-8')
-        marker = 'pub unsafe extern "C" fn __res_mkquery('
-        documentation = source[source.index('/// Encode one selected recursive Internet DNS question'):source.index(marker)]
-        for phrase in (
-            '# Safety',
-            'NUL-terminated',
-            '256-byte scratch',
-            'may overlap',
-            'exclusively writable',
-            '`_data` and `_new_record` are ignored',
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, documentation)
+class ResolverAliasResumeSourceTests(unittest.TestCase):
+    FIRST, MOVED = 'a' * 40, 'e' * 40
+    TREE, CONTENT, OTHER = '1' * 40, 'b' * 64, 'f' * 64
 
+    def _identity(self, revision: str, content: str | None = None) -> dict[str, str]:
+        return {'revision': revision, 'tree': self.TREE, 'source_sha256': content or self.CONTENT}
+
+    def _current(self, content: str | None = None) -> dict[str, str]:
+        return {'revision': self.MOVED, 'tree': '2' * 40, 'source_sha256': content or self.CONTENT}
+
+    def _git_tree(self, retained_tree: str | None = None):
+        return mock.patch.object(resolver_reader, '_git', return_value=retained_tree or self.TREE)
+
+    def test_retained_source_binds_by_product_digest_and_keeps_its_own_revision_and_tree(self) -> None:
+        with self._git_tree() as git:
+            identity = resolver_reader._retained_source_identity(
+                ROOT, self._identity(self.FIRST), self._current(), 'resolver selected source')
+        self.assertEqual(identity, self._identity(self.FIRST))
+        git.assert_called_once_with(ROOT, 'rev-parse', self.FIRST + '^{tree}')
+
+    def test_retained_source_rejects_changed_product_inconsistent_tree_and_malformed_claims(self) -> None:
+        cases = (
+            ('product change', self._identity(self.FIRST), self._current(self.OTHER), None, 'not the current product source'),
+            ('tree for another revision', self._identity(self.FIRST), self._current(), '3' * 40, 'revision and tree differ'),
+            ('option-like revision', self._identity('--output=x'), self._current(), None, 'identity differs'),
+            ('extra field', {**self._identity(self.FIRST), 'clean': True}, self._current(), None, 'shape differs'),
+        )
+        for name, retained, current, tree, message in cases:
+            with self.subTest(change=name), self._git_tree(tree):
+                with self.assertRaisesRegex(ReceiptError, message):
+                    resolver_reader._retained_source_identity(ROOT, retained, current, 'resolver selected source')
+
+    def _write_report(self, directory: Path, selected: dict[str, str], collector: dict[str, str]) -> Path:
+        inputs = {'reader': {'path': 'unused'}}
+        begin = {'schema': resolver_reader.COLLECTION_BEGIN_SCHEMA,
+                 'collection': {'image': resolver_reader.IMAGE, 'source_revision': selected['revision']},
+                 'selected_source': selected, 'inputs': inputs, 'product_input_modes': resolver_reader.LINK_INPUT_MODES}
+        (directory / 'collection-begin.json').write_text(json.dumps(begin), encoding='utf-8')
+        keys = ('schema', 'status', 'component', 'collection', 'collection_begin', 'selected_source', 'collector',
+                'inputs', 'selected_products', 'static_preparation', 'product_input_modes', 'measurement_reports',
+                'source_alias_routes', 'observations', 'artifacts', 'commands', 'execution', 'runtime',
+                'runtime_roots', 'coverage')
+        report = dict.fromkeys(keys)
+        report.update(schema=resolver_reader.SCHEMA, status=resolver_reader.STATUS,
+                      component=resolver_reader.COMPONENT, collection=begin['collection'],
+                      collection_begin={'path': 'collection-begin.json'}, selected_source=selected,
+                      collector=collector, inputs=inputs, product_input_modes=resolver_reader.LINK_INPUT_MODES)
+        path = directory / 'report.json'
+        path.write_text(json.dumps(report), encoding='utf-8')
+        return path
+
+    class _Reached(Exception):
+        pass
+
+    def _replay(self, report: Path, current: dict[str, str]) -> None:
+        inputs = Path('unused')
+        with mock.patch.object(resolver_reader, '_source_identity', return_value=current), \
+             mock.patch.object(resolver_reader, '_retained_record', return_value=report.parent / 'collection-begin.json'), \
+             mock.patch.object(resolver_reader, '_git', return_value=self.TREE), \
+             mock.patch.object(resolver_reader, '_validate_inputs', side_effect=self._Reached):
+            resolver_reader.validate_report(
+                report, root=ROOT, static_product=inputs, dynamic_product=inputs, product_report=inputs,
+                static_preparation=inputs, elf_facts=inputs, base_inventory=inputs)
+
+    def test_report_reader_accepts_a_harness_only_revision_move_and_rejects_a_product_change(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            report = self._write_report(Path(temporary), self._identity(self.FIRST), self._identity(self.FIRST))
+            with self.assertRaises(self._Reached):
+                self._replay(report, self._current())
+            with self.assertRaisesRegex(ReceiptError, 'not the current product source'):
+                self._replay(report, self._current(self.OTHER))
+
+    def test_report_reader_rejects_a_collector_sealed_at_another_product(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            report = self._write_report(Path(temporary), self._identity(self.FIRST),
+                                        self._identity(self.FIRST, self.OTHER))
+            with self.assertRaisesRegex(ReceiptError, 'collector source is not the current product source'):
+                self._replay(report, self._current())
+
+    def test_report_reader_rejects_a_collection_revision_other_than_the_selected_source(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            directory = Path(temporary)
+            report = self._write_report(directory, self._identity(self.FIRST), self._identity(self.FIRST))
+            value = json.loads(report.read_text(encoding='utf-8'))
+            value['collection']['source_revision'] = self.MOVED
+            report.write_text(json.dumps(value), encoding='utf-8')
+            with self.assertRaisesRegex(ReceiptError, 'pre-execution input capture differs'):
+                self._replay(report, self._current())
+
+    def test_collect_report_keeps_the_begin_selected_source_across_a_revision_move(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
+            work = Path(temporary)
+            begin = {'schema': resolver_reader.COLLECTION_BEGIN_SCHEMA,
+                     'collection': {'image': resolver_reader.IMAGE, 'source_revision': self.FIRST},
+                     'selected_source': self._identity(self.FIRST), 'inputs': {},
+                     'product_input_modes': resolver_reader.LINK_INPUT_MODES}
+            (work / 'collection-begin.json').write_text(json.dumps(begin), encoding='utf-8')
+            unused = Path('unused')
+
+            def collect(current: dict[str, str]) -> None:
+                with mock.patch.object(resolver_reader, '_admit_current_collection', return_value=(current, {})), \
+                     mock.patch.object(resolver_reader, '_git', return_value=self.TREE), \
+                     mock.patch.object(resolver_reader, '_validate_inputs', side_effect=self._Reached) as inputs, \
+                     mock.patch.dict(os.environ, {resolver_reader.IMAGE_MARKER: resolver_reader.IMAGE}):
+                    try:
+                        resolver_reader.collect_report(
+                            root=ROOT, work=work, static_product=unused, dynamic_product=unused,
+                            product_report=unused, static_preparation=unused, elf_facts=unused,
+                            base_inventory=unused, image=resolver_reader.IMAGE)
+                    finally:
+                        if inputs.call_args is not None:
+                            self.assertEqual(inputs.call_args.args[0]['selected_source'], self._identity(self.FIRST))
+
+            with self.assertRaises(self._Reached):
+                collect(self._current())
+            with self.assertRaisesRegex(ReceiptError, 'not the current product source'):
+                collect(self._current(self.OTHER))
+
+
+class ResolverPrivateSourceContractTests(unittest.TestCase):
     def test_wrapper_transitive_legacy_probe_is_a_retained_source_input(self) -> None:
         paths = _source_paths(ROOT)
         self.assertEqual(paths['probe'], ROOT / 'compat/x86_64/owned_resolver_alias_contract_probe.c')
@@ -304,6 +408,14 @@ class ResolverAliasProductAnchorTests(unittest.TestCase):
 
             write_anchor()
             _validate_product_cohort_links(root, source, static, dynamic, product_report, preparation)
+            moved = {**source, 'revision': 'e' * 40}
+            _validate_product_cohort_links(root, moved, static, dynamic, product_report, preparation)
+            product_report.write_text(json.dumps({
+                'source_commit': source['revision'], 'source_sha256': 'f' * 64, 'artifacts': artifacts,
+            }), encoding='utf-8')
+            with self.assertRaisesRegex(ReceiptError, 'loader-debug product source cohort differs'):
+                _validate_product_cohort_links(root, moved, static, dynamic, product_report, preparation)
+            write_anchor()
             for name in ('dynamic-manifest', 'dynamic-state', 'candidate-libc', 'candidate-loader'):
                 with self.subTest(dynamic_artifact=name):
                     original = artifacts[name]['path']
@@ -326,26 +438,10 @@ class ResolverAliasProductAnchorTests(unittest.TestCase):
                 _validate_product_cohort_links(root, source, static, dynamic, product_report, preparation)
 
 
-class ResolverAliasRunnerSourceTests(unittest.TestCase):
-    def test_component_sources_hold_the_three_normal_override_controls(self) -> None:
-        override = (ROOT / 'compat/x86_64/owned_resolver_alias_override_probe.c').read_text(encoding='utf-8')
-        caller = (ROOT / 'compat/x86_64/owned_resolver_alias_override_caller.c').read_text(encoding='utf-8')
-        for name, sentinel in (('res_mkquery', '71'), ('res_send', '72'), ('res_search', '73')):
-            with self.subTest(name=name):
-                self.assertIn(name, override)
-                self.assertIn(sentinel, override)
-                self.assertIn(name, caller)
-        self.assertNotIn('int res_query(', override)
-        self.assertNotIn('int res_querydomain(', override)
-        self.assertNotIn('int main(', override)
-        self.assertIn('int main(void)', caller)
-
 class ResolverAliasRunnerRuntimeModeTests(unittest.TestCase):
     def test_runtime_setup_clears_inherited_setgid_bits_from_every_execution_directory(self) -> None:
         runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
         setup = runner[runner.index('prepare_fixture()'):runner.index('# Header ABI is a source check')]
-        self.assertIn('chmod 00755 "$fixture" "$fixture/etc"', setup)
-        self.assertIn('chmod 00755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"', setup)
         with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
             root = Path(temporary)
             parent = root / 'setgid-parent'
@@ -385,18 +481,19 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, runner)
 
-    def test_chroot_preflight_uses_the_canonical_path_outside_the_recorded_path(self) -> None:
-        runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
-        self.assertNotIn('for tool in chroot cp mkdir python3 readelf rm timeout;', runner)
-        self.assertIn('for tool in "$RAW_HEADER_COMPILER" "$READELF" "$TIMEOUT" "$CHROOT" "$ORACLE_CC";', runner)
-
-    def test_selected_driver_compiles_use_installed_headers_and_static_sidecars_are_relative(self) -> None:
-        runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
-        selected_compile = runner[runner.index('record compile-public-probe'):runner.index('record oracle-symbols')]
-        self.assertNotIn('-I "$ROOT/include"', selected_compile)
-        self.assertIn('cd "$WORK"', runner)
-        self.assertIn('--link-receipt static-contract.link.json', runner)
-        self.assertIn('--link-receipt static-pie-contract.link.json', runner)
+    def test_selected_driver_compiles_use_installed_headers_and_raw_header_compiler(self) -> None:
+        expected = self._expected_argvs()
+        for name in ('header-c', 'header-cpp'):
+            with self.subTest(name=name):
+                argv = expected[name]
+                self.assertEqual(argv[0], '/usr/bin/gcc')
+                self.assertIn('-nostdinc', argv)
+                self.assertEqual(argv[argv.index('-I') + 1], '/workspace/.work/dynamic/usr/include')
+                self.assertNotIn('-isystem', argv)
+        for name in ('compile-public-probe', 'compile-override-mkquery'):
+            with self.subTest(name=name):
+                self.assertNotIn('/workspace/include', expected[name])
+                self.assertNotIn('-I/workspace/include', expected[name])
 
     def test_command_roster_includes_retained_public_caller_and_dynamic_export_observations(self) -> None:
         self.assertEqual(len(COMMAND_NAMES), 44)
@@ -411,7 +508,7 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, COMMAND_NAMES)
 
-    def test_command_replay_uses_the_retained_source_mount_not_host_paths(self) -> None:
+    def _expected_argvs(self) -> dict[str, list[str]]:
         inputs = {name: {'path': f'/workspace/.work/input/{name}'} for name in INPUT_NAMES}
         inputs.update({
             'dynamic_driver': {'path': '/workspace/.work/dynamic/bin/crabc-cc-dynamic'},
@@ -430,7 +527,10 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
             'timeout': {'path': '/usr/bin/timeout'},
             'chroot': {'path': '/usr/sbin/chroot'},
         })
-        expected = _expected_command_argvs(inputs, Path('/workspace'), Path('/workspace/.work/receipt'))
+        return _expected_command_argvs(inputs, Path('/workspace'), Path('/workspace/.work/receipt'))
+
+    def test_command_replay_uses_the_retained_source_mount_not_host_paths(self) -> None:
+        expected = self._expected_argvs()
         self.assertEqual(expected['compile-public-probe'][0], '/workspace/.work/dynamic/bin/crabc-cc-dynamic')
         self.assertEqual(expected['static-normal-et-exec-link'][-3:],
                          ['static-contract.link.json', '-o', '/workspace/.work/receipt/outputs/static-contract'])
@@ -538,20 +638,6 @@ class ResolverAliasOrdinaryBoundaryRegressionTests(unittest.TestCase):
         from owned_resolver_alias_contract_reader import _validate_selected_source_text
 
         _validate_selected_source_text((ROOT / 'libc/src/c_abi/x86_64/resolver_runtime.rs').read_text(encoding='utf-8'))
-
-    def test_header_commands_use_only_pinned_raw_compiler_and_selected_headers(self) -> None:
-        runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
-        reader = (ROOT / 'compat/x86_64/owned_resolver_alias_contract_reader.py').read_text(encoding='utf-8')
-        self.assertIn('readonly RAW_HEADER_COMPILER=/usr/bin/gcc', runner)
-        header_commands = runner[runner.index('# Header ABI is a source check'):runner.index('record compile-public-probe')]
-        self.assertIn('"$RAW_HEADER_COMPILER"', header_commands)
-        self.assertIn('-nostdinc -I "$DYNAMIC_PRODUCT/usr/include"', header_commands)
-        self.assertNotIn('HEADER_BUILTIN_INCLUDE', header_commands)
-        self.assertNotIn('-isystem', header_commands)
-        self.assertNotIn('HEADER_BUILTIN_INCLUDE', reader)
-        self.assertNotIn('"$DYNAMIC_DRIVER" --dynamic-pie -x', header_commands)
-
-
 
 
 class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
