@@ -35,6 +35,7 @@ Next: 23
 - **Where:** libc/src/c_abi/x86_64/pthread_tsd.rs:182-195,397-414,431-456,357-384
 - **Problem:** Every pthread_getspecific/setspecific on every thread takes SELECTED_TSD_LOCK, a pure spin CAS with no futex fallback, and pthread_key_delete holds it while scanning the worker registry. musl reads the caller's own slot lock-free. Under SCHED_FIFO a spinner can livelock against a preempted holder on the same CPU, and all TSD access serializes process-wide.
 - **Recommendation:** D25 M4 owns the progress question. It is correctness, not waived cost. Reproduce natively with pinned affinity, SCHED_FIFO priorities and an external watchdog. If it reproduces, fix progress with the smallest correct design (e.g. lock-free current-thread get/set over per-thread atomics with per-key generations as musl does, futex only for create/delete), preserving key deletion, destructors, fork and worker-mapping lifetime. If the environment cannot run it, record the missing proof and keep this open. Contention cost alone stays deferred.
+- **Status:** `3b7e26327` and `dc8b2094b` replace the TSD and worker-registry spins with futex-backed locks. The static x86 SCHED_FIFO reproducer fails before and passes after. Still open: a signal handler calling `pthread_getspecific` deadlocks when it interrupts a same-thread lock holder (6/6 with `--include-signal`, on base and fix, while the musl control completes), the dynamic reproducer has not run, and arm64 is unproven.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
 
@@ -44,23 +45,6 @@ Next: 23
 - **Where:** crabc-rs/src/process.rs:1890-1924,1941-1965,1985-2069; docs/design/architecture.md:36
 - **Problem:** architecture.md says neither crabc-core nor crabc-rs may own libc or loader singleton state, but crabc-rs keeps its own static-mut atfork table and spin lock. C pthread_atfork handlers do not run on crabc_rs::process::fork and facade handlers do not run on C fork, each linked copy of crabc-rs has its own table, and a prepare callback that registers another handler spins forever on the non-reentrant lock.
 - **Recommendation:** Owner chose deletion (option B); the bridge design is closed. D25 M3 removes the AArch64 facade `process::{fork, register_atfork}` and its registry from `lane/crab12-facade-atfork` `e41d722fe`, keeping raw unsafe fork, prepared-exec, `Child` and C `fork`/`pthread_atfork` coverage. Close after both-arch focused builds, process/signal native tests and arm `verify_signal_process.py` pass.
+- **Status:** Implemented on `lane/d25-m3` `47f8102b4`, not on main. x86 tests and the arm type-check pass. Native arm build, tests and `verify_signal_process.py` remain.
 - **Fix with:** api-surface-and-module-boundaries
 - **Effort:** M
-
-### CRAB-22 · P3 · Evidence readers still take x86 image pins from the retired Dockerfile
-
-- **Area:** Core image / qualification inputs
-- **Where:** docker/Dockerfile.x86_64; compat/x86_64/validate_parity_ledger.py:181,4321; compat/x86_64/header_callable_inventory.py:71; compat/x86_64/native_abi_inventory.py:95; compat/x86_64/owned_posix_native_execution.py:84; compat/x86_64/parity.toml (`source_owners`)
-- **Problem:** `docker/image/build.py` now builds the x86 image from `docker/image/sources.lock.json`, but the parity ledger, header inventories and evidence-input digests still read UAPI and Alpine pins from `Dockerfile.x86_64`, which no build consumes. The two records can drift without any check failing.
-- **Recommendation:** D25 M2. Move each reader and the `ci.yml`/`lint.yml` image build (`CRABC_X86_64_CORE_IMAGE=crabc-ci`) to the canonical `build.py`/lock build or its verified pin with cache reuse, then delete `Dockerfile.x86_64` and its `source_owners` entries in one change, refreshing the affected evidence inputs.
-- **Fix with:** single-source-of-truth
-- **Effort:** M
-
-### CRAB-21 · P3 · Two readers still reject a same-source cross-revision resume
-
-- **Area:** Qualification harness
-- **Where:** compat/x86_64/owned_resolver_alias_contract_reader.py `_source_identity`; compat/x86_64/owned_resolver_family.py `_validate_admission_sources`; compat/x86_64/compiler_helper_evidence.py `_source_seal`, `_aggregate_record`
-- **Problem:** The CRAB-19 fix (`source_seal.same_evidence`) lets readers accept a recollected seal that differs only in revision, but these readers bind a retained git revision outside the seal pattern (`selected_source {revision, tree, source_sha256}` and `checkout {revision, clean}`) and compare it with the current HEAD. A resumed candidate whose later steps run at a different revision with the same product source therefore still fails at the resolver alias and compiler-helper readers. Not reproduced in a full run.
-- **Recommendation:** D25 M5. Record a product-source seal in these receipts and compare it with `same_product`, keeping the tree/clean and changed-during-collection checks. Test both a harness-only HEAD move (accepted, `fresh: false`) and a product or evidence-input change (rejected).
-- **Fix with:** none
-- **Effort:** S

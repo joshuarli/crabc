@@ -17,19 +17,67 @@ products and native x86-64 and AArch64 results agree at one fixed SHA. Work the
 step M6 is the only acceptance attempt. Convergence is already on main by owner
 direction; pre-merge sequencing in CRAB-8 and earlier Status no longer blocks.
 
+**Next: continue on an Apple Silicon Mac, in a native arm64 Linux VM.** The
+x86-64 side of M1–M5 is an integrated checkpoint at `5add38189`. Nothing is
+accepted, and M6 has not started.
+
+| Step | Done on x86-64 | Still needs native arm64 |
+| --- | --- | --- |
+| M1 | Toolchain check, current-pin docs and `campaign-status` | Repair the three manifests, run their readers, wire the check into CI |
+| M2 | Canonical CI image, readers migrated, recipe deleted, bounded smoke | CI cannot catch manifest drift until M1 wires the check |
+| M3 | `lane/d25-m3` `47f8102b4` (pushed, not on main), x86 tests and arm type-check pass | Rebase, arm build and tests, `verify_signal_process.py`, integrate, close CRAB-12 |
+| M4 | Futex-backed TSD and worker-registry locks; static FIFO reproducer fails before and passes after | Reproducer and pthread producers; see CRAB-11 for what stays open |
+| M5 | Three readers accept same-product resume; x86 producers pass | Arm producers and readers for the named repairs |
+
+Arm64 sequence:
+
+1. Create the VM using [CRAB-8 host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack).
+   Keep the clone on the VM's disk and `.work/aarch64` on ext4 with about 40M
+   inodes. Install Docker Engine inside the VM, and never use a macOS bind mount
+   or emulation.
+2. Confirm `docker image inspect sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`
+   succeeds. The arm image is not reproducible, so a rebuild with another ID is
+   a re-pin that changes the frozen inputs: stop and ask the owner before
+   adopting it.
+3. M1: collect actual tool identities from that image and repair
+   `owned_resolver_alias_image_inputs_aarch64.json`,
+   `owned_resolver_network_image_inputs_aarch64.json` and
+   `owned_classic_netdb_image_inputs_aarch64.json` together. No dedicated
+   collector command exists. Never copy x86 values. Run their readers, then
+   confirm `python3 -B compat/x86_64/source_image_toolchain_check.py` changes
+   from exit 1 to exit 0. Add it to `.github/workflows/ci.yml` between
+   `make test` and the fetch/smoke step.
+4. M3: rebase `lane/d25-m3` on main, run the exit proof above, integrate and
+   close CRAB-12. `compat/crabc-rs/coverage.toml` is a frozen input and keeps
+   its stale atfork entry.
+5. M4: build an owned static sysroot, then run
+   `compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot <sysroot>` with
+   `CAP_SYS_NICE`, plus the pthread producers. Dynamic routes such as
+   `owned-dynamic-pthread-exit` and `owned-dynamic-fork` need
+   `CRABC_X86_64_CORE_IMAGE` or `CRABC_AARCH64_CORE_IMAGE` set because the
+   dispatcher does not call `ensure_image` for them.
+6. M5: run the owning arm producers and readers for `6161b069d` and `9c8056050`.
+7. Before the candidate, re-collect `compat/x86_64/native-abi-exports.json` from
+   a validated collection, because anonymous hashes change with any libc change.
+   Check `native-abi-exports-aarch64.json` natively. Never refresh frozen
+   AArch64 inputs to absorb drift.
+8. M6 at one SHA on both hosts, then M7. The x86 run needs this Linux host or
+   another native x86-64 host.
+
+Scratch: passing dynamic cases now keep digests and receipts instead of their
+execution roots, cutting a run from about 15 GiB to about 4.3 GiB. Failed cases
+keep everything. Loader-synthetic, package-corpus and DNS cases still keep their
+roots because their readers replay them. Remove root-owned `.work` paths through
+the pinned image before retiring a worktree.
+
 Current environment facts (verify, do not trust): `rust-toolchain.toml` selects
 `nightly-2026-11-09` since `6161b069d`, which also rebuilt both core images
 (`compat/x86_64/core_image.py`: x86 `sha256:b243d937…`, arm `sha256:7b7cd03d…`).
 The 2026-11-21 cold-capsule and two-build reproduction results proved the earlier
 `c689abaa…` image on the earlier nightly at `b82313a51`; they are historical and
-prove nothing about the current pair. Three active arm source-image manifests
-(`owned_resolver_alias_image_inputs_aarch64.json`,
-`owned_resolver_network_image_inputs_aarch64.json`,
-`owned_classic_netdb_image_inputs_aarch64.json`) still name
-`nightly-2026-09-15`. CI (`ci.yml`, `lint.yml`) still builds the retired
-`docker/Dockerfile.x86_64` as `crabc-ci`.
-Last accepted revision: none for F2. Last integrated checkpoint before D25:
-`ec8937a39` (CRAB-13/14/16/17/18/19/20), no full candidate completed. Last
+prove nothing about the current pair.
+Last accepted revision: none for F2. Last integrated checkpoint: `5add38189`
+(x86-64 side of M1, M2, M4 and M5), no full candidate completed. Last
 candidate `lane/a5-final8` `909d825dc` was stopped for wind-down (x86 at step 03,
 arm at 01); not accepted, never resumed.
 Hosts: x86 on native Linux ([development setup](docs/development.md)); arm in a
