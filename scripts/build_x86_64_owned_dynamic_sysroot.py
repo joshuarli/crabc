@@ -292,11 +292,18 @@ def shared_libc_errno_private_aliases(stage: Path) -> dict[str, object]:
     }
 
 
+def shared_libc_rust_private_symbols(stage: Path) -> Path:
+    script = stage / "libc-rust-private.exports"
+    script.write_text("{ local: _R*; _ZN*; };\n", encoding="utf-8")
+    return script
+
+
 def shared_libc_link_command(
     linker: Path,
     dynamic_list: Path,
     mimalloc_hidden_exports: Path | None,
     errno_private_aliases: Path,
+    rust_private_symbols: Path,
     objects: Path,
     selected: tuple[str, ...],
     builtins: Path,
@@ -313,6 +320,7 @@ def shared_libc_link_command(
         f"--dynamic-list={dynamic_list}",
         *([f"--version-script={mimalloc_hidden_exports}"] if mimalloc_hidden_exports is not None else []),
         f"--version-script={errno_private_aliases}",
+        f"--version-script={rust_private_symbols}",
         helper_policy["linker_option"],
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
         "-z", "pack-relative-relocs",
@@ -634,6 +642,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
         if accepted_c else {"status": "not-selected-native-shadow"})
     shared_compiler_helper_policy = shared_libc_compiler_helper_archive_policy()
     shared_errno_private_aliases = shared_libc_errno_private_aliases(stage)
+    rust_private_symbols = shared_libc_rust_private_symbols(stage)
     run = common.run
     c_flags = common.c_allocator_target_flags()
     cargo = [rustup, "run", common.PINNED_TOOLCHAIN, "cargo"]
@@ -686,6 +695,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     libc_shared_link_command = shared_libc_link_command(
         linker, SHARED_LIBC_DYNAMIC_LIST, (stage / "libc-mimalloc-hidden.exports" if accepted_c else None),
         stage / "libc-errno-private.exports",
+        rust_private_symbols,
         objects, selected, builtins, library
     )
     crt = stage / "crt"

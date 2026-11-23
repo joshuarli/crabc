@@ -42,7 +42,9 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             for name, source in {
                 "libc": "extern unsigned __int128 __addoti4(unsigned __int128, unsigned __int128, int *);\n"
                         "int owned_entry(void) { int overflow; return (int)__addoti4(1, 2, &overflow); }\n"
-                        "int fixture_private_errno;\n",
+                        "int fixture_private_errno;\n"
+                        "int _RNvfixture_private(void) { return 3; }\n"
+                        "int _ZNfixture_privateE = 4;\n",
                 "crabc-builtins": "int fixture_private_helper_one(unsigned long v) { return !!v; }\n"
                                   "unsigned long fixture_private_helper_two(unsigned long a, unsigned long b) { return a / b; }\n"
                                   "unsigned __int128 __addoti4(unsigned __int128 left, unsigned __int128 right, int *overflow) {\n"
@@ -62,8 +64,9 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             dynamic_list.write_text("{ owned_entry; };\n")
             aliases = work / "aliases.map"
             aliases.write_text("{ local: fixture_private_errno; };\n")
+            rust_private = builder.shared_libc_rust_private_symbols(work)
             command = builder.shared_libc_link_command(
-                linker, dynamic_list, None, aliases, objects, ("libc.o", "unrelated.a"), archive, library)
+                linker, dynamic_list, None, aliases, rust_private, objects, ("libc.o", "unrelated.a"), archive, library)
             command[1:1] = ["--trace", "-Map", str(map_path)]
             command.append(str(unrelated))
             trace_lines = run(command).splitlines()
@@ -82,6 +85,11 @@ class DynamicSysrootEntryTests(unittest.TestCase):
                 builder.common.producer_tool_path(tools, "llvm-nm"), library / "libc.so"), set())
             regular = next(table["rows"] for table in tables if table["name"] == ".symtab")
             dynamic = next(table["rows"] for table in tables if table["name"] == ".dynsym")
+            rust_names = {"_RNvfixture_private", "_ZNfixture_privateE"}
+            rust_rows = [row for row in regular if row["name"] in rust_names]
+            self.assertEqual({row["name"] for row in rust_rows}, rust_names)
+            self.assertTrue(all(row["binding"] == "LOCAL" for row in rust_rows))
+            self.assertFalse(any(row["name"] in rust_names for row in dynamic))
             names = {"fixture_private_helper_one", "fixture_private_helper_two", "__addoti4"}
             selected = [row for row in regular if row["name"] in names]
             self.assertEqual({row["name"] for row in selected}, names)
@@ -118,7 +126,7 @@ class DynamicSysrootEntryTests(unittest.TestCase):
             run(["/usr/bin/gcc", "-O2", "-fPIC", "-fno-plt", "-c", str(missing_source),
                  "-o", str(objects / "missing.o")])
             run(builder.shared_libc_link_command(
-                linker, dynamic_list, None, aliases, objects, ("libc.o", "missing.o"), archive, library))
+                linker, dynamic_list, None, aliases, rust_private, objects, ("libc.o", "missing.o"), archive, library))
             self.assertEqual(builder.elf_imports(
                 builder.common.producer_tool_path(tools, "llvm-nm"), library / "libc.so"),
                 {"foreign_dependency"})
