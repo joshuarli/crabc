@@ -46,9 +46,9 @@
 compile_error!("the x86 pthread/C11 TSD leaf requires little-endian Linux/x86-64");
 
 use core::ffi::{c_int, c_uint, c_void};
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{pthread_create_join, pthread_identity, static_tls};
+use super::{pthread_create_join, pthread_identity, raw_syscall, static_tls};
 
 // Musl's key-create source exports hidden global providers. Its
 // `__pthread_getspecific` source body is static, with both pthread_getspecific
@@ -105,6 +105,13 @@ fn is_allocator_key_storage(key: *mut c_uint) -> bool {
     // Taking the address reads no storage.
     core::ptr::eq(unsafe { core::ptr::addr_of!(_mi_heap_default_key) }, key.cast_const())
 }
+
+const LOCK_FREE: u32 = 0;
+const LOCK_HELD: u32 = 1;
+const LOCK_CONTENDED: u32 = 2;
+
+const FUTEX_WAIT_PRIVATE: i64 = 128;
+const FUTEX_WAKE_PRIVATE: i64 = 129;
 
 const KEY_FREE: u8 = 0;
 const KEY_ALLOCATED: u8 = 1;
@@ -171,27 +178,53 @@ impl SelectedTsdKey {
 static SELECTED_TSD_KEYS: [SelectedTsdKey; TSD_SLOTS] =
     [const { SelectedTsdKey::empty() }; TSD_SLOTS];
 static SELECTED_TSD_NEXT_KEY: AtomicUsize = AtomicUsize::new(0);
-static SELECTED_TSD_LOCK: AtomicU8 = AtomicU8::new(0);
+static SELECTED_TSD_LOCK: AtomicU32 = AtomicU32::new(LOCK_FREE);
 static MAIN_SELECTED_TSD_VALUES: SelectedTsdValues = SelectedTsdValues::empty();
 
 /// Acquire the bounded TSD metadata/value lock.
 ///
-/// The lock is never held across a user destructor, clone, join wait, or any
-/// syscall. Key deletion takes it before the selected-worker registry lock;
-/// current worker lookup drops the registry lock before taking this lock.
+/// A contended caller sleeps on a private futex instead of spinning, so a
+/// lock owner that was preempted on the waiter's own CPU, for example by a
+/// higher-priority `SCHED_FIFO` waiter, can run and release it. The lock is
+/// never held across a user destructor, clone, or join wait. Key deletion
+/// takes it before the selected-worker registry lock; current worker lookup
+/// drops the registry lock before taking this lock.
 fn lock_selected_tsd() {
-    while SELECTED_TSD_LOCK
-        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
+    if SELECTED_TSD_LOCK
+        .compare_exchange(LOCK_FREE, LOCK_HELD, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
     {
-        while SELECTED_TSD_LOCK.load(Ordering::Relaxed) != 0 {
-            core::hint::spin_loop();
-        }
+        return;
+    }
+    while SELECTED_TSD_LOCK.swap(LOCK_CONTENDED, Ordering::Acquire) != LOCK_FREE {
+        // SAFETY: the static lock word is four-byte aligned and lives for the
+        // process. Linux returns EAGAIN, EINTR, or a normal wake without a C
+        // result, so every outcome retries the exchange above.
+        let _ = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_FUTEX,
+                core::ptr::addr_of!(SELECTED_TSD_LOCK) as usize as i64,
+                FUTEX_WAIT_PRIVATE,
+                LOCK_CONTENDED as i64,
+                0,
+            )
+        };
     }
 }
 
 fn unlock_selected_tsd() {
-    SELECTED_TSD_LOCK.store(0, Ordering::Release);
+    if SELECTED_TSD_LOCK.swap(LOCK_FREE, Ordering::Release) == LOCK_CONTENDED {
+        // SAFETY: as in `lock_selected_tsd`; waking one sleeper hands it the
+        // retry that re-marks the lock contended if more waiters remain.
+        let _ = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_FUTEX,
+                core::ptr::addr_of!(SELECTED_TSD_LOCK) as usize as i64,
+                FUTEX_WAKE_PRIVATE,
+                1,
+            )
+        };
+    }
 }
 
 /// Begin the selected TSD portion of a static fork transaction.
@@ -223,7 +256,7 @@ pub(super) unsafe fn pthread_fork_parent() {
 /// owned lock has completed. No inherited key metadata is being mutated.
 #[cfg(crabc_x86_owned_runtime)]
 pub(super) unsafe fn pthread_fork_child() {
-    SELECTED_TSD_LOCK.store(0, Ordering::Release);
+    SELECTED_TSD_LOCK.store(LOCK_FREE, Ordering::Release);
 }
 
 
@@ -583,7 +616,7 @@ pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
         // The child inherited the metadata lock from its sole surviving task.
         // No sibling can finish a concurrent key transition after fork, so
         // clear it only after the stable pointer identity observation.
-        SELECTED_TSD_LOCK.store(0, Ordering::Release);
+        SELECTED_TSD_LOCK.store(LOCK_FREE, Ordering::Release);
         return true;
     }
     let Some(source) = pthread_create_join::current_selected_worker_tsd_values_after_fork(
@@ -608,7 +641,7 @@ pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
     MAIN_SELECTED_TSD_VALUES
         .teardown
         .store(source.teardown.load(Ordering::Acquire), Ordering::Relaxed);
-    SELECTED_TSD_LOCK.store(0, Ordering::Release);
+    SELECTED_TSD_LOCK.store(LOCK_FREE, Ordering::Release);
     true
 }
 

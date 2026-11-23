@@ -60,3 +60,39 @@ part of this evidence.
 This AArch64 route is paused. The native x86-64 component runs the same
 fixture through the installed product with a derived source profile; see
 [owned-pthread-stress.md](../x86_64/owned-pthread-stress.md).
+
+## SCHED_FIFO progress of the selected pthread-key locks
+
+`run_tsd_fifo_progress.sh` asks one question of the installed x86-64 static
+product: can a waiter spin on a pthread-key lock while the preempted lock owner
+shares its CPU and cannot run? `tsd_fifo_progress.c` is compiled with the
+installed `crabc-cc` and linked to the installed libc, and also built against the
+pinned musl oracle as a control. Its owner (`SCHED_FIFO` priority 10) and waiter
+(priority 20) are pinned to one CPU; the waiter wakes by timer, preempts the
+owner at an arbitrary instruction, then reads its key. The control must
+complete or the run is invalid.
+
+`tsd_fifo_watchdog.py` runs on a different CPU under the ordinary policy. It
+fails a trial when the shared counters stop for 300 ms, reports the state of
+`SELECTED_TSD_LOCK` and the selected-worker registry lock read from the stalled
+process, and kills the fixture's whole process group. `RLIMIT_RTTIME` is a
+kernel backstop, and the container is killed after 240 s. The FIFO section is
+about one second per trial.
+
+```text
+scripts/build_x86_64_owned_sysroot.py --output /workspace/.work/x86_64/NAME   # in the pinned image
+compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot .work/x86_64/NAME [--repeat N] [--include-registry]
+```
+
+The container needs only `--cap-add SYS_NICE` and `--network none`. The runner
+exits 77 when `SCHED_FIFO` is denied.
+
+The default scenarios keep the lock owner on a task that takes only the
+pthread-key lock: `getset` (owner is the main thread, in
+`pthread_setspecific`/`pthread_getspecific`) and `delete` (owner is a worker in
+`pthread_key_create`/`pthread_key_delete`). `--include-registry` adds `registry`,
+two workers calling `pthread_getspecific`/`pthread_setspecific`. A worker's key
+lookup takes the selected-worker registry spin lock owned by
+`libc/src/c_abi/x86_64/pthread_create_join.rs`, so this scenario fails with that
+lock held until its owner stops spinning; it is not part of the default pass
+condition.
