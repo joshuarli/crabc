@@ -1483,6 +1483,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
+            Path("/private/rust-private.exports"),
             Path("/private/objects"),
             ("one.o", "two.o"), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
@@ -1491,6 +1492,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             "--dynamic-list=" + str(producer.SHARED_LIBC_DYNAMIC_LIST),
             "--version-script=/private/mimalloc-hidden.exports",
             "--version-script=/private/errno-private.exports",
+            "--version-script=/private/rust-private.exports",
             "--exclude-libs=libcrabc-builtins.a",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
             "-z", "pack-relative-relocs",
@@ -1507,6 +1509,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
+            Path("/private/rust-private.exports"),
             Path("/private/objects"),
             ("one.o",), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
