@@ -65,22 +65,12 @@ operations begin in `crabc-core` and are shaped by `crabc-rs`; direct native
 errors remain values rather than C `errno` side effects.
 
 Within `libc`, `libc/src/lib.rs` is the target and linkage composition root.
-It selects `c_abi/x86_64/static_c_abi.rs` for both static and owned dynamic
-x86-64 compositions, with distinct startup/TLS ownership, and `c_abi.rs` for
-the existing AArch64 composition. These C ABI owners retain layouts, TLS errno, stdio, pthread,
-locale and process state. Independently owned C ABI leaves remain private
-modules with explicit imports.
-
-The AArch64 `c_abi.rs` is a lexical C-ABI namespace rather than a second
-composition root: its compatibility fragments directly share private layouts,
-TLS state, and helper routines. Independently owned C-ABI leaves remain normal
-private modules with named imports. Three cohesive lexical families have an
-additional, specific rationale: `math_family.rs` keeps musl-derived numerical
-ports beside their private bit and floating-environment helpers;
-`encoding_tables.rs` is literal iconv data shared by the conversion
-implementation; and `c_abi/aarch64/{atomic,memory}.rs` contains
-linkage-sensitive AArch64 assembly. These inclusions never cross the public
-crate root, which stays a small target and linkage composition boundary.
+It selects `c_abi/x86_64/static_c_abi.rs` for the static and owned dynamic
+compositions on both x86-64 and AArch64, with distinct startup/TLS ownership;
+the directory name is historical. This C ABI owner retains layouts, TLS errno,
+stdio, pthread, locale and process state. Independently owned C ABI leaves
+remain private modules with explicit imports. `libc/src/c_abi.rs` and the
+leaves only it includes are not part of the compiled crate.
 
 [`COMPATIBILITY.md`](../../COMPATIBILITY.md) reports generated measurements.
 The exact native capability classification lives in
