@@ -24,7 +24,9 @@ that store gives the loaded image the ID pinned in `compat/x86_64/core_image.py`
 The current toolchain is `nightly-2026-11-09`. The pinned x86 image is
 `sha256:b243d937bf906259565a2e3e1b4162a6d1162a5209405995b12a62a9beccd394`;
 the native arm image is
-`sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`.
+`sha256:7ac9c379fbd0ba3c6bdd7e28b18f95276615cfecf668f26e104ba14271c0bce0`.
+The arm image is built from `docker/Dockerfile.aarch64` and is not reproducible;
+the 2026-11-24 native rebuild replaced the lost `sha256:7b7cd03d…` image.
 The authoritative image IDs are in `compat/x86_64/core_image.py`.
 
 The 2026-11-21 cold-capsule setup and two-build reproduction are historical:
