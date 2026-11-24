@@ -1,5 +1,5 @@
 Prefix: CRAB
-Next: 23
+Next: 24
 
 ### CRAB-6 · P2 · Unreproduced fork-child SIGEV_THREAD timer wait failure
 
@@ -33,8 +33,17 @@ Next: 23
 
 - **Area:** Thread-specific data
 - **Where:** libc/src/c_abi/x86_64/pthread_tsd.rs:182-195,397-414,431-456,357-384
-- **Problem:** Every pthread_getspecific/setspecific on every thread takes SELECTED_TSD_LOCK, a pure spin CAS with no futex fallback, and pthread_key_delete holds it while scanning the worker registry. musl reads the caller's own slot lock-free. Under SCHED_FIFO a spinner can livelock against a preempted holder on the same CPU, and all TSD access serializes process-wide.
+- **Problem:** Every pthread_getspecific/setspecific on every thread takes SELECTED_TSD_LOCK, a pure spin CAS with no futex fallback, and pthread_key_delete holds it while scanning the worker registry. musl reads the caller's own slot lock-free. Under SCHED_FIFO a spinner can livelock against a preempted holder on the same CPU, and all TSD access serializes process-wide. Status: `3b7e26327` and `dc8b2094b` replace the TSD and worker-registry spins with futex-backed locks. The static x86 SCHED_FIFO reproducer fails before and passes after. The reproducer now runs natively on AArch64: `getset`, `delete` and `registry` make progress under the watchdog. Still open: a signal handler calling `pthread_getspecific` deadlocks when it interrupts a same-thread lock holder (6/6 with `--include-signal` on x86 and on AArch64, while the musl control completes), and the dynamic reproducer has not run. The AArch64 run is not yet a valid proof: in the OrbStack VM some `getset` trials of both crabc and the musl control never leave setup, because the priority-20 waiter is not woken from its 100 µs sleep while the priority-10 owner spins on the same CPU, and `RLIMIT_RTTIME` kills the trial at about 4 s. That VM timer/wakeup behavior must be explained, or the reproducer run on another native arm64 host, before arm64 progress is proven.
 - **Recommendation:** D25 M4 owns the progress question. It is correctness, not waived cost. Reproduce natively with pinned affinity, SCHED_FIFO priorities and an external watchdog. If it reproduces, fix progress with the smallest correct design (e.g. lock-free current-thread get/set over per-thread atomics with per-key generations as musl does, futex only for create/delete), preserving key deletion, destructors, fork and worker-mapping lifetime. If the environment cannot run it, record the missing proof and keep this open. Contention cost alone stays deferred.
-- **Status:** `3b7e26327` and `dc8b2094b` replace the TSD and worker-registry spins with futex-backed locks. The static x86 SCHED_FIFO reproducer fails before and passes after. The reproducer now runs natively on AArch64: `getset`, `delete` and `registry` make progress under the watchdog. Still open: a signal handler calling `pthread_getspecific` deadlocks when it interrupts a same-thread lock holder (6/6 with `--include-signal` on x86 and on AArch64, while the musl control completes), and the dynamic reproducer has not run. The AArch64 run is not yet a valid proof: in the OrbStack VM some `getset` trials of both crabc and the musl control never leave setup, because the priority-20 waiter is not woken from its 100 µs sleep while the priority-10 owner spins on the same CPU, and `RLIMIT_RTTIME` kills the trial at about 4 s. That VM timer/wakeup behavior must be explained, or the reproducer run on another native arm64 host, before arm64 progress is proven.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
+
+### CRAB-23 · P4 · Validators and the parity ledger read plan.md, blocking its move into the roadmap
+
+- **Area:** Qualification harness tests
+- **Where:** compat/x86_64/tests/test_owned_posix_runtime_catalog.py:90; compat/x86_64/parity.toml:66,1611,2812; plan.md
+- **Problem:** The owned POSIX runtime catalog test reads ../plan.md as a source, and parity.toml lists plan.md as evidence and ownership, so the campaign plan must stay at the repository root beside docs/roadmap.md, the single plan.
+- **Recommendation:** Point the catalog test and the parity ledger at docs/roadmap.md (or a dedicated machine-readable record), then fold plan.md into the roadmap and delete it. Acceptance: the catalog test and parity checks pass with plan.md removed.
+- **Fix with:** none
+- **Effort:** S
+
