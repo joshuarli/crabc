@@ -6,9 +6,9 @@ scope must not weaken ordinary Unix semantics.
 
 ## Current direction — 2026-11-23
 
-Read [Status](plan.md#status-and-first-action), [D25](plan.md#d25-dual-native-milestone) and [F2 closeout](plan.md#f2-closeout) before dispatch. The goal is one dual-native (x86-64 and AArch64) correctness milestone at one SHA; the active step governs.
+Read [roadmap Status](docs/roadmap.md#status) before dispatch. The retained [active campaign plan](plan.md) contains D25 and F2 closeout until its validation dependencies are removed. The goal is one dual-native (x86-64 and AArch64) correctness milestone at one SHA; the active step governs.
 Feature completeness comes first; performance and memory budgets are waived until then. See [campaign rules](docs/lanes.md#campaign-operating-rules).
-User direction governs, then [docs/scope.md](docs/scope.md) and [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then `plan.md`.
+User direction governs, then [docs/scope.md](docs/scope.md) and [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then the roadmap and retained campaign plan.
 This is a local, undeployed greenfield libc: crash reproduction, fault injection, fuzzing and differential tests on repository-owned code are defensive correctness work ([local correctness work](docs/scope.md#local-correctness-work)).
 
 ## Commands
@@ -47,7 +47,7 @@ python3 compat/x86_64/validate_parity_ledger.py
 | --- | --- |
 | Build and installation | [docs/build-and-install.md](docs/build-and-install.md) |
 | Development workflow | [docs/development.md](docs/development.md) |
-| Active sequence, freeze, acceptance and retained holds | [plan.md](plan.md) |
+| Roadmap and resume status | [docs/roadmap.md](docs/roadmap.md); retained active campaign: [plan.md](plan.md) |
 | Scope, oracles, dependencies and safety | [docs/scope.md](docs/scope.md) |
 | Selected behavior and hardening | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |
 | Active feature completion and separately frozen allocator obligations | [docs/completion-requirements.md](docs/completion-requirements.md) |
