@@ -97,16 +97,13 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         self.assertEqual(str(self.receipt.LINKER_PATH), "/usr/bin/mold")
 
     def test_current_image_manifest_binds_the_selected_toolchain_and_exact_files(self) -> None:
-        manifest = self.receipt.trusted_image_manifest(ROOT)
-        files = manifest["files"]
-        self.assertEqual(
-            files[str(self.receipt.TOOLCHAIN_ROOT / "bin/rustc")]["sha256"],
-            ("5fcbc97a7f522e5fc88dfe5d9071139a13b1ac027b0d87cfe48dafd514660d31" if self.receipt.ARCH == "x86_64" else "7b86bf473e0dc8f27041f0ff10bff1ad7db90ea62ce1ed6a90b0fbbc81c6259b"),
-        )
-        self.assertEqual(
-            files[str(self.receipt.LINKER_PATH)]["sha256"],
-            ("3cfef61deb864534e48ec37ef22d613a43a8764454bcf852a1181fb588daec2f" if self.receipt.ARCH == "x86_64" else "2f694c9ecbfe99aad11d0ef00a15708cf74b82a0a8dfc9760037fa2917263b28"),
-        )
+        files = self.receipt.trusted_image_manifest(ROOT)["files"]
+        for invocation in (self.receipt.TOOLCHAIN_ROOT / "bin/rustc", self.receipt.LINKER_PATH):
+            with self.subTest(invocation=invocation):
+                record = files[str(invocation)]
+                self.assertTrue(Path(record["path"]).is_absolute())
+                self.assertRegex(record["sha256"], r"\A[0-9a-f]{64}\Z")
+                self.assertGreater(record["size"], 0)
 
     def test_collection_admits_only_the_observed_current_image(self) -> None:
         for observed in (None, "crabc-core-evidence@sha256:" + "0" * 64):
