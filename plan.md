@@ -17,17 +17,24 @@ products and native x86-64 and AArch64 results agree at one fixed SHA. Work the
 step M6 is the only acceptance attempt. Convergence is already on main by owner
 direction; pre-merge sequencing in CRAB-8 and earlier Status no longer blocks.
 
-**Next: continue on an Apple Silicon Mac, in a native arm64 Linux VM.** The
-x86-64 side of M1–M5 is an integrated checkpoint at `5add38189`. Nothing is
-accepted, and M6 has not started.
+**Next: owner decision on the arm image re-pin, then finish M1 and M6.** The
+OrbStack arm64 machine `crabc` exists (Alpine 3.23, kernel 7.2.12, 4 KiB pages,
+9 CPUs; clone, `.work` and Docker data root on a 40M-inode ext4 loop mount at
+`/mnt/crabc`). The pinned arm image `7b7cd03d…` was not found on any host or
+registry; the native rebuild from `docker/Dockerfile.aarch64` is
+`sha256:7ac9c379fbd0ba3c6bdd7e28b18f95276615cfecf668f26e104ba14271c0bce0`.
+Every non-rustc tool in the three arm manifests is byte-identical to the old
+manifests. Arm results below ran in that rebuilt image through
+`CRABC_AARCH64_CORE_IMAGE`; they are development checks, not receipts. The
+x86 host for M6 is `threadripper`. Nothing is accepted, and M6 has not started.
 
 | Step | Done on x86-64 | Still needs native arm64 |
 | --- | --- | --- |
-| M1 | Toolchain check, current-pin docs and `campaign-status` | Repair the three manifests, run their readers, wire the check into CI |
-| M2 | Canonical CI image, readers migrated, recipe deleted, bounded smoke | CI cannot catch manifest drift until M1 wires the check |
-| M3 | `lane/d25-m3` `47f8102b4` (pushed, not on main), x86 tests and arm type-check pass | Rebase, arm build and tests, `verify_signal_process.py`, integrate, close CRAB-12 |
-| M4 | Futex-backed TSD and worker-registry locks; static FIFO reproducer fails before and passes after | Reproducer and pthread producers; see CRAB-11 for what stays open |
-| M5 | Three readers accept same-product resume; x86 producers pass | Arm producers and readers for the named repairs |
+| M1 | Toolchain check, current-pin docs and `campaign-status`; lane stack passes the check | `lane/d25-m1-arm` `7a32c62cc` repairs the three manifests from the rebuilt image and wires the check into CI; integrate only with the re-pin |
+| M2 | Canonical CI image, readers migrated, recipe deleted, bounded smoke | CI catches manifest drift once M1 integrates |
+| M3 | Integrated with the AArch64 no-alloc `Buffer` import fix; no_std profiles and process/signal tests pass | Done in the rebuilt image: no_std profiles, process/signal tests, `verify_signal_process.py --readelf readelf --objdump objdump`; CRAB-12 closed |
+| M4 | Futex-backed TSD and worker-registry locks; static FIFO reproducer fails before and passes after, and passes again after the arm port | Reproducer ported and runs; arm proof invalid in the VM (see CRAB-11); the x86-only TSD producer has no arm route |
+| M5 | Three readers accept same-product resume; x86 producers pass | Resume tests pass on arm; static product and signal legacy alias producers pass; the dynamic product passes except classic netdb, whose collector correctly refuses the unpinned image; five older arm fixture failures remain in `test_compiler_helper_evidence.py` and 40 in `test_owned_posix_product_evidence.py` (x86-only fixture identities) |
 
 Arm64 sequence:
 
