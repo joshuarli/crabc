@@ -58,6 +58,27 @@ def setUpModule() -> None:
     (ROOT / '.work').mkdir(exist_ok=True)
 
 
+class ResolverSourceGitOwnershipTests(unittest.TestCase):
+    def test_reads_source_objects_from_a_checkout_owned_by_another_user(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / "source.rs").write_bytes(b"fn main() {}\n")
+            subprocess.run(["git", "-C", str(root), "add", "source.rs"], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "-qm", "seed"], check=True)
+            tree = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD^{tree}"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+            scrubbed = {"PATH": os.environ["PATH"], "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+                        "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+            with mock.patch.dict(os.environ, scrubbed, clear=True):
+                refused = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(resolver_reader._git(root, "rev-parse", "HEAD^{tree}"), tree)
+                self.assertEqual(resolver_reader._git_file(root, "HEAD", Path("source.rs")),
+                                 (0o644, b"fn main() {}\n"))
+
+
 class ResolverAliasReceiptContractTests(unittest.TestCase):
     def test_projection_is_json_safe_and_has_the_exact_five_identity_scope(self) -> None:
         projection = component_projection()

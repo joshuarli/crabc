@@ -514,8 +514,14 @@ def _validate_captured_input_identities(receipt_root: Path, inputs: Any, paths: 
     return inputs
 
 
+def _git_command(root: Path, *arguments: str) -> list[str]:
+    """Name the checkout as safe: qualification gates run as root with a scrubbed environment."""
+
+    return ['git', '-c', f'safe.directory={root}', '-C', str(root), *arguments]
+
+
 def _git(root: Path, *arguments: str) -> str:
-    completed = subprocess.run(['git', '-C', str(root), *arguments], stdout=subprocess.PIPE,
+    completed = subprocess.run(_git_command(root, *arguments), stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, check=False, text=True)
     require(completed.returncode == 0, 'current resolver source Git object is unavailable')
     return completed.stdout.strip()
@@ -523,14 +529,14 @@ def _git(root: Path, *arguments: str) -> str:
 
 def _git_file(root: Path, revision: str, relative: Path) -> tuple[int, bytes]:
     require(not relative.is_absolute() and '..' not in relative.parts, 'source file path escapes checkout')
-    completed = subprocess.run(['git', '-C', str(root), 'ls-tree', revision, '--', relative.as_posix()],
+    completed = subprocess.run(_git_command(root, 'ls-tree', revision, '--', relative.as_posix()),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True)
     require(completed.returncode == 0 and completed.stdout.count('\n') == 1,
             f'selected source file is unavailable: {relative}')
     fields = completed.stdout.rstrip('\n').split(None, 3)
     require(len(fields) == 4 and fields[1] == 'blob' and fields[3] == relative.as_posix(),
             f'selected source file shape differs: {relative}')
-    contents = subprocess.run(['git', '-C', str(root), 'show', f'{revision}:{relative.as_posix()}'],
+    contents = subprocess.run(_git_command(root, 'show', f'{revision}:{relative.as_posix()}'),
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     require(contents.returncode == 0, f'selected source bytes are unavailable: {relative}')
     require(fields[0] in {'100644', '100755'}, f'selected source file is not a regular blob: {relative}')
