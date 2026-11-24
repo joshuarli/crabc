@@ -204,9 +204,14 @@ def dependency_graph(channel: str, target_dir: Path) -> list[str]:
 
 
 def build_probe(channel: str, target_dir: Path, probe: Probe) -> Path:
-    """Build one no-std release probe with only its own runtime feature."""
+    """Build one no-std fat-LTO release probe with only its own runtime feature.
+
+    The workspace release profile uses thin LTO, which leaves facade code in
+    separate members; the inspected object must be one fat-LTO codegen unit.
+    """
 
     run(["rustup", "run", channel, "cargo", "build", "--locked", "-p", "crabc-rs", "--release",
+         "--config", 'profile.release.lto="fat"', "--config", "profile.release.codegen-units=1",
          "--target", TARGET, "--target-dir", str(target_dir), "--no-default-features",
          "--features", ",".join(probe.features), "--example", probe.example],
         cwd=ROOT, env=rust_environment())
