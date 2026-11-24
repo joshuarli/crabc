@@ -25,7 +25,6 @@ use bitflags::bitflags;
 use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
-#[cfg(feature = "alloc")]
 use crate::buffer::Buffer;
 use core::ffi::{c_void, CStr};
 use core::fmt;
