@@ -47,7 +47,7 @@ Arm64 sequence:
    Keep the clone on the VM's disk and `.work/aarch64` on ext4 with about 40M
    inodes. Install Docker Engine inside the VM, and never use a macOS bind mount
    or emulation.
-2. Confirm `docker image inspect sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`
+2. Confirm `docker image inspect sha256:7ac9c379fbd0ba3c6bdd7e28b18f95276615cfecf668f26e104ba14271c0bce0`
    succeeds. The arm image is not reproducible, so a rebuild with another ID is
    a re-pin that changes the frozen inputs: stop and ask the owner before
    adopting it.
@@ -84,7 +84,7 @@ the pinned image before retiring a worktree.
 
 Current environment facts (verify, do not trust): `rust-toolchain.toml` selects
 `nightly-2026-11-09` since `6161b069d`, which also rebuilt both core images
-(`compat/x86_64/core_image.py`: x86 `sha256:b243d937…`, arm `sha256:7b7cd03d…`).
+(`compat/x86_64/core_image.py`: x86 `sha256:b243d937…`, arm `sha256:7ac9c379…` since the 2026-11-24 re-pin).
 The 2026-11-21 cold-capsule and two-build reproduction results proved the earlier
 `c689abaa…` image on the earlier nightly at `b82313a51`; they are historical and
 prove nothing about the current pair.
