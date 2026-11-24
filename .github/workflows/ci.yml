@@ -42,6 +42,8 @@ jobs:
         run: ./scripts/dev-x86_64.sh ci-image
       - name: test
         run: make test
+      - name: Source-image toolchain paths
+        run: python3 -B compat/x86_64/source_image_toolchain_check.py
       - name: Fetch locked dependencies
         run: scripts/lanes/rust-check.sh cargo fetch --locked
       - name: Bounded installed-product smoke, owned-rand static and dynamic (not the seven-gate milestone)
