@@ -5,7 +5,7 @@
 #
 # HOST_SYSROOT is an installed owned static product below this checkout's .work,
 # built in the pinned image with
-#   scripts/build_x86_64_owned_sysroot.py --output /workspace/.work/x86_64/NAME
+#   scripts/build_x86_64_owned_sysroot.py --output /workspace/.work/<arch>/NAME
 # The fixture is compiled with that installed crabc-cc and linked against its
 # installed libc, then run beside a pinned-musl control build. The container has
 # no network and only CAP_SYS_NICE added. Each trial pins the SCHED_FIFO tasks to
@@ -55,15 +55,17 @@ if [ "${1:-}" != --in-container ]; then
         *) fail "sysroot must be below $ROOT_DIR/.work" ;;
     esac
     [[ "$repeat" =~ ^[1-9][0-9]?$ ]] || fail "--repeat must be 1 through 99"
-    eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py" x86_64)"
+    eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py" "$(uname -m)")"
+    if [ "$arch" = x86_64 ]; then image=${CRABC_X86_64_CORE_IMAGE:-$image}; else image=${CRABC_AARCH64_CORE_IMAGE:-$image}; fi
     docker image inspect "$image" >/dev/null || fail "pinned image $image is unavailable"
-    mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+    mkdir -p "$ROOT_DIR/.work/$work_name/tmp"
     name="crabc-tsd-fifo-$$"
     trap 'docker kill "$name" >/dev/null 2>&1 || true' EXIT
     timeout -s KILL "$CONTAINER_TIMEOUT" docker run --rm --init --name "$name" \
         --platform "$platform" --cap-add SYS_NICE --network none \
         --env PYTHONDONTWRITEBYTECODE=1 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env TMPDIR="/workspace/.work/$work_name/tmp" \
+        --env TSD_FIFO_ORACLE="$oracle" \
         --volume "$ROOT_DIR:/workspace" --workdir /workspace \
         "$image" bash "/workspace/$HERE/run_tsd_fifo_progress.sh" \
         --in-container "/workspace/${sysroot#"$ROOT_DIR"/}" "$repeat" "$include_registry" "$include_signal"
@@ -77,7 +79,7 @@ include_signal="$5"
 cd /workspace
 work="$(mktemp -d "$TMPDIR/tsd-fifo.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
-oracle=/usr/local/bin/crabc-x86_64-musl-gcc
+oracle="$TSD_FIFO_ORACLE"
 source_file="$HERE/tsd_fifo_progress.c"
 
 (

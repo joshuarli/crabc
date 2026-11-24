@@ -38,8 +38,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#if !defined(__x86_64__) || !defined(__linux__)
-#error "tsd_fifo_progress requires Linux/x86-64"
+#if !defined(__linux__) || !(defined(__x86_64__) || defined(__aarch64__))
+#error "tsd_fifo_progress requires Linux/x86-64 or Linux/AArch64"
 #endif
 
 #define OWNER_PRIORITY 10
@@ -70,6 +70,9 @@ static uint64_t rounds = 4000;
 static uint64_t burst = 64;
 static uint64_t budget_ms = 1500;
 
+/* musl's sched_setscheduler always fails with ENOSYS, so the policy change is a raw syscall. */
+#if defined(__x86_64__)
+#define SYS_SCHED_SETSCHEDULER 144
 static long raw_syscall3(long number, long a, long b, long c)
 {
     long result;
@@ -79,6 +82,18 @@ static long raw_syscall3(long number, long a, long b, long c)
                      : "rcx", "r11", "memory");
     return result;
 }
+#else
+#define SYS_SCHED_SETSCHEDULER 119
+static long raw_syscall3(long number, long a, long b, long c)
+{
+    register long x8 __asm__("x8") = number;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory");
+    return x0;
+}
+#endif
 
 static int set_policy(int policy, int priority)
 {
@@ -87,7 +102,7 @@ static int set_policy(int policy, int priority)
 
     memset(&parameter, 0, sizeof parameter);
     parameter.sched_priority = priority;
-    result = raw_syscall3(144, 0, policy, (long)&parameter);
+    result = raw_syscall3(SYS_SCHED_SETSCHEDULER, 0, policy, (long)&parameter);
     return result < 0 ? (int)-result : 0;
 }
 

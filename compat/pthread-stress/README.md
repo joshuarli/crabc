@@ -63,8 +63,8 @@ fixture through the installed product with a derived source profile; see
 
 ## SCHED_FIFO progress of the selected pthread-key locks
 
-`run_tsd_fifo_progress.sh` asks one question of the installed x86-64 static
-product: can a waiter spin on a pthread-key lock while the preempted lock owner
+`run_tsd_fifo_progress.sh` asks one question of the installed native static
+product (x86-64 or AArch64, from `uname -m`): can a waiter spin on a pthread-key lock while the preempted lock owner
 shares its CPU and cannot run? `tsd_fifo_progress.c` is compiled with the
 installed `crabc-cc` and linked to the installed libc, and also built against the
 pinned musl oracle as a control. Its owner (`SCHED_FIFO` priority 10) and waiter
@@ -80,8 +80,8 @@ kernel backstop, and the container is killed after 240 s. The FIFO section is
 about one second per trial.
 
 ```text
-scripts/build_x86_64_owned_sysroot.py --output /workspace/.work/x86_64/NAME   # in the pinned image
-compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot .work/x86_64/NAME [--repeat N] [--include-registry] [--include-signal]
+scripts/build_x86_64_owned_sysroot.py --architecture ARCH --output /workspace/.work/ARCH/NAME   # in the pinned image
+compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot .work/ARCH/NAME [--repeat N] [--include-registry] [--include-signal]
 ```
 
 The container needs only `--cap-add SYS_NICE` and `--network none`. The runner
