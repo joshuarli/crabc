@@ -110,7 +110,7 @@ PYTHON
             CLI_ENV=preserved LD_LIBRARY_PATH="$environment_path" timeout 20 chroot "$root" "$selected_interpreter" "${options[@]}" "${program[@]}" >"$work/$arm-$mode-$test.stdout" 2>"$work/$arm-$mode-$test.stderr" || status=$?
             [ "$status" -eq "$expected" ]
             if [[ "$test" = list* ]] || [ "$test" = ldd ]; then
-                ! grep -q 'initialized\|application entered' "$work/$arm-$mode-$test.stdout"
+                ! grep -Eq 'initialized|application entered' "$work/$arm-$mode-$test.stdout"
                 python3 -B - "$work/$arm-$mode-$test.stdout" "$arch" >"$work/$arm-$mode-$test.names" <<'PYTHON'
 from pathlib import Path
 import re

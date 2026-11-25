@@ -156,7 +156,7 @@ for syscall_word in 0x51 0x48 0x50; do
 done
 strings "$candidate" | grep -Fx '/proc/self/fd/' >/dev/null ||
     fail "fchdir lacks musl's fixed procfd fallback spelling"
-if grep -Eq 'call.*<(chdir|fcntl|open|openat|readlink|getcwd)(@plt)?($|\+)' \
+if grep -Eq 'call.*<(chdir|fcntl|open|openat|readlink|getcwd)(@plt)?($|[+])' \
     "$fchdir_disassembly"; then
     fail "fchdir delegates to a broader C ABI entry"
 fi

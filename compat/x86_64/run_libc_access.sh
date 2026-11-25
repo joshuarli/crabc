@@ -133,7 +133,7 @@ assert_strong_eaccess_override() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep id ln mkdir nm objdump readelf rustup stat touch chmod sort; do
+for tool in ar cargo cmp diff grep id ln mkdir nm objdump python3 readelf rustup touch chmod sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -165,7 +165,7 @@ touch "$fixture_root/record"
 chown 0:0 "$fixture_root/record"
 chmod 0400 "$fixture_root/record"
 ln -s missing-target "$fixture_root/dangling"
-[ "$(stat -c '%u:%g:%a' "$fixture_root/record")" = '0:0:400' ] ||
+[ "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner-mode "$fixture_root/record")" = '0:0:400' ] ||
     fail "runner did not provision a root-owned mode-0400 record"
 [ -d "$fixture_root" ] && [ -L "$fixture_root/dangling" ] ||
     fail "runner did not provision the access fixture paths"

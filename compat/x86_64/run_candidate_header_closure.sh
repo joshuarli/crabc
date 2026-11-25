@@ -357,7 +357,7 @@ prepare_report_path() {
 [ "$#" -eq 0 ] || fail "usage: $0"
 
 require_native_linux_x86_64
-for tool in chown comm diff find grep mkdir mktemp mv realpath sed sort stat tr wc; do
+for tool in chown comm diff find grep mkdir mktemp mv python3 realpath sed sort tr wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -668,7 +668,7 @@ result=pass
 
 mv "$report_tmp" "$REPORT_PATH"
 report_tmp=''
-chown "$(stat -c '%u:%g' "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
+chown "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
 
 if [ "$result" = pass ]; then
     printf 'x86 isolated C/C++ candidate header closure: PASS (%s records; %s)\n' \

@@ -95,7 +95,7 @@ python3 "$AUDIT" \
 
 prepare_report_path
 mv "$report_tmp" "$REPORT_PATH"
-chown "$(stat -c '%u:%g' "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
+chown "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
 
 if python3 - "$REPORT_PATH" <<'PY'
 import json

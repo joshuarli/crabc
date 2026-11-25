@@ -51,7 +51,7 @@ assert_strong_function() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo chmod chown cmp cp diff git grep mkdir nm objdump readelf rustup sha256sum sort stat; do
+for tool in ar awk cargo chmod chown cmp cp diff git grep mkdir nm objdump python3 readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -277,7 +277,7 @@ cp "$errno_candidate_stderr" "$receipt_dir/candidate-errno.stderr"
     chmod 644 ./*.stdout ./*.stderr statuses.tsv SHA256SUMS
 )
 chmod 755 "$receipt_dir"
-receipt_owner="$(stat -c '%u:%g' "$ROOT_DIR")"
+receipt_owner="$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")"
 chown "$receipt_owner" "$ROOT_DIR/.work/x86_64/reports"
 chown -R "$receipt_owner" "$receipt_dir"
 

@@ -112,7 +112,7 @@ prepare_report_path() {
 }
 
 require_native_linux_x86_64
-for tool in chown comm diff find grep mkdir mktemp mv sed sort stat tr wc; do
+for tool in chown comm diff find grep mkdir mktemp mv python3 sed sort tr wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -231,7 +231,7 @@ report_tmp=''
 # checkout belongs to the invoking developer. Keep this generated report
 # inspectable and replaceable by that developer without changing source-tree
 # ownership or relying on a host-side post-processing step.
-chown "$(stat -c '%u:%g' "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
+chown "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
 printf 'x86 pinned-musl/public-header C consumability: PASS (%s pinned; %s compile-ok; %s reference-UAPI-unavailable; %s candidate-only; %s)\n' \
     "$pinned_count" "$compile_ok_count" "$reference_uapi_unavailable_count" \
     "$candidate_only_count" "$REPORT_PATH"

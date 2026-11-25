@@ -129,7 +129,7 @@ build_profile_archives() {
 
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
-for tool in cargo clang ld nm python3 readelf rustup stat; do
+for tool in cargo clang ld nm python3 readelf rustup; do
     require_tool "$tool"
 done
 [ -x "$INVENTORY_GENERATOR" ] || fail "inventory generator is not executable"
@@ -169,7 +169,7 @@ python3 "$AUDIT" \
 
 prepare_report_path
 mv "$report_tmp" "$REPORT_PATH"
-chown "$(stat -c '%u:%g' "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
+chown "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
 
 python3 - "$REPORT_PATH" <<'PY'
 import json
