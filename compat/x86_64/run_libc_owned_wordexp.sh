@@ -290,7 +290,7 @@ make_private_shell_root() {
 	mknod "$execution_root/dev/null" c 1 3
 	chmod 666 "$execution_root/dev/null"
 	[ -c "$execution_root/dev/null" ] &&
-		[ "$(stat -c '%t:%T:%a' "$execution_root/dev/null")" = '1:3:666' ] ||
+		[ "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" device-mode "$execution_root/dev/null")" = '1:3:666' ] ||
 		fail "private /dev/null is not character device 1:3 mode 666"
 	while IFS= read -r dependency; do
 		[ -n "$dependency" ] || continue

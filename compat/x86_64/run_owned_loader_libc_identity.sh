@@ -242,7 +242,7 @@ record_case_evidence() {
     : >"$work/$id.identity"
     for relative in "${paths[@]}"; do
         [ -f "$root/$relative" ] || continue
-        stat -Lc '%n dev=%d inode=%i size=%s' "$root/$relative" >>"$work/$id.identity"
+        python3 "$ROOT/compat/x86_64/file_metadata.py" identity "$root/$relative" >>"$work/$id.identity"
         entry="${relative//\//-}"
         receipt_products+=("$id-$entry=$root/$relative")
     done

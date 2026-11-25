@@ -60,7 +60,7 @@ for backend in accepted native; do
     for link in pie non-pie; do
         root="$work/root/$backend-$link"
         mkdir -p "$root"
-        cp -a --reflink=auto "$dynamic/." "$root/"
+        cp -a "$dynamic/." "$root/"
         "$dynamic/bin/crabc-cc-dynamic" "--dynamic-$link" "$work/probe.o" -o "$root/probe"
         cp "$work/$backend-plugin.so" "$root/libloader-iterate-close-race.so"
         run_case "$backend-$link-kernel" dynamic chroot "$root" /probe dynamic /libloader-iterate-close-race.so

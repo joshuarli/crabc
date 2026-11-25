@@ -155,7 +155,7 @@ grep -Eq '[[:space:]]j(e|mp)[[:space:]]' "$ulimit_disassembly" ||
     fail "ulimit does not tail-route its no-vararg and set forms"
 grep -Eq '\$0x12e,%e?ax' "$candidate_disassembly" ||
     fail "ulimit lacks Linux prlimit64=302"
-if grep -Eq 'call.*<(getrlimit|setrlimit|prlimit|getrusage|getpriority|setpriority|nice)(@plt)?($|\+)' \
+if grep -Eq 'call.*<(getrlimit|setrlimit|prlimit|getrusage|getpriority|setpriority|nice)(@plt)?($|[+])' \
     "$candidate_disassembly"; then
     fail "ulimit delegates to a broader C resource entry"
 fi

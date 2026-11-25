@@ -164,9 +164,12 @@ prepare_materialized_runner() {
     # Repoint exactly the existing runner's candidate tree. Every compiler
     # argument, profile, oracle exception, trace check, row count, and report
     # validation remains owned by `run_candidate_header_closure.sh`.
-    sed -i \
+    local runner_tmp
+    runner_tmp="$(mktemp "$runner.XXXXXX")"
+    sed \
         's|readonly PROJECT_INCLUDE="$ROOT_DIR/include"|readonly PROJECT_INCLUDE="$ROOT_DIR/usr/include"|' \
-        "$runner"
+        "$runner" >"$runner_tmp"
+    mv "$runner_tmp" "$runner"
     grep -Fxq 'readonly PROJECT_INCLUDE="$ROOT_DIR/usr/include"' "$runner" ||
         fail "could not redirect existing closure runner to materialized usr/include"
     chmod 755 "$runner" "$project_root/compat/x86_64/run_musl_oracle.sh" \
@@ -176,7 +179,7 @@ prepare_materialized_runner() {
 [ "$#" -eq 0 ] || fail "usage: $0"
 
 require_native_linux_x86_64
-for tool in bash chown cp diff find grep mkdir mktemp mv realpath sed sha256sum sort stat tr wc; do
+for tool in bash chown cp diff find grep mkdir mktemp mv python3 realpath sed sha256sum sort tr wc; do
     require_tool "$tool"
 done
 [ -d "$PROJECT_INCLUDE" ] || fail "missing project include tree"
@@ -277,7 +280,7 @@ report_tmp="$(mktemp "$REPORT_DIR/.latest.tsv.tmp.XXXXXX")"
 } > "$report_tmp"
 mv "$report_tmp" "$REPORT_PATH"
 report_tmp=''
-chown "$(stat -c '%u:%g' "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
+chown "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
 
 printf 'x86 installed header-tree closure: PASS (%s records; %s)\n' \
     "$EXPECTED_RECORD_COUNT" "$REPORT_PATH"

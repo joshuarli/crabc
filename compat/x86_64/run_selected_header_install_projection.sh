@@ -280,7 +280,7 @@ prepare_report_path() {
 
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
-for tool in bash chown cp diff find gcc grep mkdir mktemp mv python3 realpath rm sed sha256sum sort stat tr wc; do
+for tool in bash chown cp diff find gcc grep mkdir mktemp mv python3 realpath rm sed sha256sum sort tr wc; do
     require_tool "$tool"
 done
 [ -d "$PROJECT_INCLUDE" ] || fail "missing project include tree"
@@ -425,7 +425,7 @@ source_manifest_sha256="$(sha256sum "$source_manifest" | sed 's/[[:space:]].*$//
 } > "$report_tmp"
 mv "$report_tmp" "$REPORT_PATH"
 report_tmp=''
-chown "$(stat -c '%u:%g' "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
+chown "$(python3 "$ROOT_DIR/compat/x86_64/file_metadata.py" owner "$ROOT_DIR")" "$REPORT_DIR" "$REPORT_PATH"
 
 printf 'x86 selected header install projection: PASS (%s records; %s)\n' \
     "$record_count" "$REPORT_PATH"
