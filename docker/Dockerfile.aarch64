@@ -21,7 +21,9 @@
 # aarch64 kache artifact is pinned here for the same reason; the kache
 # version (1.0.0) is unchanged.
 FROM alpine@sha256:020dfcbaaf4cc1078bf2d9c7ba31a8466e334061dcd2f248001d68f79e52c000 AS musl-clang
-RUN apk add --no-cache clang binutils make python3 curl git
+COPY --from=oci.17166969.xyz/owned-tools@sha256:1a5d1306bb105f21b60c67bbf04677a92048c02a808ae9b29dfdac1a90f2f073 /opt/laputa /opt/laputa
+ENV PATH=/opt/laputa/bin:$PATH
+RUN apk add --no-cache binutils make python3 curl
 COPY compat/upstreams.toml /tmp/upstreams.toml
 COPY compat/x86_64/musl_oracle.py /tmp/musl_oracle.py
 RUN set -eu \
