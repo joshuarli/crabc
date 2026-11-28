@@ -44,18 +44,18 @@ use crate::main_theap::{
     MainStaticProcessPageSessionError, MainStaticTheapError,
 };
 use crate::main_static_page::MainStaticFirstArenaPageAllocatorBeginError;
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::main_static_page::MainStaticFirstArenaPageAllocator;
 use crate::meta::{MetaAllocator, MetaError};
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 use crate::config::{VmOptionEnvironmentReader, VmOptions};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::diagnostic_output::{MbindWarningRoute, OutputOwner, ProcessDiagnosticInputs};
 use crate::os::{MemoryConfig, VmPolicy, VmPolicyConfigurationError, VmProcess};
 use crate::page_map::PageMapHeader;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::{ProcessPageArenaLeaseError, ProcessSharedArenaError, ProcessSharedArenaStorage};
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::ProcessPageArenaLease;
 use crate::process_page_map::{
     ProcessPageMapError, ProcessPageMapRoot, ProcessPageMapStorage,
@@ -91,7 +91,7 @@ enum VmPolicyStartup<'policy> {
     // VM-backed selected diagnostic owner without its process policy.
     // Its policy is built from the process descriptor table after
     // `_mi_options_init`, so it carries no separately resolved image.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     ApplyProcessMemoryPolicyWithDiagnostics(ProcessDiagnosticInputs, ProcessStartEntry),
 }
 
@@ -100,7 +100,7 @@ enum VmPolicyStartup<'policy> {
 /// offered slot; source descriptors construct only at the final destination.
 enum VmPolicyInitialization<'policy> {
     Offered(&'policy mut Option<VmPolicy>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     ProcessOptions(&'static OutputOwner, Option<SourceErrnoStore>),
 }
 
@@ -114,7 +114,7 @@ enum VmPolicyInitialization<'policy> {
 /// body: the policy stays preloading, delayed output stays buffered, and a
 /// later runtime startup completes the tail. See
 /// [`ProcessMainInitializationStorage::complete_runtime_startup_after_first_allocation`].
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessStartEntry {
     /// `_mi_auto_process_init`: the embedding runtime's explicit startup.
@@ -124,7 +124,7 @@ pub(crate) enum ProcessStartEntry {
     FirstAllocation,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 enum ProcessStartupDiagnostics<'owner> {
     Unconnected,
@@ -134,14 +134,14 @@ enum ProcessStartupDiagnostics<'owner> {
 /// Separates explicit configuration fixtures from selected source startup.
 /// A selected route always retains its winning output capability; it cannot
 /// fall back to a configuration-only initializer after admission fails.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 enum ProcessBootstrapOutput<'startup> {
     LegacyExplicitConfiguration,
     Selected(ScopedBootstrapOutput<'startup>),
 }
 
 /// Failure to admit or retain the actual source startup diagnostic owner.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BootstrapOutputAdmissionError {
     Unavailable,
@@ -151,7 +151,7 @@ pub(crate) enum BootstrapOutputAdmissionError {
 /// A borrowed diagnostic owner inside the winning process initialization.
 /// The completion token and retained VM pair remain live through delivery;
 /// this grants no published Heap, allocation, or process-readiness authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct ScopedBootstrapOutput<'startup> {
     storage: &'startup ProcessMainInitializationStorage,
     completion: &'startup AllocatorOnceCompletion<'static>,
@@ -161,7 +161,7 @@ pub(crate) struct ScopedBootstrapOutput<'startup> {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ScopedBootstrapOutput<'_> {
     fn validate(&self) -> Result<(), BootstrapOutputAdmissionError> {
         let current_thread = current_thread_identity()
@@ -228,7 +228,7 @@ impl ScopedBootstrapOutput<'_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl crate::runtime_lifecycle::NativeAllocationOwner<'_> {
     /// Completes normal entropy preparation through this admitted owner.
     ///
@@ -247,7 +247,7 @@ impl crate::runtime_lifecycle::NativeAllocationOwner<'_> {
 }
 
 /// Completes only an already-admitted diagnostic owner's random transition.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn deliver_prepared_random_warning_core(
     output: &OutputOwner,
     prepared: crate::random::PreparedRandomInitialization,
@@ -297,16 +297,16 @@ pub(crate) struct ProcessMainInitializationStorage {
     // This is process-lifetime allocator diagnostic state, deliberately
     // beside rather than inside VmPolicy/VmProcess. It is written before any
     // VM/OS/arena operation and never moved or replaced.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     diagnostic_output: UnsafeCell<MaybeUninit<OutputOwner>>,
     // Null on legacy fixture paths without a diagnostic owner. Publication
     // follows option initialization; READY separately gates normal capture.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     diagnostic_output_ptr: AtomicPtr<OutputOwner>,
     // One-way claim of the `_mi_auto_process_init` tail after the once body.
     // Source calls that routine once from the loader; a repeated runtime
     // startup therefore observes the claim and performs no second flush.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     runtime_startup_tail: core::sync::atomic::AtomicBool,
 }
 
@@ -332,18 +332,18 @@ impl ProcessMainInitializationStorage {
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             page_map_storage: AtomicPtr::new(core::ptr::null_mut()),
             startup_reservations: UnsafeCell::new(MaybeUninit::uninit()),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             diagnostic_output: UnsafeCell::new(MaybeUninit::uninit()),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             diagnostic_output_ptr: AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             runtime_startup_tail: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
     // This private issuer is reached only with the completion returned by
     // this coordinator's winning once entry and its initialized Selected route.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn scoped_bootstrap_output<'startup>(
         &'startup self,
         completion: &'startup AllocatorOnceCompletion<'static>,
@@ -370,7 +370,7 @@ impl ProcessMainInitializationStorage {
     }
 
     /// The installed process descriptor table, including lazy pre-start reads.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn published_source_options(&self) -> Option<&'static OutputOwner> {
         // SAFETY: the inline owner is written and its table installed before
@@ -382,7 +382,7 @@ impl ProcessMainInitializationStorage {
     /// Installs the process-lifetime descriptor and delayed-output owner
     /// without initializing any allocator VM or thread state. Publication and
     /// retained setter transfer hold the same lock as pre-facts mutation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn prepare_source_options(
         &'static self,
         environment_reader: VmOptionEnvironmentReader,
@@ -535,7 +535,7 @@ impl ProcessMainInitializationStorage {
     /// The `environment_reader` and output primitive obligations of
     /// [`ProcessDiagnosticInputs`] apply for this complete process lifetime,
     /// in addition to the source startup ownership requirements above.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn initialize_from_source_environment(
         &'static self,
         config: MemoryConfig,
@@ -564,7 +564,7 @@ impl ProcessMainInitializationStorage {
     /// The caller owns source startup and all `ProcessDiagnosticInputs`
     /// lifetime obligations. It must retain the returned owner in final
     /// process storage before completing the linear continuation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_from_source_environment(
         &'static self, config: MemoryConfig,
         diagnostics: ProcessDiagnosticInputs, entry: ProcessStartEntry,
@@ -646,7 +646,7 @@ impl ProcessMainInitializationStorage {
     /// # Safety
     /// The output table has completed source-option initialization and all
     /// supplied final owners remain live for this isolated process lifetime.
-    #[cfg(all(test, target_arch = "x86_64"))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn initialize_with_test_components_and_source_output(
         &'static self,
         config: MemoryConfig,
@@ -678,7 +678,7 @@ impl ProcessMainInitializationStorage {
     /// # Safety
     /// The isolated test retains every final process owner and owns the
     /// current roots until the returned source continuation finishes.
-    #[cfg(all(test, target_arch = "x86_64"))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn prepare_with_test_components_and_vm_options(
         &'static self, config: MemoryConfig, options: VmOptions,
         main_static: &'static MainStaticAttachmentStorage, subprocess: &'static MainSubprocess,
@@ -915,7 +915,7 @@ impl ProcessMainInitializationStorage {
         self.state.store(INITIALIZING, Ordering::Release);
         after_claim();
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let (policy, apply_process_memory_policy, diagnostics, entry) = {
             // Source options precede `_mi_os_init`. The sole selected x86
             // policy variant writes the process-lifetime owner here,
@@ -950,7 +950,7 @@ impl ProcessMainInitializationStorage {
                 }
             }
         };
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any())]
         let (policy, apply_process_memory_policy) = match vm_policy {
             VmPolicyStartup::None => (None, false),
             VmPolicyStartup::RetainOnly(policy) => (Some(VmPolicyInitialization::Offered(policy)), false),
@@ -958,14 +958,14 @@ impl ProcessMainInitializationStorage {
         };
         // Source init.c initializes its statistics clock after options and
         // before `_mi_os_init`, including process memory-policy operations.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         crate::statistics::initialize_process_clock();
         // `_mi_auto_process_init` clears `os_preloading` before its
         // option/OS/main-heap work; a first allocation that reaches
         // `mi_process_init` earlier leaves it set until that runtime call.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let finish_preloading = entry == ProcessStartEntry::RuntimeStartup;
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any())]
         let finish_preloading = true;
         let vm_process = if let Some(policy) = policy {
             // Retain this policy first, then expose its source preloading
@@ -991,7 +991,7 @@ impl ProcessMainInitializationStorage {
             None
         };
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let bootstrap_output = match &diagnostics {
             ProcessStartupDiagnostics::Unconnected => ProcessBootstrapOutput::LegacyExplicitConfiguration,
             ProcessStartupDiagnostics::Selected(_) => {
@@ -1043,7 +1043,7 @@ impl ProcessMainInitializationStorage {
         // The production policy-bound process uses the canonical source
         // Heap. Historical explicit-config fixtures keep their visibly
         // separate private metadata backing and bootstrap ownership.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let metadata_prepared = match &bootstrap_output {
             ProcessBootstrapOutput::Selected(output) => {
                 // SAFETY: the winning startup completion and its actual
@@ -1064,7 +1064,7 @@ impl ProcessMainInitializationStorage {
                 metadata.prepare_for_main_subprocess(config, subprocess)
             }
         };
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any())]
         let metadata_prepared = if vm_process.is_some() {
             metadata.prepare_for_main_heap(config, subprocess, foundation)
         } else {
@@ -1135,7 +1135,7 @@ impl ProcessMainInitializationStorage {
                 // option image. Do not collapse it into the global wrapper:
                 // the retained policy owns `mimalloc_use_numa_nodes`'s cache.
                 Some(process) => {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     if let ProcessBootstrapOutput::Selected(output) = &bootstrap_output {
                         MainStaticTheapAttachment::begin_after_heap_foundation_with_bootstrap_output(
                             foundation, selection, process, output,
@@ -1145,7 +1145,7 @@ impl ProcessMainInitializationStorage {
                             foundation, selection, process,
                         )
                     }
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                     MainStaticTheapAttachment::begin_after_heap_foundation_with_vm_process(
                         foundation,
                         selection,
@@ -1177,7 +1177,7 @@ impl ProcessMainInitializationStorage {
             config,
             subprocess,
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let startup_owner = match attachment.startup_owner_binding() {
             Ok(binding) => binding,
             Err(error) => {
@@ -1194,13 +1194,13 @@ impl ProcessMainInitializationStorage {
         };
         let startup = ProcessMainStartup {
             storage: self, completion: Some(completion), config, vm_process, metadata,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             subprocess,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             startup_owner,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             diagnostics,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry,
             _not_send_or_sync: PhantomData,
         };
@@ -1252,9 +1252,9 @@ impl ProcessMainInitializationStorage {
             page_map,
             // SAFETY: READY Acquire publishes this permanent immutable slot;
             // the constructor checked its value against the offered config.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             config: unsafe { (*self.config.get()).assume_init_ref() },
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             config,
             subprocess,
         })
@@ -1309,7 +1309,7 @@ impl ProcessMainInitializationStorage {
     /// or random projection, and serializes this call against every other
     /// diagnostic dispatch as `_mi_options_post_init` requires: no other
     /// attached thread may emit allocator diagnostics until it returns.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn complete_runtime_startup_after_first_allocation(
         &'static self,
     ) -> Result<bool, ProcessMainInitError> {
@@ -1353,7 +1353,7 @@ impl ProcessMainInitializationStorage {
     /// The caller is the initial source thread and owns
     /// `_mi_options_post_init`'s serialization against every other diagnostic
     /// dispatch, as for [`Self::complete_runtime_startup_after_first_allocation`].
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn complete_runtime_startup_without_page_map(&'static self) {
         if self.runtime_startup_tail.swap(true, Ordering::AcqRel) {
             return;
@@ -1407,7 +1407,7 @@ impl ProcessMainInitializationStorage {
         // input retains its exact policy image or initialized descriptor owner.
         let policy = match initialization {
             VmPolicyInitialization::Offered(offered) => unsafe { self.bind_offered_vm_policy(offered) }?,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             VmPolicyInitialization::ProcessOptions(output, errno_store) => unsafe {
                 self.bind_process_options_vm_policy(output, errno_store)
             }?,
@@ -1639,7 +1639,7 @@ impl ProcessMainInitializationStorage {
     /// Constructs the descriptor-backed policy only in its final process slot.
     /// Refusal precedes all writes; the pointer is published only after every
     /// field is initialized, before any process-policy callback can use it.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn bind_process_options_vm_policy(
         &'static self, output: &'static OutputOwner,
         errno_store: Option<SourceErrnoStore>,
@@ -1718,7 +1718,7 @@ impl ProcessMainInitializationStorage {
     /// occurs after that atomic unlock; as in the C void release, it cannot
     /// revoke an already-published terminal result or reopen/retry startup.
     // Share the linear completion transfer across startup failure exits.
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn publish_terminal_state_and_release(
         &self,
         completion: AllocatorOnceCompletion<'_>,
@@ -1758,13 +1758,13 @@ pub(crate) struct ProcessMainStartup {
     config: MemoryConfig,
     vm_process: Option<VmProcess<'static>>,
     metadata: core::pin::Pin<&'static MetaAllocator>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     subprocess: &'static MainSubprocess,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     startup_owner: crate::main_theap::MainStaticStartupOwnerBinding,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     diagnostics: ProcessStartupDiagnostics<'static>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: ProcessStartEntry,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -1773,7 +1773,7 @@ pub(crate) struct ProcessMainStartup {
 /// Theap after attachment and before the winning startup completes. The
 /// borrowed completion and original owner binding remain live through the
 /// synchronous callback; no Heap, Theap, or random reference crosses output.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct SourceAttachedRuntimeOutputWitness<'startup> {
     startup: &'startup ProcessMainStartup,
     process: VmProcess<'static>,
@@ -1782,7 +1782,7 @@ pub(crate) struct SourceAttachedRuntimeOutputWitness<'startup> {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl SourceAttachedRuntimeOutputWitness<'_> {
     fn validate(&self) -> Result<(), BootstrapOutputAdmissionError> {
         let startup = self.startup;
@@ -1834,7 +1834,7 @@ impl ProcessMainStartup {
     /// attachment teardown, selected Heap deletion, and client reuse. The
     /// callback holds no image projections across output and cannot persist
     /// this witness or consume the startup completion.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn with_source_attached_runtime_output<R>(
         &self,
         callback: impl for<'scope> FnOnce(&SourceAttachedRuntimeOutputWitness<'scope>) -> R,
@@ -1881,13 +1881,13 @@ impl ProcessMainStartup {
     /// slot. Its actual process and thread admission exclude teardown while
     /// reservations and their callbacks run. No owner/image projections are
     /// held across this call.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn complete_once_body_with_runtime_output(self) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
         self.complete_once_body_inner_with_hook(|| {}, true)
     }
 
     fn complete_once_body_inner_with_hook(mut self, before_release: impl FnOnce(), runtime_output: bool) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let _ = runtime_output;
         self.storage.ensure_allocation_ready()?;
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
@@ -1896,7 +1896,7 @@ impl ProcessMainStartup {
         let config = self.config;
         let vm_process = self.vm_process;
         let metadata = self.metadata;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let diagnostics = self.diagnostics;
         // Source startup reserves huge memory first and regular memory next,
         // after the default Theap/TLS attachment exists. Failed reservations
@@ -1904,7 +1904,7 @@ impl ProcessMainStartup {
         // SAFETY: the source startup owner retains the current default root;
         // this value holds no attachment/Theap borrow across VM callbacks.
         let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let reservations = match (vm_process, diagnostics) {
             (Some(process), ProcessStartupDiagnostics::Selected(output)) => {
                 // SAFETY: this source once winner still owns startup; the
@@ -1936,7 +1936,7 @@ impl ProcessMainStartup {
                 "mandatory diagnostic startup always owns one source VM process"
             ),
         };
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any())]
         let reservations = if let Some(process) = vm_process {
             unsafe { process.subprocess().arena_backing().reserve_startup_options(process,
                 config, metadata, Some(&mut random)) }
@@ -1949,15 +1949,15 @@ impl ProcessMainStartup {
         let completion = self.completion.take().ok_or(ProcessMainInitError::Retained)?;
         self.storage.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
         Ok(ProcessMainRuntimeStartupTail {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             storage: self.storage,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             metadata,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             subprocess: self.subprocess,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             diagnostics,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             entry: self.entry,
             _not_send_or_sync: PhantomData,
         })
@@ -1970,22 +1970,22 @@ impl ProcessMainStartup {
 /// first-allocation entry deliberately leaves this tail for runtime startup.
 #[must_use = "runtime startup must complete its diagnostic and random-reseed tail"]
 pub(crate) struct ProcessMainRuntimeStartupTail {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     storage: &'static ProcessMainInitializationStorage,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     metadata: core::pin::Pin<&'static MetaAllocator>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     subprocess: &'static MainSubprocess,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     diagnostics: ProcessStartupDiagnostics<'static>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     entry: ProcessStartEntry,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
 impl ProcessMainRuntimeStartupTail {
     pub(crate) fn complete(self) -> Result<(), ProcessMainInitError> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.entry == ProcessStartEntry::RuntimeStartup {
             // Loader startup is serialized by its caller. Claim before
             // delivery so recursive runtime entry never repeats the flush.
@@ -2023,7 +2023,7 @@ impl Drop for ProcessMainStartup {
 /// existed.
 #[inline]
 pub(crate) fn process_source_option(option: crate::config::SourceOption) -> i64 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(output) = ProcessMainInitializationStorage::global().published_source_options() {
         // SAFETY: a published owner has an installed table, and every lazy
         // retry delivers through the process output route as C's
@@ -2041,13 +2041,13 @@ pub(crate) fn process_source_option(option: crate::config::SourceOption) -> i64 
 /// The caller must hold no page-engine, owner, TLD, or Theap projection: a
 /// registered output callback may reenter the allocator, as it may in C.
 pub(crate) fn process_warning_message(message: crate::diagnostic_output::SourceFormattedMessage) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(output) = ProcessMainInitializationStorage::global().published_source_options() {
         // SAFETY: a published owner has an installed table; the caller holds
         // no allocator projection across this warning's delivery.
         unsafe { output.warning_from_source_options(message) };
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let _ = message;
 }
 
@@ -2064,14 +2064,14 @@ pub(crate) fn process_warning_message(message: crate::diagnostic_output::SourceF
 pub(crate) fn process_error_message(
     report: crate::diagnostic_output::SourceErrorReport,
 ) -> crate::diagnostic_output::SourceErrorDisposition {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let disposition = match ProcessMainInitializationStorage::global().published_source_options() {
         // SAFETY: a published owner has an installed table; the caller holds
         // no allocator projection across this report's deliveries.
         Some(output) => unsafe { output.error_message(report.error(), report.message()) },
         None => report.default_disposition(),
     };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let disposition = report.default_disposition();
     #[cfg(feature = "native-runtime-test-audit")]
     record_source_error_for_test_audit(report, disposition);
@@ -2121,7 +2121,7 @@ pub fn native_runtime_take_source_error_test_audit() -> Option<NativeSourceError
 
 /// The installed process diagnostic output owner and its option table.
 /// Public lazy option access may publish this owner before allocator startup.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 pub(crate) fn process_output_owner() -> Option<&'static OutputOwner> {
     ProcessMainInitializationStorage::global().published_source_options()
@@ -2130,7 +2130,7 @@ pub(crate) fn process_output_owner() -> Option<&'static OutputOwner> {
 /// Supplies public option entries with the embedding's validated environment
 /// and FILE owner before process initialization. Absent facts keep descriptor
 /// reads retryable and leave pre-facts setters in their retained static image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn prepare_process_source_options() -> Option<&'static OutputOwner> {
     if let Some(output) = process_output_owner() { return Some(output); }
     let facts = ProcessStartupFactsCell::global().published()?;
@@ -2141,7 +2141,7 @@ pub(crate) fn prepare_process_source_options() -> Option<&'static OutputOwner> {
 /// `_mi_option_get_fast(option)` counterpart of [`process_source_option`].
 #[inline]
 pub(crate) fn process_source_option_fast(option: crate::config::SourceOption) -> i64 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(output) = ProcessMainInitializationStorage::global().published_source_options() {
         // SAFETY: a published owner has an installed table.
         return unsafe { output.option_get_fast(option) };
@@ -2167,7 +2167,7 @@ static PROCESS_MAIN_INITIALIZATION: ProcessMainInitializationStorage =
 /// The caller is the initial source thread, holds no attachment, Theap, or
 /// random projection, and owns `_mi_options_post_init`'s one-time
 /// serialization against every other diagnostic dispatch.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn run_runtime_startup_tail(
     output: Option<&'static OutputOwner>,
     metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -2208,7 +2208,7 @@ unsafe fn run_runtime_startup_tail(
 /// and every overlapping field/image projection until this call returns.
 /// Its warning callback may temporarily draw from the original image or change
 /// TLS selection, but must return without retaining a projection of the image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn reinitialize_startup_random_with_warning(
     pointer: NonNull<crate::types::Theap>, warning: impl FnOnce(),
 ) -> crate::random::RandomReinitialization {
@@ -2238,7 +2238,7 @@ unsafe fn reinitialize_startup_random_with_warning(
 /// This capability carries no borrowed TLS reference. Each invocation resolves
 /// the slot on the calling thread, so retained process policy can publish a
 /// captured syscall error before a diagnostic callback observes it.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct SourceErrnoStore {
@@ -2246,7 +2246,7 @@ pub struct SourceErrnoStore {
     default_store: Option<unsafe fn(core::ffi::c_int)>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl SourceErrnoStore {
     /// Retains an embedding's current-thread errno writer.
     ///
@@ -2313,7 +2313,7 @@ impl SourceErrnoStore {
 /// `_mi_prim_random_buf` from `getrandom` directly and reads no other auxv
 /// entry, so copying the startup key would add an unused, lifetime-sensitive
 /// secret rather than a source input.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct NativeProcessStartupFacts {
@@ -2323,7 +2323,7 @@ pub struct NativeProcessStartupFacts {
     source_errno_store: Option<SourceErrnoStore>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeProcessStartupFacts {
     /// Builds one startup image from runtime-validated `AT_PAGESZ`, the
     /// runtime's source environment reader, and its selected FILE output.
@@ -2383,11 +2383,11 @@ impl NativeProcessStartupFacts {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const STARTUP_FACTS_ABSENT: u8 = 0;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const STARTUP_FACTS_WRITING: u8 = 1;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const STARTUP_FACTS_PUBLISHED: u8 = 2;
 
 /// One-way, allocation-free publication slot for [`NativeProcessStartupFacts`].
@@ -2397,7 +2397,7 @@ const STARTUP_FACTS_PUBLISHED: u8 = 2;
 /// Acquire-observes PUBLISHED may copy it at any later time. A reader that
 /// races the single write observes no facts, which is the same allocation-free
 /// refusal as a process whose runtime has not published them yet.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct ProcessStartupFactsCell {
     state: AtomicU8,
     facts: UnsafeCell<MaybeUninit<NativeProcessStartupFacts>>,
@@ -2406,10 +2406,10 @@ pub(crate) struct ProcessStartupFactsCell {
 // SAFETY: the ABSENT -> WRITING CAS grants one writer exclusive access to the
 // inline image before its Release publication; afterwards the image is only
 // copied out and never mutated.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe impl Sync for ProcessStartupFactsCell {}
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ProcessStartupFactsCell {
     pub(crate) const fn new() -> Self {
         Self {
@@ -2458,7 +2458,7 @@ impl ProcessStartupFactsCell {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 static PROCESS_STARTUP_FACTS: ProcessStartupFactsCell = ProcessStartupFactsCell::new();
 
 /// A process-main startup failure.
@@ -2489,7 +2489,7 @@ pub(crate) enum ProcessMainInitError {
     SubprocessRegistry(crate::subproc::registry::SourceSubprocessRegistryError),
     BootstrapSelection(MainStaticBootstrapSelectionError),
     HeapFoundation(MainStaticHeapFoundationError),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     BootstrapOutput(BootstrapOutputAdmissionError),
     Metadata(MetaError),
     PageMap(ProcessPageMapError),
@@ -2705,9 +2705,9 @@ impl ProcessMainAllocationLease {
             storage: self.storage,
             // SAFETY: this lease already binds the immutable process tuple,
             // and the READY Acquire above publishes its permanent config slot.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             config: unsafe { (*self.storage.config.get()).assume_init_ref() },
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             config: self.config,
             subprocess: self.subprocess, page_map: self.page_map,
         })
@@ -2726,9 +2726,9 @@ pub(crate) struct ProcessMainReadyLease {
     // READY publishes one immutable process-lifetime configuration. Borrowing
     // its final slot keeps repeated owner capture from transporting its full
     // image before an operation actually requests the configuration value.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     config: &'static MemoryConfig,
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
@@ -2760,7 +2760,7 @@ impl ProcessMainReadyLease {
     /// Captures the permanent output owner before coordinator sealing. This
     /// identity grants no callback authority: callers must separately hold
     /// ordinary entry or the transferred terminal writer's diagnostic scope.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn diagnostic_output(self) -> Result<Option<&'static OutputOwner>, ProcessMainInitError> {
         self.ensure_ready()?;
         let pointer = self.storage.diagnostic_output_ptr.load(Ordering::Acquire);
@@ -2804,9 +2804,9 @@ impl ProcessMainReadyLease {
             // SAFETY: READY published this exact process-static map owner;
             // only its normal entry is revoked, not the owner storage itself.
             page_map_storage: unsafe { page_map_storage.as_ref() },
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             config: *self.config,
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             config: self.config,
         })
     }
@@ -2833,9 +2833,9 @@ impl ProcessMainReadyLease {
     #[inline]
     pub(crate) fn memory_config(self) -> Result<MemoryConfig, ProcessMainInitError> {
         self.ensure_ready()?;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { Ok(*self.config) }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { Ok(self.config) }
     }
 
@@ -2899,7 +2899,7 @@ impl ProcessMainReadyLease {
         if self.storage.state.load(Ordering::Acquire) != READY {
             return Err(ProcessMainInitError::Retained);
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         if self.storage.config() != self.config
             || !core::ptr::eq(
                 self.storage.subprocess.load(Ordering::Acquire),
@@ -2954,9 +2954,9 @@ pub(crate) enum ProcessMainProcessPageSessionError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessMainReadySharedArenaError {
     Process(ProcessMainInitError),
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Arena(ProcessSharedArenaError),
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Pair(ProcessPageArenaLeaseError),
 }
 
@@ -2981,7 +2981,7 @@ impl ProcessMainThread {
     /// Copies the allocation PageMap after checking the coordinator phase
     /// and then the storage's allocation-ready publication. This grants no
     /// attachment or page ownership and invokes no intervening callback.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) fn allocation_page_map(&self) -> Result<ProcessPageMapRoot, ProcessMainInitError> {
         if !matches!(self.state, ProcessMainThreadState::Attached | ProcessMainThreadState::MainThreadDetached) {
@@ -3034,14 +3034,14 @@ impl ProcessMainThread {
     /// process-shared sidecar is already READY; joining its two immutable
     /// witnesses rejects a root, configuration, or subprocess mismatch before
     /// any page lifecycle can begin.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn ready_shared_arena_pair(
         &self,
     ) -> Result<ProcessPageArenaLease, ProcessMainReadySharedArenaError> {
         self.ready_shared_arena_pair_with_storage(ProcessSharedArenaStorage::global())
     }
 
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     fn ready_shared_arena_pair_with_storage(
         &self,
         arena_storage: &'static ProcessSharedArenaStorage,
@@ -3072,14 +3072,14 @@ impl ProcessMainThread {
     /// witness and ticket-zero attachment. This factory exposes neither raw
     /// static storage nor arena ownership; the returned owner remains bounded
     /// to its first ordinary fresh-page miss and the global one-arena policy.
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn begin_first_arena_page_allocator(
         &mut self,
     ) -> Result<MainStaticFirstArenaPageAllocator<'_>, ProcessMainFirstArenaPageAllocatorError> {
         self.begin_first_arena_page_allocator_with_storage(ProcessSharedArenaStorage::global())
     }
 
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     fn begin_first_arena_page_allocator_with_storage(
         &mut self,
         arena_storage: &'static ProcessSharedArenaStorage,
@@ -3215,7 +3215,7 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn repeated_source_options_install_preserves_owner_descriptors_and_delayed_output() {
         use crate::config::SourceOption;
@@ -3258,7 +3258,7 @@ mod tests {
         assert_eq!(SECOND_CALLS.load(Ordering::Relaxed), 0);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_descriptor_policy_binding_refuses_overwrite_and_keeps_final_owner() {
         use crate::config::SourceOption;
@@ -3300,7 +3300,7 @@ mod tests {
         storage.publish_terminal_state_and_release(completion, RETAINED);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn final_process_policy_retries_its_retained_table_after_binding_refusal() {
         use crate::config::SourceOption;
@@ -3372,7 +3372,7 @@ mod tests {
         storage.publish_terminal_state_and_release(completion, RETAINED);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn native_startup_errno_capability_resolves_calling_thread_tls() {
         unsafe extern "C" { fn __errno_location() -> *mut core::ffi::c_int; }
@@ -3495,7 +3495,7 @@ mod tests {
         )
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_attached_allocation_lease_does_not_release_process_once_to_a_racer() {
         let config = memory_config();
@@ -3548,7 +3548,7 @@ mod tests {
         initializer.join().unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn worker_child_detaches_empty_initial_owner_but_keeps_process_ready() {
         use crate::runtime_lifecycle::{
@@ -3721,14 +3721,14 @@ mod tests {
             assert!(matches!(ready.subprocess(), Err(ProcessMainInitError::Retained)));
             assert!(matches!(ready.page_map(), Err(ProcessMainInitError::Retained)));
             assert!(matches!(ready.process_backing(), Err(ProcessMainInitError::Retained)));
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert!(matches!(ready.diagnostic_output(), Err(ProcessMainInitError::Retained)));
         })
         .join()
         .expect("process-main initialization test thread completes");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn successful_huge_startup_consumes_canonical_registry_before_regular_parent() {
         for (regular, exhaust_huge, selected_output) in [(false, false, false), (true, false, true), (true, true, true)] {
@@ -4690,7 +4690,7 @@ mod tests {
         .expect("ready-process reuse test thread completes");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_repeated_explicit_process_init_c_rust_trace() {
         thread::spawn(|| {
@@ -4733,7 +4733,7 @@ mod tests {
         }).join().expect("the process-init trace thread completes");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_concurrent_process_init_callback_c_rust_trace() {
         let config = memory_config();
@@ -4811,7 +4811,7 @@ mod tests {
         initializer.join().expect("the original owner finishes");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct LoaderTailObservation {
         storage: &'static ProcessMainInitializationStorage,
         main_static: &'static MainStaticAttachmentStorage,
@@ -4823,13 +4823,13 @@ mod tests {
         observed: core::cell::Cell<Option<(bool, bool, bool)>>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     std::thread_local! {
         static LOADER_TAIL_OBSERVATION: core::cell::Cell<*const LoaderTailObservation> =
             const { core::cell::Cell::new(core::ptr::null()) };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn observe_loader_tail(_message: *const core::ffi::c_char) {
         LOADER_TAIL_OBSERVATION.with(|slot| {
             // SAFETY: the initializer installs its stack-local observation
@@ -4849,7 +4849,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_loader_tail_once_release_c_rust_trace() {
         let config = memory_config();
@@ -4920,7 +4920,7 @@ mod tests {
             "process initialization must release once before loader-tail output: {trace:?}");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn bootstrap_output_prefix(
         stderr: crate::diagnostic_output::DefaultStderrOutput,
     ) -> (
@@ -4956,7 +4956,7 @@ mod tests {
         (storage, completion, ProcessStartupDiagnostics::Selected(output), process, subprocess)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn first_tld_numa_verbose_output_is_buffered_until_post_init_and_reuses_cache() {
         crate::test_process::run_in_fresh_process(
@@ -5120,7 +5120,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn selected_static_theap_is_counted_after_tld_link_before_heap_publication() {
         crate::test_process::run_in_fresh_process(
@@ -5216,7 +5216,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn first_allocation_metadata_entropy_refusal_buffers_normal_warning_until_runtime_tail() {
         crate::test_process::run_in_fresh_process(
@@ -5298,7 +5298,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn bootstrap_entropy_warning_is_buffered_before_weak_expansion() {
         std::thread_local! {
@@ -5350,7 +5350,7 @@ mod tests {
         }).join().unwrap();
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn published_owner_entropy_warning_precedes_expansion_and_allows_allocation_reentry() {
         crate::test_process::run_in_fresh_process(
@@ -5440,7 +5440,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn bootstrap_output_admission_rejects_unconnected_crossed_and_terminal_owners() {
         unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
@@ -5508,7 +5508,7 @@ mod tests {
         }).join().unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     fn with_startup_metadata_output_fixture<R>(
         operation: impl FnOnce(
             &ScopedBootstrapOutput<'_>, crate::meta::MetaAllocatorBound<'static>,
@@ -5543,7 +5543,7 @@ mod tests {
         result
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn startup_fresh_page_assertion_dispatch_retains_original_source_candidate() {
         const CHILD: &str = "CRABC_MI_STARTUP_PAGE_ASSERTION_CHILD";
@@ -5673,7 +5673,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn startup_failed_entropy_retry_warns_after_random_projection_ends() {
         std::thread_local! {
@@ -5761,7 +5761,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn startup_random_retry_retains_original_field_across_warning_reentry() {
         let mut image = core::pin::pin!(crate::bootstrap::ExclusiveTheapBootstrap::new());

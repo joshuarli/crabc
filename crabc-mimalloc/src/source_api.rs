@@ -39,7 +39,7 @@
 //! and `ENOMEM` for every other site only while errno is zero. Error and
 //! warning messages are not rendered here.
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 #[path = "source_page_assertion_tests.rs"]
 mod source_page_assertion_tests;
 
@@ -80,7 +80,7 @@ impl SourceErrno {
     /// registered `mi_register_error` handler the handler, not
     /// `mi_error_default`, receives the code and errno is unchanged.
     pub(crate) fn error_message(error: Errno) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if crate::process_init::process_output_owner().is_some_and(|owner| owner.has_error_handler()) {
             return Self::Unchanged;
         }
@@ -308,7 +308,7 @@ pub unsafe fn theap_malloc_aligned_at(
     if crate::source_heap_api::fixed_runtime_theap() == Some(theap) {
         return malloc_zero_aligned_at_native(size, alignment, offset, zero);
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     // SAFETY: this validated current-thread Theap remains retained through
     // sampling, owner admission and the terminal allocation result.
     if let Some(result) = unsafe { guarded_aligned_allocation_result(theap, size, alignment, offset, zero) } {
@@ -550,7 +550,7 @@ pub enum FreeOutcome {
     Retained,
     /// Pointer or source padding validation rejected this free and left the
     /// block owned. The caller retains the live allocation after the diagnostic.
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     RejectedCorruption,
 }
 
@@ -626,7 +626,7 @@ unsafe fn free_validated(block: *mut u8) -> FreeOutcome {
         NativePageFreeResult::Freed => FreeOutcome::Freed,
         NativePageFreeResult::InvalidPointer => FreeOutcome::Unmapped,
         NativePageFreeResult::Unavailable | NativePageFreeResult::Retained => FreeOutcome::Retained,
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         NativePageFreeResult::RejectedCorruption => FreeOutcome::RejectedCorruption,
     }
 }
@@ -897,7 +897,7 @@ unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<B
 /// `block` is null or an exact live client held exclusively for reallocation.
 /// Success consumes the old block; failure leaves it live and unchanged.
 pub(crate) unsafe fn realloc_zero_native(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     if let Some(theap) = crate::source_heap_api::fixed_runtime_theap() {
         // SAFETY: the calling thread retains its initialized fixed Theap;
         // the caller exclusively retains the exact client. The source kernel
@@ -1061,7 +1061,7 @@ fn malloc_zero_aligned_at(size: usize, alignment: usize, offset: usize, zero: bo
 /// This wrapper makes the guarded decision before ordinary size checks;
 /// its native continuation must not sample again or replace its errno effect.
 pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     {
         let selected = crate::source_heap_api::fixed_runtime_theap()
             .unwrap_or_else(crate::compiler_tls::default_theap);
@@ -1099,7 +1099,7 @@ pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offse
 /// `theap` is retained by the calling thread through the allocation. Its
 /// initialized sampler fields are exclusively owned, or it is the immutable
 /// empty compiler-TLS image on its read-only rate-zero path.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 unsafe fn guarded_aligned_allocation_result(
     theap: NonNull<crate::types::Theap>, size: usize, alignment: usize,
     offset: usize, zero: bool,
@@ -1174,7 +1174,7 @@ pub(crate) unsafe fn realloc_zero_aligned_at_native(
     if !size_class::alignment_is_valid(alignment) {
         return Sourced::with(None, SourceErrno::error_message(Errno::INVAL));
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     if let Some(theap) = crate::source_heap_api::fixed_runtime_theap() {
         // SAFETY: the calling thread retains this initialized fixed Theap
         // and the caller exclusively retains the exact client. The source
@@ -1769,7 +1769,7 @@ mod tests {
     use super::SourceErrno;
     use crabc_core::Errno;
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn cold_public_aligned_allocation_samples_only_after_thread_initialization() {
         crate::test_process::run_in_fresh_process(
@@ -1825,7 +1825,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn sampled_guarded_aligned_refusal_precedes_ordinary_size_validation() {
         crate::test_process::run_in_fresh_process(
@@ -1861,7 +1861,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "mi-xmalloc", target_arch = "x86_64"))]
+    #[cfg(all(feature = "mi-xmalloc", any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn xmalloc_oversized_allocation_aborts_in_a_fresh_process() {
         use std::os::unix::process::ExitStatusExt;
@@ -1887,7 +1887,7 @@ mod tests {
             child.status, std::string::String::from_utf8_lossy(&child.stderr));
     }
 
-    #[cfg(all(feature = "mi-xmalloc", target_arch = "x86_64"))]
+    #[cfg(all(feature = "mi-xmalloc", any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn xmalloc_registered_handler_and_release_count_overflow_return() {
         crate::test_process::run_in_fresh_process(
@@ -2051,7 +2051,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     #[test]
     fn secure_selected_default_aligned_rezalloc_preserves_zero_client_extent() {
         crate::test_process::run_in_fresh_process(
@@ -2086,7 +2086,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     #[test]
     fn secure_selected_theap_rezalloc_preserves_full_reported_usable_client() {
         crate::test_process::run_in_fresh_process(
@@ -2128,7 +2128,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(miri)))]
     fn initialize_secure_source_after_joined_worker() -> *mut core::ffi::c_void {
         unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
         assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
@@ -2164,7 +2164,7 @@ mod tests {
         base
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(miri)))]
     #[test]
     fn joined_secure_source_worker_preserves_public_auxiliary_heap_creation() {
         crate::test_process::run_in_fresh_process(
@@ -2188,7 +2188,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(miri)))]
     #[test]
     fn ordinary_fork_after_joined_secure_source_worker_preserves_auxiliary_heap_creation() {
         crate::test_process::run_in_fresh_process(
@@ -2242,7 +2242,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn selected_theap_realloc_keeps_replacement_when_consumed_old_mapping_is_retained() {
         crate::test_process::run_in_fresh_process(

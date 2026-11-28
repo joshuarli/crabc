@@ -29,15 +29,15 @@ use crate::config::{
 };
 use crate::main_theap::MainStaticProcessPageSession;
 use crate::main_theap::MainStaticTheapError;
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::main_theap::{MainStaticPageSessionError, MainStaticTheapAttachment};
 use crate::os::MemoryConfig;
 use crate::page;
 use crate::page_backing::RuntimeFirstRegularPageBacking;
 use crate::process_arena::ProcessSharedArenaStorage;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::ProcessSharedArenaReserveFailure;
 use crate::process_init::ProcessMainBackingBinding;
 use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
@@ -49,7 +49,7 @@ use crate::single_thread::{
     DeferredFreeAlignedPlainAllocation,
     GenericAllocationCollection, FreeError, PageAllocatorEngine,
 };
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::single_thread::{RemoteFreePreparationError, RemoteFreeProducer};
 #[cfg(test)]
 use crate::single_thread::PageAllocatorEngineState;
@@ -82,7 +82,7 @@ pub(crate) fn native_process_backing_first_arena_audit() -> usize {
 /// map mutation lease poisons its root before releasing the private lock. A
 /// successful [`Self::finish`] is the only path that leaves either owner ready
 /// for a later bounded session.
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use = "a main-static process page allocator must finish or retain its owner explicitly"]
 pub(crate) struct MainStaticProcessPageAllocator<'main> {
     engine: PageAllocatorEngine<'static, 'static, crate::main_theap::MainStaticPageSession<'main>>,
@@ -95,10 +95,10 @@ pub(crate) struct MainStaticProcessPageAllocator<'main> {
 #[must_use = "an initial deferred-free allocation phase must be completed"]
 pub(crate) enum MainStaticDeferredFreeAllocationPhase {
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     LiveValidity(crate::single_thread::PendingLivePageValidity),
     Complete(Option<NonNull<u8>>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     GenericFrequency {
         source: crate::deferred_free::DeferredFreeSource,
         request: crate::types::GenericAllocationFrequencyRequest,
@@ -113,14 +113,14 @@ pub(crate) enum MainStaticDeferredFreeAllocationPhase {
 
 /// Captures scalar source identity while the original initial engine is
 /// still admitted, preserving checked refusal across later callback phases.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 fn initial_guarded_canonical_phase(
     source: crate::deferred_free::DeferredFreeSource,
     phase: crate::single_thread::GuardedCanonicalAllocationPhase,
 ) -> Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal> {
     phase.map(|phase| match phase {
         DeferredFreeAllocationPhase::FreshInitialization(task) => MainStaticDeferredFreeAllocationPhase::FreshInitialization(task),
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         DeferredFreeAllocationPhase::LiveValidity(task) => MainStaticDeferredFreeAllocationPhase::LiveValidity(task),
         DeferredFreeAllocationPhase::Complete(block) => MainStaticDeferredFreeAllocationPhase::Complete(block),
         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
@@ -133,10 +133,10 @@ fn initial_guarded_canonical_phase(
 }
 
 /// A pre-publication refusal while opening the bounded static page allocator.
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticProcessPageAllocatorBeginError {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Pair(ProcessPageArenaLeaseError),
     /// The static ticket-zero attachment belongs to another process image.
     /// This is checked before it is borrowed as a page session or the PageMap
@@ -147,7 +147,7 @@ pub(crate) enum MainStaticProcessPageAllocatorBeginError {
 }
 
 /// The only failure outcomes while consuming a bounded static page engine.
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use = "a retained main-static page allocator still owns live page state"]
 pub(crate) enum MainStaticProcessPageAllocatorFinishError<'main> {
     /// One page, queue, producer, or OS-release owner remains live. The exact
@@ -162,7 +162,7 @@ pub(crate) enum MainStaticProcessPageAllocatorFinishError<'main> {
     PageMap(ProcessPageMapError),
 }
 
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl<'main> MainStaticProcessPageAllocator<'main> {
     /// Starts one source-shaped page lifecycle for the ticket-zero attachment.
     ///
@@ -170,7 +170,7 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
     /// this function touches either static image. The map mutation lease then
     /// serializes every ordinary PageMap entry operation for the complete
     /// engine and any joined scoped remote producer lifetime.
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn begin(
         attachment: &'main mut MainStaticTheapAttachment,
         pair: ProcessPageArenaLease,
@@ -316,13 +316,13 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
 /// the first ordinary request that needs a page. Once active it delegates to
 /// the already-bounded [`MainStaticProcessPageAllocator`]; exhaustion of that
 /// one arena does not manufacture later arena-count scaling or a second route.
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use = "a first-arena static page owner must finish or retain its ticket-zero attachment explicitly"]
 pub(crate) struct MainStaticFirstArenaPageAllocator<'main> {
     state: MainStaticFirstArenaPageAllocatorState<'main>,
 }
 
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 enum MainStaticFirstArenaPageAllocatorState<'main> {
     AwaitingFreshPage {
         attachment: &'main mut MainStaticTheapAttachment,
@@ -345,7 +345,7 @@ pub(crate) enum MainStaticFirstArenaPageAllocatorBeginError {
 }
 
 /// A free attempted before the lazy owner activated its source page engine.
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticFirstArenaPageAllocatorFreeError {
     NotActive,
@@ -353,14 +353,14 @@ pub(crate) enum MainStaticFirstArenaPageAllocatorFreeError {
 }
 
 /// The result of finishing one lazy ticket-zero page owner.
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use = "a retained first-arena page owner still owns its ticket-zero attachment or page engine"]
 pub(crate) enum MainStaticFirstArenaPageAllocatorFinishError<'main> {
     Retained(MainStaticFirstArenaPageAllocator<'main>),
     PageMap(ProcessPageMapError),
 }
 
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl<'main> MainStaticFirstArenaPageAllocator<'main> {
     /// Opens a first-arena owner without reserving any virtual memory.
     ///
@@ -698,7 +698,7 @@ fn finish_sidecar_setup_lifecycle(
 /// native later owners activate independently from the same process binding.
 #[derive(Clone, Copy)]
 enum MainStaticRuntimeFirstArenaRoute {
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Sidecar,
     SourceProcess(ProcessMainBackingBinding),
 }
@@ -710,7 +710,7 @@ enum MainStaticRuntimeFirstArenaRoute {
 /// absent binding cannot select the legacy mapping route.
 #[derive(Clone, Copy)]
 enum MainStaticRuntimeFirstArenaReservation {
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Legacy {
         page_map: crate::process_page_map::ProcessPageMapRoot,
     },
@@ -723,7 +723,7 @@ impl MainStaticRuntimeFirstArenaReservation {
     #[inline]
     fn page_map(self) -> crate::process_page_map::ProcessPageMapRoot {
         match self {
-            #[cfg(any(test, not(target_arch = "x86_64")))]
+            #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::Legacy { page_map } => page_map,
             Self::Process { backing } => backing.page_map(),
         }
@@ -1074,7 +1074,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// The shared readiness check observes pending release, collection and
     /// commit failure state and the retained source session. It performs no
     /// collection, source-count update, engine finish or state transition.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) fn permits_surviving_initial_owner_fork(&self) -> bool {
         self.permits_terminal_process_retirement()
@@ -1137,7 +1137,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// This legacy route intentionally retains its frozen PageMap-only state
     /// for the AArch64 execution path and older isolated fixtures. New
     /// native x86 runtime startup must use [`Self::begin_for_process`].
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn begin_legacy(
         session: MainStaticProcessPageSession,
         page_map: crate::process_page_map::ProcessPageMapRoot,
@@ -1207,7 +1207,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// engine. Any pair or callback failure is terminal: after a later engine
     /// may have touched source page ownership, this permanent session cannot
     /// claim a retry.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn with_later_thread_page_pair<R>(
         &mut self,
         operation: impl FnOnce(ProcessPageArenaLease) -> Result<R, ()>,
@@ -1442,7 +1442,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 };
                 true
             }
-            #[cfg(any(test, not(target_arch = "x86_64")))]
+            #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. } => {
                 let Some(block) = self.allocate(WORD_SIZE, false) else {
                     return false;
@@ -1510,7 +1510,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Borrows the active engine in place or prepares its inactive owner once.
     /// The operation runs before initial Active publication, including when
     /// it returns the source's ordinary null allocation result.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn allocate_with<R>(
         &mut self,
         request: usize,
@@ -1584,7 +1584,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Refusal restores the exact dormant/fresh owner or retains it terminally;
     /// success leaves Transition installed until the caller finishes its first
     /// operation and publishes this one linear active engine.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline(never)]
     fn prepare_inactive_engine(&mut self, request: usize) -> Option<MainStaticRuntimeActiveEngine> {
         let state = core::mem::replace(
@@ -1629,7 +1629,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     return None;
                 }
                 let backing = match route {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => {
                         let arena_lease = match arena_storage.ready_lease() {
                             Ok(arena) => arena,
@@ -1686,7 +1686,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // lease and cannot fail on another page's terminal release.
                 let page_map_lifecycle = match route {
                     MainStaticRuntimeFirstArenaRoute::SourceProcess(_) => Ok(None),
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => page_map.begin_page_lifecycle().map(Some),
                 };
                 let page_map_lifecycle = match page_map_lifecycle {
@@ -1750,7 +1750,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // The sidecar pair was joined from this same PageMap root.
                 #[cfg(not(test))]
                 let owned_ranges = match route {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
                         page_map.page_map_for_owned_ranges()
                     },
@@ -1862,7 +1862,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     return None;
                 }
                 let source_process = match reservation {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaReservation::Legacy { .. } => None,
                     MainStaticRuntimeFirstArenaReservation::Process { backing } => {
                         if !backing.is_allocation_ready() {
@@ -1877,11 +1877,11 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // reservation takes the fixture lifecycle boundary.
                 let page_map_lifecycle = match source_process {
                     Some(_) => Ok(None),
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     None => page_map.begin_page_lifecycle().map(Some),
                     // Native x86 production compiles no legacy reservation,
                     // so no reservation can lack its process binding here.
-                    #[cfg(all(not(test), target_arch = "x86_64"))]
+                    #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
                     None => Err(ProcessPageMapError::Poisoned),
                 };
                 let page_map_lifecycle = match page_map_lifecycle {
@@ -1921,7 +1921,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         MainStaticRuntimeFirstArenaRoute::SourceProcess(lease),
                     )
                     }
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     None => {
                     // Only the explicit-config fixture route reaches this
                     // one-arena owner. Canonical process allocation uses the
@@ -1993,7 +1993,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     )
                     }
                     // Native x86 production compiles no legacy reservation.
-                    #[cfg(all(not(test), target_arch = "x86_64"))]
+                    #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
                     None => {
                         let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
                         session.retain_terminal();
@@ -2045,7 +2045,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // The sidecar pair was joined from this same PageMap root.
                 #[cfg(not(test))]
                 let owned_ranges = match route {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
                         page_map.page_map_for_owned_ranges()
                     },
@@ -2135,7 +2135,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// before activation. Both routes release their short setup boundary
     /// before publishing a client and preserve the supplied operation's
     /// result without changing its source allocation primitive.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn allocate_with<R>(
         &mut self,
         request: usize,
@@ -2232,7 +2232,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     return None;
                 }
                 let backing = match route {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => {
                         let arena_lease = match arena_storage.ready_lease() {
                             Ok(arena) => arena,
@@ -2289,7 +2289,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // lease and cannot fail on another page's terminal release.
                 let page_map_lifecycle = match route {
                     MainStaticRuntimeFirstArenaRoute::SourceProcess(_) => Ok(None),
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => page_map.begin_page_lifecycle().map(Some),
                 };
                 let page_map_lifecycle = match page_map_lifecycle {
@@ -2353,7 +2353,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // The sidecar pair was joined from this same PageMap root.
                 #[cfg(not(test))]
                 let owned_ranges = match route {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
                         page_map.page_map_for_owned_ranges()
                     },
@@ -2469,7 +2469,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     return None;
                 }
                 let source_process = match reservation {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaReservation::Legacy { .. } => None,
                     MainStaticRuntimeFirstArenaReservation::Process { backing } => {
                         if !backing.is_allocation_ready() {
@@ -2484,11 +2484,11 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // reservation takes the fixture lifecycle boundary.
                 let page_map_lifecycle = match source_process {
                     Some(_) => Ok(None),
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     None => page_map.begin_page_lifecycle().map(Some),
                     // Native x86 production compiles no legacy reservation,
                     // so no reservation can lack its process binding here.
-                    #[cfg(all(not(test), target_arch = "x86_64"))]
+                    #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
                     None => Err(ProcessPageMapError::Poisoned),
                 };
                 let page_map_lifecycle = match page_map_lifecycle {
@@ -2528,7 +2528,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         MainStaticRuntimeFirstArenaRoute::SourceProcess(lease),
                     )
                     }
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     None => {
                     // Only the explicit-config fixture route reaches this
                     // one-arena owner. Canonical process allocation uses the
@@ -2600,7 +2600,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     )
                     }
                     // Native x86 production compiles no legacy reservation.
-                    #[cfg(all(not(test), target_arch = "x86_64"))]
+                    #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
                     None => {
                         let _ = finish_sidecar_setup_lifecycle(page_map_lifecycle);
                         session.retain_terminal();
@@ -2652,7 +2652,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // The sidecar pair was joined from this same PageMap root.
                 #[cfg(not(test))]
                 let owned_ranges = match route {
-                    #[cfg(any(test, not(target_arch = "x86_64")))]
+                    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                     MainStaticRuntimeFirstArenaRoute::Sidecar => unsafe {
                         page_map.page_map_for_owned_ranges()
                     },
@@ -2832,7 +2832,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         ) {
             return None;
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)) {
             // Only an inactive owner needs the normalized request to refuse
             // backing preparation; the active engine handles the source request.
@@ -2841,7 +2841,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 return self.begin_engine_less_generic_refusal(normalized);
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             let normalized = request.max(crate::config::WORD_SIZE);
             if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_))
@@ -2857,14 +2857,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
                         source: engine.deferred_free_source()?, request, continuation,
@@ -2889,12 +2889,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.engine.allocation_process(),
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { reservation, .. } => match reservation {
                 MainStaticRuntimeFirstArenaReservation::Process { backing } => Some(backing.process()),
-                #[cfg(any(test, not(target_arch = "x86_64")))]
+                #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                 MainStaticRuntimeFirstArenaReservation::Legacy { .. } => None,
             },
             MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { route, .. } => match route {
                 MainStaticRuntimeFirstArenaRoute::SourceProcess(backing) => Some(backing.process()),
-                #[cfg(any(test, not(target_arch = "x86_64")))]
+                #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
                 MainStaticRuntimeFirstArenaRoute::Sidecar => None,
             },
             #[cfg(test)]
@@ -2910,7 +2910,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// of compiler-TLS default or cached Theap selection. This creates no
     /// image, initializes no engine and grants no allocation admission; the
     /// caller must acquire its original owner scope before a candidate.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn allocation_theap(&self) -> Option<NonNull<crate::types::Theap>> {
         use crate::bootstrap::TheapPageSession;
         match &self.state {
@@ -2967,14 +2967,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
                         source: engine.deferred_free_source()?, request, continuation,
@@ -2995,7 +2995,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// refusal separate from checked engine refusal and completed source null.
     /// The production source registry performs backing allocation only after
     /// this method has activated the original initial engine.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) fn begin_deferred_free_guarded_canonical_checked_current_initial_thread_local(
         &mut self, source_size: usize,
     ) -> Option<Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal>> {
@@ -3022,7 +3022,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Resumes checked canonical collection on the retained initial issuer.
     /// Matching source identity observes this permanent owner; it does not
     /// authorize reopening an owner after a terminal transition.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) fn resume_deferred_free_guarded_canonical_current_initial_thread_local(
         &mut self, source: crate::deferred_free::DeferredFreeSource,
         collection: GenericAllocationCollection,
@@ -3045,7 +3045,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// The source-clamped frequency comes from that same process. No callback
     /// may retire, replace or rebind the original issuer; address matches
     /// alone do not establish its retained lifetime.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn resume_guarded_canonical_frequency_current_initial_thread_local(
         &mut self, source: crate::deferred_free::DeferredFreeSource,
         request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
@@ -3071,10 +3071,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         self.allocate_with(plain.requested_size(), |engine| {
             match engine.begin_deferred_free_aligned_plain(plain) {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task)),
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
                         source: engine.deferred_free_source()?, request, continuation,
@@ -3117,7 +3117,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // `mi_theap_collect_ex` still calls `_mi_deferred_free` and
                 // merges the Theap statistics when there are no pages.
                 use crate::bootstrap::TheapPageSession;
-                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                 if let Some(task) = self.engine_less_collection_prefix_failure() {
                     return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
                 }
@@ -3133,14 +3133,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::LiveValidity(task) => {
                 Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
             }
             DeferredFreeAllocationPhase::Complete(block) => {
                 Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
                     source: engine.deferred_free_source()?, request, continuation,
@@ -3179,14 +3179,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
                         source: engine.deferred_free_source()?, request, continuation,
@@ -3211,7 +3211,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// retained from the counter prefix through the getter and completion.
     /// No callback may retire, replace or rebind the original source image.
     /// Address and source matches alone do not prove this retained lifetime.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn resume_generic_allocation_frequency_current_initial_thread_local(
         &mut self,
         source: crate::deferred_free::DeferredFreeSource,
@@ -3230,7 +3230,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 crate::types::GenericAllocationAdministration::Full => GenericAllocationCollection::Full,
                 crate::types::GenericAllocationAdministration::None => return None,
             };
-            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
             if collection != GenericAllocationCollection::Mini {
                 if let Some(task) = self.engine_less_collection_prefix_failure() {
                     return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
@@ -3250,10 +3250,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             // getter, and this engine still matches the captured source.
             match unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) } {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task)),
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { .. } => None,
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => Some(MainStaticDeferredFreeAllocationPhase::Collect {
                     source: engine.deferred_free_source()?, collection, continuation,
@@ -3294,14 +3294,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
                         source: engine.deferred_free_source()?, request, continuation,
@@ -3346,7 +3346,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Validates the original empty Theap without materializing a page
     /// engine or another arena. Its actual session and selected global map
     /// remain held by this permanent owner across the returned scalar task.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn engine_less_collection_prefix_failure(&mut self)
         -> Option<crate::single_thread::PendingLivePageValidity> {
         use crate::bootstrap::TheapPageSession;
@@ -3387,7 +3387,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     fn begin_engine_less_generic_refusal(&mut self, request: usize) -> Option<MainStaticDeferredFreeAllocationPhase> {
         use crate::bootstrap::TheapPageSession;
         let session = self.engine_less_session()?;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let collection = match session.begin_generic_allocation_administration() {
             crate::bootstrap::GenericAllocationAdministrationStart::Denied => return Some(MainStaticDeferredFreeAllocationPhase::Complete(None)),
             crate::bootstrap::GenericAllocationAdministrationStart::NotDue => GenericAllocationCollection::Force,
@@ -3398,14 +3398,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 });
             }
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let collection = match session.advance_generic_allocation_administration() {
             crate::types::GenericAllocationAdministration::None => GenericAllocationCollection::Force,
             crate::types::GenericAllocationAdministration::Mini => GenericAllocationCollection::Mini,
             crate::types::GenericAllocationAdministration::Full => GenericAllocationCollection::Full,
         };
         let source = session.deferred_free_source()?;
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if collection != GenericAllocationCollection::Mini {
             if let Some(task) = self.engine_less_collection_prefix_failure() {
                 return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
@@ -3446,7 +3446,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         Some(match collection {
             GenericAllocationCollection::Force => MainStaticDeferredFreeAllocationPhase::Complete(None),
             GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
-                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                 if let Some(task) = self.engine_less_collection_prefix_failure() {
                     return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
                 }
@@ -3823,7 +3823,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// held and its local page and queue fields are exclusive through this
     /// call. Consumed discharges the client even when its result is an error;
     /// that client must never be freed again or returned as live.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn free_captured_live_allocation_with_progress_current_initial_thread_local(
         &mut self,
         allocation: crate::process_page_map::LiveAllocationPointer,
@@ -3878,7 +3878,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Returns a live-page assertion to its continuously retained initial
     /// engine. A foreign task or occupied slot returns the exact task; this
     /// does not acquire admission or release the failed page's backing.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn retain_live_page_validity_current_initial_thread_local(
         &mut self, task: crate::single_thread::PendingLivePageValidity,
     ) -> Result<(), crate::single_thread::PendingLivePageValidity> {
@@ -3892,7 +3892,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
 
     /// Transfers an observed source assertion while this permanent issuer
     /// retains its Page and backing. No projection may cross its dispatch.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn take_live_page_validity_current_initial_thread_local(
         &mut self,
     ) -> Option<crate::single_thread::PendingLivePageValidity> {
@@ -4098,7 +4098,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// The active engine's fast-path owner when the native local fast paths
     /// may use it (see `PageAllocatorEngine::local_fast_owner`); `None` in
     /// every non-active state.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
         match &self.state {
@@ -4907,7 +4907,7 @@ mod tests {
     /// OS singletons prove that the first direct free removes a non-head
     /// private-list member under Heap authority before the second head follows
     /// the PageMap -> metadata -> mapping terminal release order.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_initial_os_singletons_free_non_head_then_head() {
         thread::spawn(|| {
@@ -4975,7 +4975,7 @@ mod tests {
     /// Source Page free consumes a refused terminal unmap after unregistering
     /// the PageMap span. The range stays mapped, but no allocator owner may
     /// retry it during collection or ticket-zero teardown.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_initial_os_singleton_direct_free_consumes_failed_unmap() {
         thread::spawn(|| {
@@ -5051,7 +5051,7 @@ mod tests {
     /// Exercise its own two-live OS-list sequence so the process-backed native
     /// path removes a non-head and then the remaining head under the same
     /// locked Heap authority as an ordinary later owner.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_persistent_initial_os_singletons_free_non_head_then_head() {
         thread::spawn(|| {
@@ -5112,7 +5112,7 @@ mod tests {
         .expect("the persistent initial OS-list regression remains current-thread local");
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
     #[test]
     fn initial_live_validity_phase_retains_the_original_page_and_issuer() {
         struct Observation {
@@ -5206,7 +5206,7 @@ mod tests {
         }).join().unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn source_initial_failed_mapping_keeps_active_engine_for_checked_canonical_retry() {
         fn complete(
@@ -5298,7 +5298,7 @@ mod tests {
         }).join().unwrap();
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn surviving_initial_owner_fork_query_preserves_captured_generic_issuer_and_live_client() {
         thread::spawn(|| {
@@ -5375,7 +5375,7 @@ mod tests {
     /// same ordinary Theap option image as a selected initial native owner,
     /// so this catches a generic allocation transition that would otherwise
     /// be hidden behind the later worker's page-owner boundary.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_initial_ordinary_medium_full_page_is_unowned_unmapped() {
         thread::spawn(|| {
@@ -5453,7 +5453,7 @@ mod tests {
     /// before `mi_abandoned_page_unown` releases its owner bit. C leaves that
     /// already-selected page unmapped even though unown's collection lowers
     /// `used`; it does not reinterpret it as a mapped partial page.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_initial_full_unown_late_remote_stays_unmapped() {
         thread::spawn(|| {
@@ -5526,7 +5526,7 @@ mod tests {
     /// deferred block and a nonfull `used` count. Pinned `arena.c` therefore
     /// publishes the static-main abandoned bitmap instead of retaining a full
     /// page or selecting the non-abandoning queue.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_initial_selected_small_full_scan_maps_partial_page() {
         thread::spawn(|| {
@@ -5616,7 +5616,7 @@ mod tests {
     /// detaches that page. Remote collection with `force == false` leaves
     /// every returned block deferred locally, so `used == 0` is the source
     /// decision rather than an immediate-list shortcut.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_initial_selected_small_full_scan_releases_all_free_page() {
         thread::spawn(|| {

@@ -44,7 +44,7 @@ use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_init::{ProcessMainBackingBinding, ProcessMainInitializationStorage};
 use crate::runtime_lifecycle::{native_allocate_aligned, native_free, NativePageAllocationResult, NativePageFreeResult};
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 use crate::runtime_lifecycle::NativeGuardedCanonicalAllocationProgress;
 use crate::subproc::MainSubprocess;
 use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSlotIndex, TLS_INDEX_BITS, TLS_INDEX_MASK};
@@ -55,7 +55,7 @@ use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, T
 /// These are initialized fields, carried by whole-image moves; neither
 /// allocator padding after the requested extent nor uninitialized Rust
 /// padding is used as storage.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct MainHeapTheapLifecycle {
@@ -63,7 +63,7 @@ pub(crate) struct MainHeapTheapLifecycle {
     pub(crate) metadata: MainHeapTheapMetadataOwnership,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl MainHeapTheapLifecycle {
     pub(crate) const fn empty() -> Self {
         Self { engine: MainHeapTheapEngineState::Active, metadata: MainHeapTheapMetadataOwnership::Unowned }
@@ -73,7 +73,7 @@ impl MainHeapTheapLifecycle {
 /// A page session owns this state while the Theap's local queues are held.
 /// Retry and failure states remain attached to the exact source image after
 /// the creating thread exits; a new caller cannot reset them to active.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum MainHeapTheapEngineState {
@@ -83,7 +83,7 @@ pub(crate) enum MainHeapTheapEngineState {
     Poisoned,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl MainHeapTheapEngineState {
     fn from_engine(state: ChildPageEngineState) -> Self {
         match state {
@@ -107,7 +107,7 @@ impl MainHeapTheapEngineState {
 /// The source reference owns a transferred metadata capability until its
 /// final decrement. Claiming release requires that exclusive last reference
 /// and detached source lists; a failed publication stays terminally owned.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum MainHeapTheapMetadataOwnership {
@@ -117,9 +117,9 @@ pub(crate) enum MainHeapTheapMetadataOwnership {
     Terminal,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const _: [(); 2] = [(); size_of::<MainHeapTheapLifecycle>()];
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const _: [(); 1] = [(); align_of::<MainHeapTheapLifecycle>()];
 
 /// A page session borrows a local engine state while its source Theap
@@ -135,9 +135,9 @@ impl MainHeapPageEngineState {
     /// The caller owns this Theap's local queues for the whole guard lifetime
     /// and holds a source reference until after the guard is dropped.
     unsafe fn new(theap: NonNull<Theap>) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let state = unsafe { (*Theap::main_heap_lifecycle_at(theap)).engine }.into_engine();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let state = unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).page_engine };
         Self { theap, state }
     }
@@ -145,11 +145,11 @@ impl MainHeapPageEngineState {
 
 impl Drop for MainHeapPageEngineState {
     fn drop(&mut self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the guard's source reference and exclusive queue operation
         // still hold; every page session borrowing state has already ended.
         unsafe { (*Theap::main_heap_lifecycle_at(self.theap)).engine = MainHeapTheapEngineState::from_engine(self.state); }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         unsafe { (*self.theap.cast::<MainHeapTheapImage>().as_ptr()).page_engine = self.state; }
     }
 }
@@ -178,14 +178,14 @@ const _: [(); 1] = [(); (size_of::<MainHeapTheapImage>() <= crate::config::ARENA
 /// Independent custody acquired while the actual issuing source owner is
 /// admitted, before any candidate. Terminal task handoff moves this genuine
 /// Theap reference and operation guard; copied addresses never replace them.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct AuxiliaryAllocationIssuer {
     heap: NonNull<Heap>,
     theap: NonNull<Theap>,
     _operation: crate::runtime_lifecycle::NativeSubprocessOperation,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl AuxiliaryAllocationIssuer {
     /// # Safety
     /// The caller's actual admitted source owner retains this Heap, Theap
@@ -197,7 +197,7 @@ impl AuxiliaryAllocationIssuer {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for AuxiliaryAllocationIssuer {
     fn drop(&mut self) {
         // This independent reference ends before its enclosing original
@@ -210,13 +210,13 @@ impl Drop for AuxiliaryAllocationIssuer {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct RetainedAuxiliaryFreshInitialization {
     issuer: AuxiliaryAllocationIssuer,
     task: crate::single_thread::PendingFreshOsPageInitialization,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct RetainedAuxiliaryLiveValidity {
     issuer: AuxiliaryAllocationIssuer,
     _task: crate::single_thread::PendingLivePageValidity,
@@ -225,7 +225,7 @@ struct RetainedAuxiliaryLiveValidity {
 /// # Safety
 /// The original allocation issuer remains admitted through this handoff;
 /// every engine and metadata projection ended before the task was delivered.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn retain_auxiliary_live_validity(mut task: crate::single_thread::PendingLivePageValidity, issuer: AuxiliaryAllocationIssuer) {
     let marked = unsafe { task.ensure_retirement_refusal(issuer.theap, issuer.heap) }.is_ok()
         || task.has_retirement_refusal_marker();
@@ -237,16 +237,16 @@ unsafe fn retain_auxiliary_live_validity(mut task: crate::single_thread::Pending
 }
 
 fn has_retained_auxiliary_fresh_initialization() -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     { let state = unsafe { thread_heaps() }; state.pending_fresh_initialization.is_some() || state.pending_live_page_validity.is_some() }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     { false }
 }
 
 /// # Safety
 /// This is the actual issuer captured before this task's candidate. The
 /// enclosing original owner remains admitted throughout the terminal handoff.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn retain_auxiliary_fresh_initialization(
     mut task: crate::single_thread::PendingFreshOsPageInitialization,
     issuer: AuxiliaryAllocationIssuer,
@@ -290,9 +290,9 @@ struct ThreadHeaps {
     pending_os_release: Option<(Option<NonNull<Theap>>, OsAlignedPageOwner)>,
     /// The actual original issuer stays pinned with the terminal unpublished
     /// claim. Its Heap marker and these live source roots forbid teardown.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pending_fresh_initialization: Option<RetainedAuxiliaryFreshInitialization>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pending_live_page_validity: Option<RetainedAuxiliaryLiveValidity>,
 }
 
@@ -303,15 +303,15 @@ static THREAD_HEAPS: UnsafeCell<ThreadHeaps> =
         backing: None,
         cached: core::ptr::null_mut(),
         pending_os_release: None,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         pending_fresh_initialization: None,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         pending_live_page_validity: None,
     });
 
 /// Preserve the live main-subprocess Heap slots until the pthread's source
 /// attachment finishes, including across timer callback TLS reset.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn native_timer_tls_span() -> crate::runtime_lifecycle::NativeAllocatorTlsSpan {
     crate::runtime_lifecycle::NativeAllocatorTlsSpan::of(core::ptr::addr_of!(THREAD_HEAPS))
 }
@@ -328,14 +328,14 @@ unsafe fn thread_heaps() -> &'static mut ThreadHeaps {
 /// Actual source TLS addresses published while the originating worker runs.
 /// The lifecycle registry pins these exact mappings across a prepared fork;
 /// the child never reconstructs TLS offsets or borrows the survivor's roots.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct CopiedThreadHeapTls {
     state: NonNull<ThreadHeaps>,
     roots: [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 5],
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn current_thread_heap_tls() -> CopiedThreadHeapTls {
     CopiedThreadHeapTls {
         // SAFETY: the current compiler-TLS image is non-null and remains at
@@ -345,7 +345,7 @@ pub(crate) fn current_thread_heap_tls() -> CopiedThreadHeapTls {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl CopiedThreadHeapTls {
     /// Source regular-backing release precedes the thread statistics prefix
     /// and all Theap drains. Source fast/default/cache remain distinct roots.
@@ -480,7 +480,7 @@ fn current_main_thread() -> Option<MainThread> {
     {
         return None;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     // SAFETY: a switched default must share this thread's TLD.
     if unsafe { Theap::tld_at(default_theap()) } != tld.as_ptr() {
         return None;
@@ -560,7 +560,7 @@ fn thread_local_get(key: ThreadLocalKey) -> *mut () {
 /// This runs on the retained calling thread. Its slot owner and all published
 /// slot values remain live, and no slot mutation or thread teardown overlaps
 /// the synchronous query. No allocator callback or output occurs here.
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 pub(crate) unsafe fn source_regular_slot_peek(key: ThreadLocalKey) -> *mut () {
     thread_local_get(key)
 }
@@ -672,7 +672,7 @@ fn cached_set(theap: NonNull<Theap>) {
 /// No source list, root, page session, or callback can access this image;
 /// the caller has consumed its final reference and owns release exclusively.
 unsafe fn take_main_heap_theap_allocation(theap: NonNull<Theap>) -> Option<MainHeapTheapAllocation> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if unsafe { Theap::memory_id_at(theap) }.kind() == crate::types::MemoryKind::Malloc {
         // SAFETY: the prior source transfer and exclusive final decrement
         // prove this separate inverse's obligations. It validates the exact
@@ -694,14 +694,14 @@ unsafe fn take_main_heap_theap_allocation(theap: NonNull<Theap>) -> Option<MainH
 /// Publication failed before releasing this image; the caller holds its
 /// unique rejected capability and no source user can access it.
 unsafe fn retain_refused_main_heap_metadata(theap: NonNull<Theap>, allocation: MetaAllocation<'static>) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         unsafe { (*Theap::main_heap_lifecycle_at(theap)).metadata = MainHeapTheapMetadataOwnership::Terminal; }
         // This rejected capability is never reconstructed for a retry. Its
         // source memory ID and terminal state preserve the retained block.
         core::mem::forget(allocation);
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).allocation = Some(MainHeapTheapAllocation::Metadata(allocation)); }
 }
 
@@ -713,7 +713,7 @@ unsafe fn retain_refused_main_heap_metadata(theap: NonNull<Theap>, allocation: M
 /// `theap` is live and holds the reference being dropped; a Theap freed here
 /// is on no list and no root names it.
 unsafe fn theap_decref(theap: NonNull<Theap>) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if unsafe { thread_heaps() }.pending_fresh_initialization.as_ref()
         .is_some_and(|retained| retained.issuer.theap == theap)
         || unsafe { thread_heaps() }.pending_live_page_validity.as_ref().is_some_and(|retained| retained.issuer.theap == theap) { return; }
@@ -757,7 +757,7 @@ unsafe fn theap_decref(theap: NonNull<Theap>) {
 /// # Safety
 /// The drained image has left every source root and list, and the caller
 /// owns its sole remaining reference under exclusive lifecycle authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn release_detached_theap_reference(theap: NonNull<Theap>) -> bool {
     if !unsafe { Theap::decref_at(theap) } { return false; }
     if !unsafe { Theap::is_detached_at(theap) } {
@@ -769,7 +769,7 @@ unsafe fn release_detached_theap_reference(theap: NonNull<Theap>) -> bool {
 /// # Safety
 /// The caller has consumed the last source reference after page drain and
 /// all root/list detach. No TLS access is needed to release this capability.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_vanished_theap_metadata(theap: NonNull<Theap>) -> bool {
     let image = theap.cast::<MainHeapTheapImage>().as_ptr();
     // SAFETY: the final source reference was consumed above; all roots and
@@ -876,7 +876,7 @@ pub(crate) fn native_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
 }
 
 /// `_mi_theap_create(heap, tld)` with the source-sized metadata image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     // SAFETY: the live Heap retains its selected arena for this operation.
     if !unsafe { heap.as_ref() }.exclusive_arena_id()?.as_ptr().is_null() {
@@ -897,7 +897,7 @@ fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap
     Some(theap)
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     create_theap_image(thread, heap)
 }
@@ -906,7 +906,7 @@ fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap
 /// transferred metadata reference or retained arena reservation owns this
 /// incoming image; the existing fixed owner retains process/output admission
 /// across ordinary and guarded option getters before Heap publication.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn initialize_source_owned_theap(
     thread: MainThread, heap: NonNull<Heap>, theap: NonNull<Theap>,
 ) -> Option<()> {
@@ -986,9 +986,9 @@ fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull
         } else {
             theap.set_requested_arena_metadata_memid(memory)
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { provenance }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             provenance && theap.initialize_dynamic_metadata_on_tld(
                 &mut *heap.as_ptr(), &mut *thread.tld.as_ptr(),
@@ -997,9 +997,9 @@ fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull
         }
     };
     if !initialized { return None; }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     initialize_source_owned_theap(thread, heap, block.cast())?;
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     MainSubprocess::global().identity().record_statistics_theap_linked();
     Some(block.cast())
 }
@@ -1024,7 +1024,7 @@ fn allocate_main_heap_image(thread: MainThread, size: usize, alignment: usize) -
 /// # Safety
 /// The sole-child continuation pins this vanished thread's complete source
 /// graph, excludes all observations and callbacks, and retains failed owners.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn drain_vanished_auxiliary_theap(
     thread: MainThread, theap: NonNull<Theap>,
     main_heap: crate::main_theap::MainStaticHeapLease<'static>,
@@ -1086,16 +1086,16 @@ fn with_theap_engine<R>(
     // SAFETY: the live Heap's selected parent remains published during this
     // page operation and is fixed for the Heap lifetime.
     let requested_arena = unsafe { heap.as_ref() }.exclusive_arena_id()?;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let issuer = unsafe { AuxiliaryAllocationIssuer::capture(heap, theap) }?;
     // SAFETY: this operation holds the owner's local queue authority and a
     // live source reference until after the page session is finished.
     let mut engine_state = unsafe { MainHeapPageEngineState::new(theap) };
     let page_engine = &mut engine_state.state;
     let mut pending_os_release = None;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let mut pending_fresh_initialization = None;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let mut pending_live_page_validity = None;
     let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
     // SAFETY: this engine registers and unregisters only its own pages.
@@ -1112,7 +1112,7 @@ fn with_theap_engine<R>(
             &mut pending_os_release, &mut *page_engine, &mut allocate_arena_pages,
         )
     }?;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let session = unsafe { session.with_fresh_initialization_slot(&mut pending_fresh_initialization)
         .and_then(|session| session.with_live_page_validity_slot(&mut pending_live_page_validity)) }?;
     // SAFETY: the process registry backing and its PageMap are held for the
@@ -1124,7 +1124,7 @@ fn with_theap_engine<R>(
     };
     let value = operation(&mut engine);
     let finished = engine.finish_owned_session().map_err(drop).is_ok();
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(task) = pending_fresh_initialization.take() {
         // Session projections ended; move the exact before-candidate custody
         // with this task, preserving any completed marker stage.
@@ -1193,7 +1193,7 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
     let thread = current_main_thread()?;
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let block = {
         // Source Heap birth is ordinary zalloc, not aligned over-allocation.
         // The selected class naturally aligns the entire private image.
@@ -1222,7 +1222,7 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
         }
         block
     };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let block = allocate_main_heap_image(thread, size_of::<NonMainHeapImage>(), align_of::<NonMainHeapImage>())?;
     let keys = HeapKeySource::global();
     let slot = match keys.registry.claim_for_main_subprocess(config, keys.subprocess, keys.metadata) {
@@ -1311,7 +1311,7 @@ pub(crate) unsafe fn native_theap_allocate_variant(
 /// `theap` and its Heap remain live and linked to the calling thread's TLD.
 /// The caller excludes concurrent Heap destruction and thread exit, and
 /// retains the exact selected owner across any synchronous user callback.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn native_theap_allocate_guarded_canonical(
     theap: NonNull<Theap>,
     source_size: usize,
@@ -1331,7 +1331,7 @@ pub(crate) unsafe fn native_theap_allocate_guarded_canonical(
 /// The exact selected Theap, Heap, TLD and native admission remain retained
 /// before allocation through every getter, callback and continuation. The
 /// caller excludes retirement, thread exit and concurrent local fields.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn native_theap_allocate_guarded_canonical_progress(
     theap: NonNull<Theap>, source_size: usize,
 ) -> NativeGuardedCanonicalAllocationProgress {
@@ -1375,7 +1375,7 @@ unsafe fn allocate_on_theap(
     aligned: Option<(usize, usize)>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // SAFETY: this actual selected owner remains live throughout the
         // callback, and admission precedes every candidate or source getter.
@@ -1393,7 +1393,7 @@ unsafe fn allocate_on_theap(
     unsafe { finish_allocation_on_theap(thread, theap, phase, &owner, &mut issuer) }
         }) }.ok().flatten()
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
     // `_mi_malloc_generic`'s collections run `_mi_deferred_free` first; the
     // engine returns each selected collection so that the callback runs with
@@ -1415,35 +1415,35 @@ unsafe fn finish_allocation_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
     mut phase: crate::single_thread::DeferredFreeAllocationPhase,
-    #[cfg(target_arch = "x86_64")] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
-    #[cfg(target_arch = "x86_64")] issuer: &mut Option<AuxiliaryAllocationIssuer>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] issuer: &mut Option<AuxiliaryAllocationIssuer>,
 ) -> Option<NonNull<u8>> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     loop {
         match phase {
             DeferredFreeAllocationPhase::LiveValidity(mut task) => {
-                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                 { task = match unsafe { task.dispatch(owner) } { Ok(never) => match never {}, Err(task) => task }; }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 {
                     let Some(original) = issuer.take() else {
                         core::hint::black_box(&task); crabc_core::process::exit_immediately(134);
                     };
                     unsafe { retain_auxiliary_live_validity(task, original); }
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 { core::hint::black_box(&task); crabc_core::process::exit_immediately(134); }
                 return None;
             }
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 unsafe { finish_auxiliary_fresh_initialization(thread, theap, task, owner, issuer) };
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 { core::hint::black_box(&task); crabc_core::process::exit_immediately(134); }
                 return None;
             }
             DeferredFreeAllocationPhase::Complete(block) => return block,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // The actual process binding and selected owner outlive this
                 // operation; no engine or TLS projection crosses the getter.
@@ -1475,7 +1475,7 @@ unsafe fn finish_allocation_on_theap(
 /// # Safety
 /// The caller retains the phase's original Theap, Heap, TLD and admission
 /// through every synchronous getter, callback and continuation.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 unsafe fn finish_guarded_canonical_allocation_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
@@ -1487,16 +1487,16 @@ unsafe fn finish_guarded_canonical_allocation_on_theap(
     loop {
         match phase {
             DeferredFreeAllocationPhase::LiveValidity(mut task) => {
-                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                 { task = match unsafe { task.dispatch(owner) } { Ok(never) => match never {}, Err(task) => task }; }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 {
                     let Some(original) = issuer.take() else {
                         core::hint::black_box(&task); crabc_core::process::exit_immediately(134);
                     };
                     unsafe { retain_auxiliary_live_validity(task, original); }
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 { core::hint::black_box(&task); crabc_core::process::exit_immediately(134); }
                 return Err(());
             }
@@ -1505,7 +1505,7 @@ unsafe fn finish_guarded_canonical_allocation_on_theap(
                 return Err(());
             }
             DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // The actual process binding and selected owner outlive this
                 // operation; no engine or TLS projection crosses the getter.
@@ -1537,7 +1537,7 @@ unsafe fn finish_guarded_canonical_allocation_on_theap(
 /// `owner` and `issuer` are the actual original admissions retained from
 /// before this candidate. No engine, metadata or owner projection survives
 /// dispatch. Cleanup may run only before persistent terminal marking.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn finish_auxiliary_fresh_initialization(
     thread: MainThread, theap: NonNull<Theap>,
     task: crate::single_thread::PendingFreshOsPageInitialization,
@@ -1598,7 +1598,7 @@ pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>)
 /// `block` is live on a page `theap` owns, and freed once.
 pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>) -> NativePageFreeResult {
     let Some(thread) = current_main_thread() else { return NativePageFreeResult::Retained };
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // SAFETY: the exact live local client and this thread's source roots
         // retain the actual issuer before any consuming Page transition.
@@ -1620,7 +1620,7 @@ pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>
                 else { NativePageFreeResult::Retained })
         }) }.ok().flatten().unwrap_or(NativePageFreeResult::Retained);
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     match with_theap_engine(thread, theap, |engine| unsafe { engine.free(block) }) {
         Some(Ok(())) => NativePageFreeResult::Freed,
         _ => NativePageFreeResult::Retained,
@@ -1639,7 +1639,7 @@ pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>
 /// excludes retirement, thread exit, another free and concurrent page/queue
 /// access. Consumed discharges the client even after a later failure, so it
 /// must never be retried or returned as a live allocation.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn native_theap_free_guarded_canonical_progress(
     theap: NonNull<Theap>,
     allocation: crate::process_page_map::LiveAllocationPointer,
@@ -1725,7 +1725,7 @@ fn reclaim_on_free(
     if unsafe { Theap::heap_at(theap) } != heap.as_ptr() {
         return Declined;
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // SAFETY: the actual current-thread Heap slot retains this issuer
         // before source reassociation and every queued-page observation.
@@ -1744,7 +1744,7 @@ fn reclaim_on_free(
             Some(result)
         }) }.ok().flatten().unwrap_or(Declined);
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     with_theap_engine(thread, theap, |engine| engine.reclaim_abandoned_page_on_free(candidate)).unwrap_or(Declined)
 }
 
@@ -1804,7 +1804,7 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // `mi_heap_free`: page records, then statistics, counts, list, key, and
     // image, each record and the image back through the native free.
     // SAFETY: the live Heap; each record is a live main-Heap block.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let freed = unsafe { Heap::take_non_main_arena_pages_at(heap, |record| {
         // SAFETY: the exact live record block, freed once.
         unsafe { free_subproc_safe_with_progress(&_operation, record) }.unwrap_or_else(|_| {
@@ -1815,7 +1815,7 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
             )
         })
     }) };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     // SAFETY: preserve this target's terminal legacy metadata-free contract.
     let freed = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|record| {
         unsafe { free_subproc_safe(record) }
@@ -1826,9 +1826,9 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // SAFETY: forwarded; the Heap has no Theap or page left.
     let image = unsafe { crate::types::heap_registry::lifecycle::unlink_non_main_heap(heap, main_heap, main_subprocess.identity()) }?;
     // SAFETY: the exact live image block; nothing names it any longer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let image_freed = unsafe { free_subproc_safe(&_operation, image.cast()) };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let image_freed = unsafe { free_subproc_safe(image.cast()) };
     if image_freed {
         Ok(HeapReleaseOutcome::Released)
@@ -1901,11 +1901,11 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
         }
         // `mi_heap_free`: the records stay live main-Heap blocks.
         // SAFETY: the live Heap; its records are dropped, not freed.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let records_transferred = unsafe { heap.as_ref().take_non_main_arena_pages(|_| {
             crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
         }) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         // SAFETY: terminal parent teardown retains all record backing.
         let records_transferred = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|_| true) };
         if !records_transferred {
@@ -1968,7 +1968,7 @@ pub(crate) fn native_thread_done() -> bool {
         }
     }
     crate::compiler_tls::set_fast_slot(None);
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     let drained = {
         // SAFETY: this fixed owner remains attached throughout auxiliary page
         // traversal. Its process READY/output admission precedes every Page
@@ -2026,7 +2026,7 @@ pub(crate) fn native_thread_done() -> bool {
             result == Ok(true)
         }) }.unwrap_or(false)
     };
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     // SAFETY: this finishing thread retains its TLD and fixed owner. The
     // source list lock pins each auxiliary image and Heap throughout its
     // owner-side collection; callbacks neither detach lists nor reenter TLS.
@@ -2053,9 +2053,9 @@ pub(crate) fn native_thread_done() -> bool {
             true
         },
     ) };
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     if !drained { return false; }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     if drained != Ok(true) { return false; }
     // SAFETY: the immutable source empty Theap is process-static.
     let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
@@ -2097,7 +2097,7 @@ pub(crate) fn native_thread_done() -> bool {
 /// No owner or whole Heap projection spans preparation callbacks. A full
 /// Heap release is terminal on any error; preparation can destroy payload
 /// validity without consuming the allocation, and cannot be repeated.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_subproc_safe_with_progress(
     operation: &crate::runtime_lifecycle::NativeSubprocessOperation,
     block: NonNull<u8>,
@@ -2116,7 +2116,7 @@ unsafe fn free_subproc_safe_with_progress(
 /// client, its PageMap and issuing backing. Preparation is performed once;
 /// a refused prepared client has release authority but no image access. No
 /// conflicting local engine projection spans this operation.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn free_prepared_subproc_safe_with_progress(block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
     use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
     let Some(binding) = binding() else { return Progress::RefusedBeforeConsumption(FreeError::Lifecycle) };
@@ -2126,7 +2126,7 @@ pub(crate) unsafe fn free_prepared_subproc_safe_with_progress(block: NonNull<u8>
     };
     let local = crate::compiler_tls::current_thread_identity().is_some_and(|thread| allocation.is_associated_with(thread));
     if local {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this exact current allocation retains its immutable
             // issuer and the caller retains that issuer's parent Heap lifetime.
@@ -2172,7 +2172,7 @@ pub(crate) unsafe fn free_prepared_subproc_safe_with_progress(block: NonNull<u8>
 /// # Safety
 /// `block` is an exact live process-main administration allocation. A false
 /// result may follow consumption and is terminal for full Heap release.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_subproc_safe(operation: &crate::runtime_lifecycle::NativeSubprocessOperation, block: NonNull<u8>) -> bool {
     matches!(unsafe { free_subproc_safe_with_progress(operation, block) },
         Ok(crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))))
@@ -2183,7 +2183,7 @@ unsafe fn free_subproc_safe(operation: &crate::runtime_lifecycle::NativeSubproce
 /// # Safety
 /// `block` is an exact live block, freed once. On failure the caller retains
 /// the complete backing and cannot repeat the full Heap release.
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 unsafe fn free_subproc_safe(block: NonNull<u8>) -> bool {
     let Some(binding) = binding() else { return false };
     // SAFETY: forwarded live-block contract.
@@ -2267,7 +2267,7 @@ pub(crate) unsafe fn native_theap_collect(theap: NonNull<Theap>, force: bool) {
 }
 
 fn collect_on_theap(thread: MainThread, theap: NonNull<Theap>, force: bool) {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // SAFETY: the current-thread source roots retain the selected issuer
         // before collection or its deferred callback can observe a Page.
@@ -2278,15 +2278,15 @@ fn collect_on_theap(thread: MainThread, theap: NonNull<Theap>, force: bool) {
             Some(())
         }) };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     collect_on_theap_in_owner(thread, theap, force);
 }
 
 fn collect_on_theap_in_owner(thread: MainThread, theap: NonNull<Theap>, force: bool,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] issuer: &mut Option<AuxiliaryAllocationIssuer>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] issuer: &mut Option<AuxiliaryAllocationIssuer>,
 ) {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         let phase = with_theap_allocation_phase(thread, theap, |engine| Ok(engine.begin_deferred_free_collection(force)))
             .and_then(Result::ok);
@@ -2313,7 +2313,7 @@ fn collect_on_theap_in_owner(thread: MainThread, theap: NonNull<Theap>, force: b
     } else {
         crate::single_thread::GenericAllocationCollection::Full
     };
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         let phase = with_theap_allocation_phase(thread, theap, |engine| Ok(
             engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
@@ -2324,7 +2324,7 @@ fn collect_on_theap_in_owner(thread: MainThread, theap: NonNull<Theap>, force: b
             let _ = unsafe { finish_allocation_on_theap(thread, theap, phase, owner, issuer) };
         }
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     let _ = with_theap_engine(thread, theap, |engine| {
         engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
     });
@@ -2396,7 +2396,7 @@ pub(crate) fn native_reserve_os_memory(
 pub(crate) mod tests {
     use super::*;
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
     #[test]
     fn auxiliary_fresh_os_assertion_preserves_original_issuer_during_output_reentry() {
         const CHILD: &str = "CRABC_AUXILIARY_FRESH_OS_ASSERTION";
@@ -2480,7 +2480,7 @@ pub(crate) mod tests {
     }
 
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
     #[test]
     fn auxiliary_unpublished_fresh_task_retains_issuer_before_foreign_heap_destroy() {
         crate::test_process::run_in_fresh_process(
@@ -2602,7 +2602,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     fn child_initial_sampler_tail_protection(entropy_refusal: bool) -> ([[bool; 3]; 2], usize) {
         use crate::runtime_lifecycle::{finish_current_thread_native_after_user_destructors,
             prepare_native_later_thread_arena, ThreadFinishResult};
@@ -2677,7 +2677,7 @@ pub(crate) mod tests {
         observations
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn child_initial_theaps_inherit_live_process_guarded_sample_rate() {
         crate::test_process::run_in_fresh_process(
@@ -2695,7 +2695,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn child_initial_sampler_reads_live_rate_and_bounds_after_entropy_warning() {
         crate::test_process::run_in_fresh_process(
@@ -2733,7 +2733,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn auxiliary_theap_initialization_reads_actual_guarded_options_before_publication() {
         crate::test_process::run_in_fresh_process(
@@ -2767,7 +2767,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn guarded_canonical_auxiliary_main_theap_preserves_source_block_geometry_and_owner() {
         crate::test_process::run_in_fresh_process(
@@ -2867,7 +2867,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn guarded_canonical_auxiliary_main_theap_retries_after_real_mapping_failure() {
         crate::test_process::run_in_fresh_process(
@@ -2906,7 +2906,7 @@ pub(crate) mod tests {
 
     /// A joined remote free can remain queued on the creating thread's
     /// arena page until Heap deletion collects it during target abandonment.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn heap_delete_retires_page_emptied_by_joined_remote_free() {
         crate::test_process::run_in_fresh_process(
@@ -2944,7 +2944,7 @@ pub(crate) mod tests {
 
     /// Membership follows the registered page through an ordinary Heap
     /// delete, which moves live pages to the subprocess main Heap.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn heap_membership_tracks_interior_and_moved_page() {
         crate::test_process::run_in_fresh_process(
@@ -2980,7 +2980,7 @@ pub(crate) mod tests {
     /// Child subprocess destruction releases the destroying thread's regular
     /// TLS slot table even when that table belongs to an unrelated live Heap
     /// of the process main subprocess. The Heap and its Theap remain live.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_destroy_releases_destroying_threads_regular_slots() {
         crate::test_process::run_in_fresh_process(
@@ -3168,7 +3168,7 @@ pub(crate) mod tests {
 
     /// A copied fixed cache owns a distinct reference until the vanished
     /// worker's page drain completes; child list detach then frees its metadata.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn cached_main_theap_reference_retires_vanished_fork_owner_after_page_drain() {
         crate::test_process::run_in_fresh_process(
@@ -3286,7 +3286,7 @@ pub(crate) mod tests {
 
     /// A vanished worker retains both its fixed runtime owner and a fresh
     /// main sibling with live regular and OS pages until child repair drains them.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn fresh_main_theap_siblings_retire_vanished_fork_owner_after_page_drain() {
         crate::test_process::run_in_fresh_process(
@@ -3560,7 +3560,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn delete_abandoned_os_page_retires_final_free_published_during_move() {
         crate::test_process::run_in_fresh_process(
@@ -3595,7 +3595,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn delete_attached_worker_full_os_page_collects_remote_free_and_moves_survivors() {
         crate::test_process::run_in_fresh_process(
@@ -3664,7 +3664,7 @@ pub(crate) mod tests {
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn live_page_heap_identity_allows_stats_callback_and_excludes_deleted_heap() {
         crate::test_process::run_in_fresh_process(
@@ -3731,7 +3731,7 @@ pub(crate) mod tests {
     /// Pinned-C/Rust differential for Heaps of the process main subprocess on
     /// the main thread (`compat/allocator/heap_lifecycle.c` with `main`):
     /// test-api.c's heap-os1, heap-os2, and heap-many shapes.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn source_ordered_main_subprocess_heap_trace() {
         crate::test_process::run_in_fresh_process(
@@ -3860,7 +3860,7 @@ pub(crate) mod tests {
     /// another thread created (an arena block and an OS-backed one), creates
     /// and deletes its own Heap, and finishes: its Theap's pages pass to the
     /// Heap, and the creating thread frees one block and destroys the Heap.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn later_thread_finishes_with_live_blocks_on_a_shared_heap() {
         use crate::runtime_lifecycle::{
@@ -3915,7 +3915,7 @@ pub(crate) mod tests {
     /// Destroy a shared Heap after its worker stops allocating but before the
     /// worker exits. Its cached Theap reference must remain valid through the
     /// worker's thread teardown even though the Heap list no longer owns it.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn destroy_shared_heap_while_worker_theap_is_cached() {
         use crate::runtime_lifecycle::{
@@ -3959,7 +3959,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn destroy_shared_heap_reuse_address_rejects_cached_theap() {
         shared_heap_reuse_rejects_stale_cached_theap(
@@ -3968,7 +3968,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn delete_shared_heap_reuse_address_rejects_cached_theap() {
         shared_heap_reuse_rejects_stale_cached_theap(
@@ -3977,7 +3977,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn shared_heap_reuse_rejects_stale_cached_theap(destroy: bool, test_name: &'static str) {
         use crate::runtime_lifecycle::{
             attach_current_thread, finish_current_thread_native_after_user_destructors,
@@ -4035,7 +4035,7 @@ pub(crate) mod tests {
     /// `_mi_heap_theap_set` can fail while growing regular thread-local
     /// storage. The source still returns and caches the new Theap, allowing
     /// this allocation to proceed; a later call may create another Theap.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn heap_theap_survives_first_regular_slot_allocation_failure() {
         crate::test_process::run_in_fresh_process(
@@ -4065,7 +4065,7 @@ pub(crate) mod tests {
     /// Theap: its Heap is not the default Theap's, so a fitting block is not
     /// reused; a main-Heap replacement takes its contents and the block is
     /// freed.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn default_realloc_of_a_heap_block_replaces_it_from_the_main_heap() {
         crate::test_process::run_in_fresh_process(
@@ -4103,7 +4103,7 @@ pub(crate) mod tests {
     /// TLD-list head on the regular thread-local slot as the cached Theap, a
     /// second Heap moves the cached root and back without a new Theap, and
     /// thread done releases the Theap while the Heap lives on.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn source_ordered_main_subprocess_later_thread_heap_trace() {
         crate::test_process::run_in_fresh_process(

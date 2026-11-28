@@ -67,7 +67,7 @@ impl NativeAllocatorThreadDescriptor {
 #[thread_local]
 static DESCRIPTOR: NativeAllocatorThreadDescriptor = NativeAllocatorThreadDescriptor::new();
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) fn native_timer_descriptor_tls_span() -> super::NativeAllocatorTlsSpan {
     super::NativeAllocatorTlsSpan::of(core::ptr::addr_of!(DESCRIPTOR))
 }
@@ -130,7 +130,7 @@ static ASYMMETRIC_ENTRY_FENCE: AtomicBool = AtomicBool::new(false);
 /// until an application explicitly registers it; symmetric entry publication
 /// supplies the StoreLoad ordering needed by the closing writer.
 fn select_asymmetric_entry_fence() {
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         if crabc_core::thread::membarrier(crabc_core::thread::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED).is_ok() {
             ASYMMETRIC_ENTRY_FENCE.store(true, Ordering::Release);
@@ -295,7 +295,7 @@ impl NativeAllocatorOperationGuard {
                 FORK_CLOSED => { core::hint::spin_loop(); continue; },
                 _ => {},
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 // The closing writer's SeqCst epoch store and entered scan
                 // pair with this SeqCst publication and the following epoch
@@ -303,7 +303,7 @@ impl NativeAllocatorOperationGuard {
                 // value is unused, and the full StoreLoad ordering is retained.
                 let _ = record.entered.fetch_or(true, Ordering::SeqCst);
             }
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 if ASYMMETRIC_ENTRY_FENCE.load(Ordering::Relaxed) {
                     // Every closing writer issues `asymmetric_writer_fence`
@@ -1447,10 +1447,10 @@ mod tests {
         // entry and one terminal writer together, the store-buffering race
         // that a missing barrier loses.
         select_asymmetric_entry_fence();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         assert!(!ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
             "native x86 leaves private expedited membarrier unregistered");
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         assert!(ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
             "the native test image permits private expedited membarrier");
         const ROUNDS: usize = 20_000;

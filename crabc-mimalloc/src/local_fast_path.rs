@@ -68,7 +68,7 @@ static mut PUBLISHED_PAGE_MAP: *const crate::page_map::PageMap = core::ptr::null
 
 /// The validated owner-local fast publication belongs to the pthread, not
 /// to one timer callback's application TLS lifetime.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn native_timer_tls_spans() -> [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 2] {
     use crate::runtime_lifecycle::NativeAllocatorTlsSpan as Span;
     [

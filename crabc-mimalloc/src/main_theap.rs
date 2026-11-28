@@ -56,7 +56,7 @@ use crate::subproc::{
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MemoryConfig, VmProcess};
 use crate::os_page::OsAlignedPageOwner;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::ProcessPageArenaLease;
 use crate::single_thread::{
     StaticMainMappedRegularClaimSelector, StaticMainMappedRegularClaimSource,
@@ -77,7 +77,7 @@ use crate::types::StaticFirstTldCreateTrace;
 #[cfg(test)]
 use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner};
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 #[derive(Clone, Copy)]
 struct StaticTheapPublicationTestObserver {
     observe: unsafe fn(NonNull<Theap>, NonNull<Heap>, NonNull<ThreadLocalData>,
@@ -85,7 +85,7 @@ struct StaticTheapPublicationTestObserver {
     argument: *mut core::ffi::c_void,
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 std::thread_local! {
     static STATIC_THEAP_PUBLICATION_TEST_OBSERVER:
         core::cell::Cell<Option<StaticTheapPublicationTestObserver>> = const { core::cell::Cell::new(None) };
@@ -101,7 +101,7 @@ std::thread_local! {
 /// and subprocess after list/random/guarded setup and statistics accounting.
 /// It must not allocate, emit output, reenter, mutate images or lists, or let
 /// references escape. The operation cannot transfer the observer to a thread.
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub(crate) unsafe fn with_static_theap_publication_observer_for_test<R>(
     observe: unsafe fn(NonNull<Theap>, NonNull<Heap>, NonNull<ThreadLocalData>,
         &MainSubprocess, *mut core::ffi::c_void),
@@ -584,7 +584,7 @@ impl MainStaticMetadataHeapLease {
     /// all temporary Heap references and projection guards have ended.
     /// Every later field or list operation requires its own source authority;
     /// this pointer grants neither a whole-Heap borrow nor release authority.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn source_initialization_heap_pointer(
         self,
     ) -> Result<NonNull<Heap>, MainStaticHeapLeaseError> {
@@ -857,7 +857,7 @@ pub(crate) enum MainStaticTheapError {
     NotFirstTicket,
     MainStaticTld(MainStaticTldError),
     TheapInit(TheapMainStaticInitError),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError),
     /// A later-thread source Theap remains linked to the process-static main
     /// Heap.  Main-image retirement would leave that live list member with a
@@ -908,7 +908,7 @@ pub(crate) struct MainStaticTheapAttachment {
 /// Original ticket-zero images selected while their attachment is owned.
 /// This binding grants no independent lifetime or allocation admission. Its
 /// consumer must retain the actual published attachment through every use.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct MainStaticStartupOwnerBinding {
     storage: &'static MainStaticAttachmentStorage,
@@ -919,7 +919,7 @@ pub(crate) struct MainStaticStartupOwnerBinding {
     tld: NonNull<ThreadLocalData>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl MainStaticStartupOwnerBinding {
     /// # Safety
     /// The original attachment and its TLD keeper remain owned and cannot
@@ -944,7 +944,7 @@ impl MainStaticTheapAttachment {
     /// Captures the original initialized images before the attachment moves
     /// into its published runtime owner. Copying this binding does not keep
     /// the attachment or its TLD alive.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn startup_owner_binding(&self) -> Result<MainStaticStartupOwnerBinding, MainStaticTheapError> {
         self.ensure_current()?;
         let tld = self.tld.as_ref().ok_or(MainStaticTheapError::TldOwnership)?;
@@ -1084,7 +1084,7 @@ impl MainStaticTheapAttachment {
     /// and winning output scope through this call. No allocator or image
     /// projection overlaps a getter or warning callback. The returned owner
     /// retains the original process policy for later generic administration.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn begin_after_heap_foundation_with_bootstrap_output(
         foundation: MainStaticHeapFoundation,
         selection: MainStaticBootstrapSelection,
@@ -1123,7 +1123,7 @@ impl MainStaticTheapAttachment {
                 foundation,
                 selection,
                 numa_node_source,
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 None,
                 #[cfg(test)]
                 None,
@@ -1151,7 +1151,7 @@ impl MainStaticTheapAttachment {
                 foundation,
                 selection,
                 numa_node_source,
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 None,
                 Some(trace),
             )
@@ -1163,7 +1163,7 @@ impl MainStaticTheapAttachment {
         foundation: MainStaticHeapFoundation,
         mut selection: MainStaticBootstrapSelection,
         numa_node_source: impl FnOnce(MemoryId) -> i32,
-        #[cfg(target_arch = "x86_64")] output: Option<&crate::process_init::ScopedBootstrapOutput<'_>>,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] output: Option<&crate::process_init::ScopedBootstrapOutput<'_>>,
         #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
     ) -> Result<Self, MainStaticTheapError> {
         if !foundation.matches_selection(&selection) {
@@ -1232,11 +1232,11 @@ impl MainStaticTheapAttachment {
             tld.current_mut().test_inject_busy_theaps_lock();
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let selected = output.is_some();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let selected = false;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some(output) = output {
             let result = (|| {
                 let heap = unsafe { NonNull::new_unchecked(storage.heap.image.get()) };
@@ -3300,7 +3300,7 @@ impl MainStaticProcessPageSession {
     /// after the initial owner has formed its exact process PageMap/arena
     /// pair. A dormant reactivation may reuse only this same pair; a mismatch
     /// is terminal rather than an implicit broad arena search.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn ensure_static_main_mapped_regular_claim_selector(
         &mut self,
         pair: ProcessPageArenaLease,
@@ -3488,7 +3488,7 @@ impl MainStaticTheapPageSession for MainStaticProcessPageSession {}
 // map mutation lease supplies the separate exclusion required for PageMap
 // plain entries; this session selects only the arena's embedded main bitmap.
 unsafe impl TheapPageSession for MainStaticPageSession<'_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -3502,7 +3502,7 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
             theap, heap, owner, block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the original static owner retains the fresh Page and
         // issuer; all registration callbacks have ended before this draw.
@@ -3510,7 +3510,7 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
         unsafe { Page::initialize_fresh_page_keys_at(page, theap) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> {
         // SAFETY: the attachment's exclusive session retains this initialized
         // static image and its local-field authority without a shared retag.
@@ -3525,11 +3525,11 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
         Some(self.attachment.thread)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { true }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
         true
@@ -3699,7 +3699,7 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
 // Heap access is serialized through `shared_heap_projection_lock`, while the
 // paired process map lease remains the separate plain PageMap exclusion.
 unsafe impl TheapPageSession for MainStaticProcessPageSession {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -3714,7 +3714,7 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
             theap, heap, owner, block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         if !self.is_current() { self.latch(); return false; }
         // SAFETY: the original static owner retains the fresh Page and
@@ -3723,7 +3723,7 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
         unsafe { Page::initialize_fresh_page_keys_at(page, theap) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> {
         // SAFETY: the ticket-zero process session retains the initialized
         // static image; later owners mutate only separately locked links.
@@ -3748,7 +3748,7 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
         self.is_current().then_some(self.thread)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_generic_allocation_administration(
         &mut self,
     ) -> crate::bootstrap::GenericAllocationAdministrationStart {
@@ -3763,7 +3763,7 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_generic_allocation_administration(
         &mut self, request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
     ) -> Option<crate::types::GenericAllocationAdministration> {
@@ -3815,11 +3815,11 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
             )
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn selects_selected_main_arena_source_full_abandonment(&self) -> bool { true }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
         self.is_current()
@@ -4136,7 +4136,7 @@ mod tests {
     use std::boxed::Box;
     use std::thread;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_page_session_deferred_source_retains_heartbeat_write_authority() {
         crate::test_process::run_in_fresh_process(
@@ -4159,7 +4159,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_page_publication_preserves_published_tls_theap_capability() {
         crate::test_process::run_in_fresh_process(
@@ -4200,7 +4200,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn static_theap_statistics_merge_preserves_published_owner_capability() {
         crate::test_process::run_in_fresh_process(
@@ -4371,7 +4371,7 @@ mod tests {
         .expect("the current-thread same-TLD terminal trace completes");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn metadata_initialization_pointer_observes_real_foundation_ready_and_withdrawn_phases() {
         thread::spawn(|| {

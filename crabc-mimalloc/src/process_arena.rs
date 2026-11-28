@@ -64,7 +64,7 @@ use crate::subproc::MainSubprocess;
 
 // The historical one-arena sidecar and legacy pair below are compiled only
 // for the AArch64 target and test-only builds.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use {
     core::cell::UnsafeCell,
     core::mem::MaybeUninit,
@@ -95,18 +95,18 @@ use {
     crate::random::TheapRandomImage,
 };
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const COLD: u8 = 0;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const INITIALIZING: u8 = 1;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const READY: u8 = 2;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const RETAINED: u8 = 3;
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const PAIR_UNSET: u8 = 0;
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const PAIR_SET: u8 = 1;
 
 // `src/options.c:46-64` freezes these normal-release values for the only
@@ -114,7 +114,7 @@ const PAIR_SET: u8 = 1;
 // in KiB; retain bytes here because every surrounding map/arena boundary is
 // byte-based. This is not an options implementation or a mutable substitute
 // for one.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 const DEFAULT_ARENA_RESERVE: usize = GIB;
 
 // Pinned `src/arena.c:781-803` passes `MI_SECURE < 5` to the regular
@@ -136,23 +136,23 @@ const TICKET_ZERO_FIRST_ARENA_ALLOW_LARGE: bool = true;
 /// root identity, and registry publication are all stable until a future
 /// process-shutdown/quiescence owner exists.
 pub(crate) struct ProcessSharedArenaStorage {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     state: AtomicU8,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pair_state: AtomicU8,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     initialization_lock: PrivateLock,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     subprocess: AtomicPtr<MainSubprocess>,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     page_map_root: AtomicPtr<PageMapHeader>,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     registry: ArenaRegistry,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     mapping: UnsafeCell<MaybeUninit<Mapping>>,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     managed: UnsafeCell<MaybeUninit<ManagedExternalRegion>>,
 }
 
@@ -168,23 +168,23 @@ unsafe impl Sync for ProcessSharedArenaStorage {}
 impl ProcessSharedArenaStorage {
     const fn new() -> Self {
         Self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             state: AtomicU8::new(COLD),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             pair_state: AtomicU8::new(PAIR_UNSET),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             initialization_lock: PrivateLock::new(),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             config: UnsafeCell::new(MaybeUninit::uninit()),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             page_map_root: AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             registry: ArenaRegistry::new(core::ptr::null_mut()),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             mapping: UnsafeCell::new(MaybeUninit::uninit()),
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             managed: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
@@ -200,7 +200,7 @@ impl ProcessSharedArenaStorage {
 // The one-arena sidecar and its reservation serve only the historical
 // explicit-config route. Native x86 production reserves through the source
 // process registry and never installs or leases this sidecar.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessSharedArenaStorage {
 
     /// Returns an immutable lease for the one already-published shared arena.
@@ -1118,7 +1118,7 @@ impl ProcessSharedArenaStorage {
 /// `needs_recommit`: forward the physical outcome, including the source
 /// protection requirement that survives an advisory error. This callback
 /// cannot report decommit failure or transfer its retained mapping owner.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 unsafe extern "C" fn process_owned_mapping_commit(
     commit: bool,
     start: *mut u8,
@@ -1166,7 +1166,7 @@ unsafe extern "C" fn process_owned_mapping_commit(
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// A stable lease for the paired process map and one registered arena.
 ///
 /// It intentionally offers only immutable identity/configuration and a
@@ -1178,16 +1178,16 @@ pub(crate) struct ProcessSharedArenaLease {
     storage: &'static ProcessSharedArenaStorage,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 // SAFETY: this is a copyable pointer to process-static storage. It cannot
 // mutate its arena or page map; individual ArenaView/PageMap operations retain
 // their explicit synchronization and page-lifetime contracts.
 unsafe impl Send for ProcessSharedArenaLease {}
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 // SAFETY: see the Send justification above.
 unsafe impl Sync for ProcessSharedArenaLease {}
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessSharedArenaLease {
     /// Returns the exact Release-published page-map root paired with this
     /// arena owner.
@@ -1307,7 +1307,7 @@ impl ProcessSharedArenaLease {
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// A typed pairing of the process-global PageMap and one process-owned arena.
 ///
 /// A raw [`PageMapHeader`] cannot prove that a fresh page's map registration,
@@ -1323,7 +1323,7 @@ pub(crate) struct ProcessPageArenaLease {
     arena: ProcessSharedArenaLease,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessPageArenaLease {
     #[inline]
     pub(crate) const fn page_map_lease(self) -> ProcessPageMapRoot { self.page_map }
@@ -1585,7 +1585,7 @@ pub(crate) enum ChildProcessPageArenaLeaseError {
 }
 
 /// A pre-mutation mismatch while forming one process page/arena owner.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessPageArenaLeaseError {
     PageMap(ProcessPageMapError),
@@ -1600,20 +1600,20 @@ pub(crate) enum ProcessPageArenaLeaseError {
 /// registry and resolves each page through its actual MemoryId.
 #[derive(Clone, Copy)]
 pub(crate) enum ProcessPageBackingLease {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     LegacyPair(ProcessPageArenaLease),
     Process(crate::process_init::ProcessMainBackingBinding),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessPageBackingError {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     LegacyPair(ProcessPageArenaLeaseError),
     PageMap(ProcessPageMapError),
     NotAllocationReady,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl From<ProcessPageArenaLease> for ProcessPageBackingLease {
     fn from(pair: ProcessPageArenaLease) -> Self { Self::LegacyPair(pair) }
 }
@@ -1628,7 +1628,7 @@ impl ProcessPageBackingLease {
     {
         use crate::page_backing::RuntimeFirstRegularPageBacking;
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::LegacyPair(pair) => pair.arena()
                 .map(RuntimeFirstRegularPageBacking::selected_sidecar)
                 .map_err(ProcessPageBackingError::LegacyPair),
@@ -1641,7 +1641,7 @@ impl ProcessPageBackingLease {
 
     pub(crate) fn subprocess(self) -> Result<&'static MainSubprocess, ProcessPageBackingError> {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::LegacyPair(pair) => pair.subprocess().map_err(ProcessPageBackingError::LegacyPair),
             Self::Process(binding) => binding.page_map().subprocess().map_err(ProcessPageBackingError::PageMap),
         }
@@ -1654,7 +1654,7 @@ impl ProcessPageBackingLease {
         -> Result<&'static crate::page_map::PageMap, ProcessPageBackingError>
     {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::LegacyPair(pair) => unsafe { pair.page_map_for_owned_ranges() }
                 .map_err(ProcessPageBackingError::LegacyPair),
             Self::Process(binding) => unsafe { binding.page_map().page_map_for_owned_ranges() }
@@ -1669,7 +1669,7 @@ impl ProcessPageBackingLease {
         -> Result<ProcessPageMapMutationLease, ProcessPageBackingError>
     {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::LegacyPair(pair) => unsafe { pair.begin_blocking_exact_post_owner_exit_mutation() }
                 .map_err(ProcessPageBackingError::LegacyPair),
             Self::Process(binding) => unsafe { binding.page_map().begin_blocking_exact_post_owner_exit_mutation() }
@@ -1683,7 +1683,7 @@ impl ProcessPageBackingLease {
 /// The mapping is returned to make its release authority explicit. Callers
 /// should normally call [`Mapping::unmap`] or pass it to a higher source
 /// reserve-policy owner; dropping this failure does not implicitly unmap.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[must_use = "an arena-install failure retains or returns an explicit mapping owner"]
 pub(crate) enum ProcessSharedArenaInstallFailure {
     Returned {
@@ -1695,7 +1695,7 @@ pub(crate) enum ProcessSharedArenaInstallFailure {
     },
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessSharedArenaInstallFailure {
     #[inline]
     fn returned(error: ProcessSharedArenaError, mapping: Mapping) -> Self {
@@ -1726,7 +1726,7 @@ impl ProcessSharedArenaInstallFailure {
 }
 
 /// One concrete process-shared arena setup failure.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessSharedArenaError {
     PageMap(ProcessPageMapError),
@@ -1745,7 +1745,7 @@ pub(crate) enum ProcessSharedArenaError {
     Retained,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 enum ProcessSharedArenaInstallAttempt {
     Ready(ProcessSharedArenaLease),
     Returned {
@@ -1755,7 +1755,7 @@ enum ProcessSharedArenaInstallAttempt {
     Retained(ProcessSharedArenaError),
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// A source-shaped explicit OS-reservation failure.
 ///
 /// `Rejected` has released every unpublished mapping and leaves the selected
@@ -1772,7 +1772,7 @@ pub(crate) enum ProcessSharedArenaReserveFailure {
     },
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessSharedArenaReserveFailure {
     #[inline]
     fn rejected(error: ProcessSharedArenaReserveError) -> Self {
@@ -1786,7 +1786,7 @@ impl ProcessSharedArenaReserveFailure {
 
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// One concrete regular-OS reservation result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessSharedArenaReserveError {
@@ -1817,14 +1817,14 @@ pub(crate) enum ProcessSharedArenaReserveError {
     Retained,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 enum ProcessSharedArenaReservationAttempt {
     Ready(ProcessSharedArenaLease),
     Rejected(ProcessSharedArenaReserveError),
     Retained(ProcessSharedArenaReserveError),
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// The frozen first-arena result of `mi_arena_reserve` before a mapping exists.
 ///
 /// The v3.5.0 source uses mutable option descriptors and the number of already
@@ -1839,14 +1839,14 @@ struct DefaultOsArenaReservation {
     adjust_committed: bool,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[derive(Clone, Copy)]
 enum ManagedArenaBacking {
     External,
     RegularOs(crate::types::MemoryId),
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// Immutable process-image identity selected before mapping a new arena.
 #[derive(Clone, Copy)]
 struct ProcessArenaPair {
@@ -1855,7 +1855,7 @@ struct ProcessArenaPair {
     subprocess: &'static MainSubprocess,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// The non-forgeable process-policy counterpart to one process arena pair.
 ///
 /// It remains private to the first-arena owner so callers cannot extract a
@@ -1866,7 +1866,7 @@ struct ProcessBackedArenaPair {
     process: VmProcess<'static>,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessBackedArenaPair {
     fn from_binding(
         backing: ProcessMainBackingBinding,
@@ -1884,7 +1884,7 @@ impl ProcessBackedArenaPair {
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// Selects the stored node for the ordinary first regular arena.
 ///
 /// Pinned `src/arena.c:1735-1740` receives the regular reservation's `-1`
@@ -1903,7 +1903,7 @@ fn process_regular_arena_numa_node(process: VmProcess<'_>, requested: i32) -> i3
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessArenaPair {
     fn from_page_map(page_map: ProcessPageMapRoot) -> Result<Self, ProcessPageMapError> {
         Ok(Self {
@@ -1914,7 +1914,7 @@ impl ProcessArenaPair {
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 #[derive(Clone, Copy)]
 struct ProcessArenaCandidate {
     pair: ProcessArenaPair,
@@ -1922,7 +1922,7 @@ struct ProcessArenaCandidate {
     length: usize,
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 impl ProcessArenaCandidate {
     fn from_page_map_and_mapping(
         page_map: ProcessPageMapRoot,
@@ -1956,7 +1956,7 @@ impl ProcessArenaCandidate {
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 fn one_regular_os_arena_length(
     requested_size: usize,
 ) -> Result<usize, ProcessSharedArenaReserveError> {
@@ -1976,7 +1976,7 @@ fn one_regular_os_arena_length(
     Ok(length)
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 /// Selects the first regular source arena from `mi_arena_reserve`.
 ///
 /// `requested_size` is the current fresh page's slice-rounded size before the
@@ -2026,7 +2026,7 @@ fn default_os_arena_reservation(
 /// bounded runtime seam. The policy is nevertheless live for the source
 /// reserve/eager-commit/large-page inputs, and the regular mapping receives
 /// the fixed normal-release `MI_SECURE < 5` caller bit.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 fn process_default_os_arena_reservation(
     config: MemoryConfig,
     requested_size: usize,
@@ -2205,19 +2205,19 @@ mod tests {
     use crate::types::{MemoryId, Page};
     use crabc_core::Errno;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static REGISTERED_PAGE_MAP_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn registered_page_map_environment() -> *const *const core::ffi::c_char {
         REGISTERED_PAGE_MAP_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn registered_page_map_default_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct RegisteredPageMapWarnings {
         order: core::sync::atomic::AtomicUsize,
         count: core::sync::atomic::AtomicUsize,
@@ -2231,7 +2231,7 @@ mod tests {
         event_registry: [core::sync::atomic::AtomicUsize; 4],
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn registered_page_map_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -2274,7 +2274,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn registered_arena_page_map_fault_trace(double_fault: bool) {
         use crate::arena::ArenaView;
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -2564,13 +2564,13 @@ mod tests {
         }).join().expect("isolated first-page PageMap fault child");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_registered_arena_page_map_fault_c_rust_trace() {
         registered_arena_page_map_fault_trace(false);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_registered_arena_page_map_double_fault_c_rust_trace() {
         registered_arena_page_map_fault_trace(true);
@@ -3182,7 +3182,7 @@ mod tests {
             "the leaked candidate's reservation was still subtracted");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct PolicyTrimWarnings {
         active: core::sync::atomic::AtomicBool,
         order: core::sync::atomic::AtomicUsize,
@@ -3192,19 +3192,19 @@ mod tests {
         free_reserved: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static POLICY_TRIM_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn policy_trim_environment() -> *const *const core::ffi::c_char {
         POLICY_TRIM_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn policy_trim_default_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn policy_trim_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -3240,7 +3240,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn policy_first_trim_case(name: &str, ordinal: usize) -> bool {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         let entries = std::boxed::Box::leak(std::boxed::Box::new([
@@ -3352,23 +3352,23 @@ mod tests {
             && warning_count == 2 && stats && second
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_policy_first_arena_trim_c_rust_trace() {
         assert!(policy_first_trim_case("prefix", 2));
         assert!(policy_first_trim_case("suffix", 3));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static EXPLICIT_TRIM_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn explicit_trim_environment() -> *const *const core::ffi::c_char {
         EXPLICIT_TRIM_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ExplicitTrimWarnings {
         active: core::sync::atomic::AtomicBool,
         order: core::sync::atomic::AtomicUsize,
@@ -3380,7 +3380,7 @@ mod tests {
         free_committed: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn explicit_trim_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -3416,7 +3416,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn explicit_arena_trim_case(suffix_case: bool) {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         let entries = std::boxed::Box::leak(std::boxed::Box::new([
@@ -3600,28 +3600,28 @@ mod tests {
         assert!(geometry && memory_exact && warning_timing && terminal_exact && raw_cleanup);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_explicit_arena_prefix_trim_c_rust_trace() {
         explicit_arena_trim_case(false);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_explicit_arena_suffix_trim_c_rust_trace() {
         explicit_arena_trim_case(true);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static EXPLICIT_METADATA_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn explicit_metadata_environment() -> *const *const core::ffi::c_char {
         EXPLICIT_METADATA_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ExplicitMetadataWarnings {
         order: core::sync::atomic::AtomicUsize,
         count: core::sync::atomic::AtomicUsize,
@@ -3631,7 +3631,7 @@ mod tests {
         commit_calls: [core::sync::atomic::AtomicI64; 4],
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn explicit_metadata_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -3666,7 +3666,7 @@ mod tests {
         warnings.commit_calls[category - 1].store(snapshot.commit_calls, Ordering::Release);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_explicit_arena_metadata_fault_c_rust_trace() {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -3923,7 +3923,7 @@ mod tests {
         assert!(raw_cleanup && middle_gone);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_registered_arena_metadata_fault_c_rust_trace() {
         use crate::arena::ArenaSearch;
@@ -4167,7 +4167,7 @@ mod tests {
         assert!(terminal_exact && first_gone);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_regular_arena_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -4289,7 +4289,7 @@ mod tests {
         assert!(all_claims && distinct && owners && first_exhausted && restored && mapped_both);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_partial_purge_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -4564,19 +4564,19 @@ mod tests {
             && exclusive_reused && exclusive_sibling_preserved && exclusive_released);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SECOND_PURGE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn second_purge_environment() -> *const *const core::ffi::c_char {
         SECOND_PURGE_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_purge_default_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SecondPurgeWarnings {
         calls: core::sync::atomic::AtomicUsize,
         after_counter: core::sync::atomic::AtomicUsize,
@@ -4585,7 +4585,7 @@ mod tests {
         before_bytes: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_purge_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -4613,7 +4613,7 @@ mod tests {
         if exact { warnings.after_counter.fetch_add(1, Ordering::AcqRel); }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_purge_failure_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -4774,7 +4774,7 @@ mod tests {
             && retried_state && maps_live);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_reset_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -4892,16 +4892,16 @@ mod tests {
         assert!(setup && pending && reset_state && exact_range && maps_live);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SECOND_RESET_FAILURE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn second_reset_failure_environment() -> *const *const core::ffi::c_char {
         SECOND_RESET_FAILURE_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SecondResetFailureWarnings {
         calls: core::sync::atomic::AtomicUsize,
         after_counters: core::sync::atomic::AtomicUsize,
@@ -4912,7 +4912,7 @@ mod tests {
         before_reset_bytes: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_reset_failure_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -4943,7 +4943,7 @@ mod tests {
         if exact { warnings.after_counters.fetch_add(1, Ordering::AcqRel); }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn second_arena_reset_advice_trace(profile: usize, matrix: bool) {
         use crate::arena::{ArenaSearch, ArenaView};
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -5173,40 +5173,40 @@ mod tests {
             && retried_state && maps_live && failed_exact && retry_exact);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_reset_failure_c_rust_trace() {
         second_arena_reset_advice_trace(0, false);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_reset_advice_warning_eio_c_rust_trace() {
         second_arena_reset_advice_trace(0, true);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_reset_advice_retry_eagain_c_rust_trace() {
         second_arena_reset_advice_trace(1, true);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_reset_advice_fallback_einval_c_rust_trace() {
         second_arena_reset_advice_trace(2, true);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SECOND_COMMIT_RETRY_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn second_commit_retry_environment() -> *const *const core::ffi::c_char {
         SECOND_COMMIT_RETRY_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SecondCommitRetryWarnings {
         calls: core::sync::atomic::AtomicUsize,
         after_counter: core::sync::atomic::AtomicUsize,
@@ -5215,7 +5215,7 @@ mod tests {
         before_committed: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_commit_retry_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -5242,7 +5242,7 @@ mod tests {
         if exact { warnings.after_counter.fetch_add(1, Ordering::AcqRel); }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_commit_retry_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -5403,16 +5403,16 @@ mod tests {
             && retry_same && retry_committed && retry_dirty && retry_zero_flag && maps_live);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SECOND_RESERVE_RETRY_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn second_reserve_retry_environment() -> *const *const core::ffi::c_char {
         SECOND_RESERVE_RETRY_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SecondReserveRetryWarnings {
         active: core::sync::atomic::AtomicBool,
         subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
@@ -5423,7 +5423,7 @@ mod tests {
         counter_order: core::sync::atomic::AtomicUsize,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_reserve_retry_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -5454,7 +5454,7 @@ mod tests {
             Ordering::Release);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_reserve_retry_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -5635,22 +5635,22 @@ mod tests {
             && terminal_unmapped && terminal_registry == 0);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SECOND_CONCURRENT_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn second_concurrent_environment() -> *const *const core::ffi::c_char {
         SECOND_CONCURRENT_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SecondConcurrentWarnings {
         active: core::sync::atomic::AtomicBool,
         calls: core::sync::atomic::AtomicUsize,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_concurrent_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -5664,7 +5664,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_concurrent_reserve_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
@@ -5890,16 +5890,16 @@ mod tests {
             && terminal_registry == 0);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SECOND_DESTROY_FAILURE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn second_destroy_failure_environment() -> *const *const core::ffi::c_char {
         SECOND_DESTROY_FAILURE_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SecondDestroyFailureWarnings {
         active: core::sync::atomic::AtomicBool,
         calls: core::sync::atomic::AtomicUsize,
@@ -5909,7 +5909,7 @@ mod tests {
         committed_before: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn second_destroy_failure_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -5935,7 +5935,7 @@ mod tests {
         if exact { warnings.before_accounting.fetch_add(1, Ordering::AcqRel); }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_destroy_failure_c_rust_trace() {
         use crate::arena::ArenaSearch;
@@ -6080,16 +6080,16 @@ mod tests {
             && post_cleanup_unmapped && registry_after == 0);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static HUGE_DESTROY_FAILURE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn huge_destroy_failure_environment() -> *const *const core::ffi::c_char {
         HUGE_DESTROY_FAILURE_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct HugeDestroyFailureWarnings {
         active: core::sync::atomic::AtomicBool,
         calls: core::sync::atomic::AtomicUsize,
@@ -6099,7 +6099,7 @@ mod tests {
         committed_before: core::sync::atomic::AtomicI64,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn huge_destroy_failure_capture_warning(
         message: *const core::ffi::c_char,
         argument: *mut core::ffi::c_void,
@@ -6123,7 +6123,7 @@ mod tests {
         if exact { warnings.before_accounting.fetch_add(1, Ordering::AcqRel); }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_huge_arena_destroy_failure_c_rust_trace() {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -6586,7 +6586,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-1"))]
     #[test]
     fn process_owned_decommit_clears_commitment_before_reuse() {
         let fault = fault::install(fault::Plan::disabled());

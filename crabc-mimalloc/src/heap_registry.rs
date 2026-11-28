@@ -17,7 +17,7 @@ use crabc_core::Errno;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SourceHeapRegistryError {
     InvalidImage,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     RetainedFreshTask,
     RetainedPages,
     ListLockAcquire(Errno),
@@ -299,7 +299,7 @@ impl Heap {
         exclusive_arena: *mut super::Arena,
         memory: super::MemoryId,
     ) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let destination = core::ptr::NonNull::from(&mut *self);
             // SAFETY: this exclusive initialization ends the old cold value
@@ -309,7 +309,7 @@ impl Heap {
                 Self::write_non_main_at(destination, subprocess, theap_slot, exclusive_arena, memory);
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             *self = Heap::bootstrap_empty();
             self.theap_slot = theap_slot as usize;
@@ -332,7 +332,7 @@ impl Heap {
     /// belongs to this live subprocess and retains its original owner.
     /// `exclusive_arena` may be null; otherwise it points to a live parent arena
     /// owned by this subprocess and retained through every resulting Heap operation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn write_non_main_at(
         destination: core::ptr::NonNull<Self>,
         subprocess: &SubprocessIdentity,
@@ -695,7 +695,7 @@ impl super::ThreadLocalData {
                     }
                 }
             };
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if unsafe { (&*core::ptr::addr_of!((*current).retained_fresh_task)) }.load(Ordering::Acquire) {
                 if let Some(guard) = heap_guard {
                     guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
@@ -763,7 +763,7 @@ impl super::ThreadLocalData {
             let heap = unsafe { &*heap };
             match heap.theaps_lock.try_lock() {
                 Some(guard) => {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     if unsafe { (&*core::ptr::addr_of!((*theap).retained_fresh_task)) }
                         .load(Ordering::Acquire) {
                         guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
@@ -837,7 +837,7 @@ impl Heap {
             // Preflight the complete list before modifying any TLD link.
             // The actual issuer slot retains each marked task and its image
             // owners; this bit only rejects retirement under their list lock.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 let mut current = unsafe { self.theaps.get().read() };
                 while let Some(theap) = core::ptr::NonNull::new(current) {
@@ -1028,7 +1028,7 @@ impl Heap {
     /// consumed record. A refused record remains live through slot restoration.
     /// The callback cannot invoke mutations conflicting with this borrowed
     /// Heap; source warning callbacks use the raw field-only entry instead.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn take_non_main_arena_pages(
         &self,
         free: impl FnMut(core::ptr::NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
@@ -1047,7 +1047,7 @@ impl Heap {
     /// installed record is an exact live client; the callback reports actual
     /// consumption, never reenters this lock and never retries a consumed
     /// client. A retained prepared client may only use its prepared free route.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn take_non_main_arena_pages_at(
         heap: core::ptr::NonNull<Self>,
         mut free: impl FnMut(core::ptr::NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
@@ -1086,7 +1086,7 @@ impl Heap {
     /// # Safety
     /// Every record is an exact live allocation. The callback frees it once,
     /// never reenters this lock, and retains all backing on its terminal error.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn legacy_take_non_main_arena_pages(
         &self,
         mut free: impl FnMut(core::ptr::NonNull<u8>) -> bool,
@@ -1505,7 +1505,7 @@ mod tests {
     use core::ptr::NonNull;
     use std::boxed::Box;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn cold_non_main_initialization_retains_storage_extent_and_source_identity() {
         #[repr(C)]
@@ -1579,7 +1579,7 @@ mod tests {
         unsafe { fresh.heap.assume_init_drop() };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn arena_record_fixture() -> (
         Box<Heap>,
         core::pin::Pin<&'static crate::meta::MetaAllocator>,
@@ -1615,7 +1615,7 @@ mod tests {
         (heap, metadata, allocation, layout, subprocess)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn refused_arena_record_release_keeps_its_original_live_slot() {
         use crate::meta::{MetaRelease, MetaReleaseFailure};
@@ -1649,7 +1649,7 @@ mod tests {
         assert_eq!(heap.arena_pages_slot(0), None);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_arena_record_release_visits_sparse_slots_in_arena_order() {
         use crate::meta::MetaRelease;
@@ -1684,7 +1684,7 @@ mod tests {
         assert!(owners.iter().all(|(slot, _, owner)| owner.is_none() && heap.arena_pages_slot(*slot).is_none()));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn consumed_arena_record_completion_failure_never_restores_a_freed_slot() {
         use crate::meta::MetaRelease;

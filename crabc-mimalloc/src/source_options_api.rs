@@ -361,7 +361,7 @@ pub fn stats_reset() {
     crate::runtime_lifecycle::native_stats_reset();
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod option_initialization_tests {
     use super::*;
 
@@ -638,7 +638,7 @@ mod option_initialization_tests {
     }
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod regular_reservation_output_tests {
     use super::*;
     use core::ffi::CStr;

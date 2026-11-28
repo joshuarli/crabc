@@ -34,7 +34,7 @@ extern crate std;
     not(miri),
     not(all(
         target_os = "linux",
-        any(target_arch = "aarch64", target_arch = "x86_64"),
+        any(target_arch = "aarch64", any(target_arch = "x86_64", target_arch = "aarch64")),
         target_endian = "little"
     ))
 ))]
@@ -46,7 +46,7 @@ mod abandoned;
 mod alloc;
 mod atomic;
 mod arena;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod arena_print;
 mod bitmap;
 mod bootstrap;
@@ -57,15 +57,15 @@ mod deferred_free;
 mod diagnostic_output;
 mod free_list;
 mod invariants;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod local_fast_path;
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod native_local_trace;
-#[cfg(all(test, target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), feature = "native-runtime-test-audit"))]
 mod mapped_large_owner_exit;
-#[cfg(all(test, feature = "native-runtime-test-audit", target_arch = "x86_64"))]
+#[cfg(all(test, feature = "native-runtime-test-audit", any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod arena_singleton_regular_exit;
-#[cfg(all(test, target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), feature = "native-runtime-test-audit"))]
 mod arena_singleton_split_exit;
 mod lock;
 mod main_theap;
@@ -81,7 +81,7 @@ mod owned_tls_key_registry;
 // model; only the raw syscall seams below it are replaced.
 mod os;
 mod page;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod page_validity;
 mod page_map;
 mod process_arena;
@@ -92,13 +92,13 @@ mod random;
 mod remote_free;
 mod runtime_lifecycle;
 mod size_class;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[doc(hidden)]
 pub mod source_api;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[doc(hidden)]
 pub mod source_options_api;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[doc(hidden)]
 pub mod source_heap_api;
 mod single_thread;
@@ -132,7 +132,7 @@ pub use test_context::{
 // source-shaped owners without depending on libc or public pthread APIs.
 #[doc(hidden)]
 pub mod __crabc_runtime {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::process_init::SourceErrnoStore;
     pub use crate::runtime_lifecycle::{
         NativeAllocatorThreadDescriptor, NativeAllocatorPinnedThreadRegistry,
@@ -149,7 +149,7 @@ pub mod __crabc_runtime {
         begin_native_allocator_raw_fork_copy,
     };
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::runtime_lifecycle::{
         NativeAllocatorTlsSpan, current_native_allocator_timer_tls_spans,
         prepare_native_process_destroy, capture_native_process_destroy_request,
@@ -157,15 +157,15 @@ pub mod __crabc_runtime {
         native_process_done_action, NativeProcessDoneInvocation, NativeProcessDoneAction,
     };
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::diagnostic_output::RuntimeStderrOutput;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::source_api;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::source_options_api;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::source_heap_api;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub use crate::runtime_lifecycle::{
         NativeProcessStartupFacts, publish_native_process_startup_facts,
     };

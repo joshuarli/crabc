@@ -520,7 +520,7 @@ mod tests {
     use crate::types::PageKind;
 use crate::os::PageSize;
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1"))]
     #[test]
     fn inline_block_starts_match_pinned_checked_page_geometry() {
         let keyed = crate::config::PAGE_KEY_COUNT == 2;
@@ -556,7 +556,7 @@ use crate::os::PageSize;
 
     #[test]
     fn singleton_slice_rounding_includes_only_the_selected_source_guard_extent() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let page_sizes = [4096];
         #[cfg(target_arch = "aarch64")]
         let page_sizes = [4096, 16384, 65536];
@@ -785,7 +785,7 @@ use crate::os::PageSize;
         assert!(initial_page_slice_pcommitted(0, 8192, MEDIUM_PAGE_SIZE, 3).is_none());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[derive(Clone, Copy)]
     struct PageFaultAllocationSnapshot {
         malloc_normal: crate::statistics::FinalStatCount,
@@ -793,7 +793,7 @@ use crate::os::PageSize;
         malloc_bins: [crate::statistics::FinalStatCount; crate::config::BIN_HUGE + 1],
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn page_fault_allocation_snapshot(image: &crate::statistics::HeapTheapStatistics) -> PageFaultAllocationSnapshot {
         use crate::atomic::i64_load_relaxed;
         use crate::statistics::{FinalStatCount, HeapTheapStatistics, StatCount};
@@ -815,7 +815,7 @@ use crate::os::PageSize;
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn failed_second_regular_extension_commit_retries_same_page_statistics() {
         crate::test_process::run_in_fresh_process(
@@ -1076,7 +1076,7 @@ use crate::os::PageSize;
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn failed_initial_regular_page_commit_recovers_source_statistics() {
         crate::test_process::run_in_fresh_process(
@@ -1270,7 +1270,7 @@ use crate::os::PageSize;
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-stat-2"))]
     #[test]
     fn failed_os_page_release_preserves_source_statistics() {
         crate::test_process::run_in_fresh_process(
@@ -1384,7 +1384,7 @@ use crate::os::PageSize;
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn failed_regular_page_release_preserves_source_statistics() {
         crate::test_process::run_in_fresh_process(

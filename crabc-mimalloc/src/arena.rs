@@ -60,7 +60,7 @@ use crate::types::{
     Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
     Page, Subprocess, Theap, ThreadSequence,
 };
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::types::MemoryKind;
 
 /// Decommits the exact secure tail after fresh-page metadata initialization.
@@ -73,7 +73,7 @@ use crate::types::MemoryKind;
 /// The page is committed and belongs exclusively to the retained fresh-page
 /// claim. `process`, when supplied, owns this mapping's VM accounting; absence
 /// is reserved for unaccounted external backing.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn secure_page_guard_set_at(
     process: Option<os::VmProcess<'_>>, page_size: PageSize,
     address: *mut u8, memory: MemoryId,
@@ -109,7 +109,7 @@ pub(crate) unsafe fn secure_page_guard_set_at(
 /// The caller retains the same live arena, exact aligned tail page, original
 /// release claim and VM owner used for guard installation. No byte references
 /// or allocator projections cross the transition or commit callback.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn secure_page_guard_reset_at(
     process: Option<os::VmProcess<'_>>, page_size: PageSize,
     address: *mut u8, memory: MemoryId,
@@ -133,7 +133,7 @@ pub(crate) unsafe fn secure_page_guard_reset_at(
 /// # Safety
 /// An arena memory ID must refer to live initialized arena metadata. The
 /// caller keeps that arena alive until the copied callback finishes.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn secure_page_commit_hook(memory: MemoryId) -> Option<(CommitFunction, *mut c_void)> {
     let arena = memory.arena_memory()?.arena;
     if arena.is_null() { return None; }
@@ -1393,7 +1393,7 @@ pub(super) unsafe fn manage_external_in_place_with_guard(
 /// may access the region until this function returns.
 /// The registry's initialized subprocess must outlive every resulting arena
 /// and bitmap view, including later subprocess statistics updates.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 pub(crate) unsafe fn manage_os_in_place(
     registry: &ArenaRegistry,
     start: *mut u8,
@@ -1433,7 +1433,7 @@ pub(crate) unsafe fn manage_os_in_place(
 /// callback contract. `numa_node_source` must be synchronous, must not retain
 /// an arena pointer or mapping capability, and must return a source-valid node
 /// for every arena the bounded manager initializes.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 pub(crate) unsafe fn manage_os_in_place_with_numa_source<N>(
     registry: &ArenaRegistry,
     start: *mut u8,
@@ -2054,7 +2054,7 @@ impl<'arena, 'subprocess> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
     /// whole-image reference. Its local fields may be mutated only by a
     /// sealed owner-bound session that excludes overlapping local access;
     /// this pointer grants no independent release or extended lifetime.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) fn prefix_pointer(&self) -> NonNull<Theap> { self.prefix }
 
@@ -3302,7 +3302,7 @@ pub(crate) mod tests {
         true
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ExternalRefusalTrace {
         order: std::sync::atomic::AtomicUsize,
         calls: std::sync::atomic::AtomicUsize,
@@ -3314,7 +3314,7 @@ pub(crate) mod tests {
         last_size: std::sync::atomic::AtomicUsize,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn external_refusal_callback(
         commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
     ) -> bool {
@@ -3342,7 +3342,7 @@ pub(crate) mod tests {
         !trace.refuse_first.swap(false, Ordering::AcqRel)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_external_callback_refusal_c_rust_trace() {
         use crate::page_map::PageMap;
@@ -3499,7 +3499,7 @@ pub(crate) mod tests {
         [callback_failed, mapping_retained, callback_statistics, recovered]
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     #[test]
     fn secure_page_guard_callback_refusal_retains_claim_until_explicit_release() {
         struct GuardTrace {
@@ -3770,7 +3770,7 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-secure-2")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-secure-1", feature = "mi-secure-2")))]
     #[test]
     fn secure_committed_metadata_without_a_guard_capability_retains_unpublished_bytes() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
@@ -5233,7 +5233,7 @@ pub(crate) mod tests {
 
     /// A rejected fresh arena remains absent from the registry even when its
     /// failed cleanup leaves raw VM mapped beside a later healthy claim.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_fresh_arena_dual_fault_c_rust_trace() {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -5497,7 +5497,7 @@ pub(crate) mod tests {
 
     /// A failed delayed decommit consumes the scheduled visit while the
     /// committed slice and neighboring live claim retain their owners.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_delayed_purge_failure_c_rust_trace() {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -5707,7 +5707,7 @@ pub(crate) mod tests {
 
     /// Disjoint delayed ranges preserve their independent OS advice outcomes
     /// while a claimed slice between them remains live.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_delayed_purge_mixed_outcome_c_rust_trace() {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};

@@ -370,12 +370,12 @@ fn allocate_phased(
     let mut phase = allocator.begin_deferred_free_allocation(size, false);
     loop {
         match phase {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::LiveValidity(task) => {
                 core::mem::forget(task);
                 panic!("a legal source trace observed a live Page assertion");
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                 // SAFETY: this trace retains the original engine and backing
                 // continuously through preparation and cleanup.
@@ -383,7 +383,7 @@ fn allocate_phased(
                 panic!("fresh initialization unexpectedly refused");
             }
             DeferredFreeAllocationPhase::Complete(block) => return block,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // This isolated external arena has no process option owner.
                 // Its source profile uses one full collection per 10,000

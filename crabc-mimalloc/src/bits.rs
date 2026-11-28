@@ -152,7 +152,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m1_bit_arithmetic_c_rust_trace() {
         use std::{

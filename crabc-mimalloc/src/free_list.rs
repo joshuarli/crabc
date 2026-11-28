@@ -37,14 +37,14 @@ use crate::types::{Block, Page, PageFreeListState, PageLocalCollectState};
 const LINK_SIZE: usize = size_of::<*mut u8>();
 const LINK_ALIGN: usize = align_of::<*mut u8>();
 
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 #[inline]
 pub(super) fn encode_page_link(page_address: usize, keys: [usize; 2], next_address: usize) -> usize {
     let address = if next_address == 0 { page_address } else { next_address };
     (address ^ keys[1]).rotate_left(keys[0] as u32).wrapping_add(keys[0])
 }
 
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 #[inline]
 pub(super) fn decode_page_link(page_address: usize, keys: [usize; 2], encoded: usize) -> usize {
     let address = encoded.wrapping_sub(keys[0]).rotate_right(keys[0] as u32) ^ keys[1];
@@ -89,11 +89,11 @@ pub(crate) struct LocalFreeList {
     base: NonNull<u8>,
     bytes: usize,
     block_size: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     page_address: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     page_key: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     page_key2: usize,
     capacity: NonNull<u16>,
     reserved: u16,
@@ -153,11 +153,11 @@ impl LocalFreeList {
             base,
             bytes: required,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: base.as_ptr().addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key: 0,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2: 0,
             capacity: NonNull::from(capacity),
             reserved,
@@ -187,11 +187,11 @@ impl LocalFreeList {
             area,
             area_bytes,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2,
             capacity,
             reserved,
@@ -227,11 +227,11 @@ impl LocalFreeList {
             base: area,
             bytes: required,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2,
             capacity,
             reserved,
@@ -407,7 +407,7 @@ impl LocalFreeList {
     /// Initializes the source secure slice permutation after backing commitment.
     /// The random projection must not allocate or mutate this page. Existing
     /// immediate and deferred heads remain owned; only the new suffix is linked.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn extend_count_randomized(
         &mut self,
         extend: u16,
@@ -439,7 +439,7 @@ impl LocalFreeList {
     /// Links the validated suffix after the randomness operation returns.
     /// Its fixed slice arrays therefore stay outside entropy diagnostics and
     /// synchronous callbacks. Capacity publication remains with the caller.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline(never)]
     fn link_randomized_suffix(&mut self, capacity: u16, extend: u16, random: usize) -> Result<(), FreeListError> {
         let mut slice_count = 1usize;
@@ -485,7 +485,7 @@ impl LocalFreeList {
     }
 
     /// Selects the configured source extension without drawing in default mode.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn extend_count_with_random(
         &mut self,
         extend: u16,
@@ -499,7 +499,7 @@ impl LocalFreeList {
     }
 
     /// Computes the selected source bound before drawing thread randomness.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn extend_with_random(
         &mut self,
         random_word: impl FnOnce() -> Option<usize>,
@@ -769,9 +769,9 @@ impl LocalFreeList {
     unsafe fn read_next(&self, block: NonNull<u8>) -> *mut u8 {
         // SAFETY: the caller proves `block` points at one initialized link
         // word in a live, aligned, caller-owned block allocation.
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         return unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) };
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             // SAFETY: the node's first word is the source encoded link.
             let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
@@ -788,9 +788,9 @@ impl LocalFreeList {
     unsafe fn write_next(&self, block: NonNull<u8>, next: *mut u8) {
         // SAFETY: the caller proves `block` points at one writable, aligned
         // link word in a live, uniquely owned page block.
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         unsafe { ptr::write(block.as_ptr().cast::<*mut u8>(), next) };
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             let encoded = encode_page_link(self.page_address, [self.page_key, self.page_key2], next.addr());
             // SAFETY: source `mi_block_set_next` stores this encoded scalar in
@@ -855,9 +855,9 @@ pub(crate) unsafe fn collect_local(
     // Caller exclusivity covers these ordinary fields. This is exactly the
     // source force append before the local head replaces `free`.
     unsafe {
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         ptr::write(tail.as_ptr().cast::<*mut u8>(), free.as_ptr().cast());
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         ptr::write(tail.as_ptr().cast::<usize>(),
             encode_page_link(state.page_address, [state.page_key, state.page_key2], free.as_ptr().addr()));
         *state.free.as_ptr() = local_free.as_ptr();
@@ -950,9 +950,9 @@ fn raw_list_tail(
         // keeps the page area and initialized capacity stable throughout this
         // walk. The source normal profile stores its unencoded next pointer
         // in this first word.
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         let next = unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) };
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         let next: *mut u8 = {
             // SAFETY: the validated node's first word holds the source link.
             let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
@@ -970,7 +970,7 @@ fn raw_list_tail(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     #[test]
     fn encoded_links_use_both_source_keys_and_page_null_sentinel() {
         let page = 0x1000;
@@ -1006,7 +1006,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn actual_page_forced_local_append_preserves_backing_through_encoded_reuse() {
         use core::mem::{MaybeUninit, size_of};
@@ -1226,11 +1226,11 @@ mod tests {
             area: base,
             area_bytes: N,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: core::ptr::from_ref(&*state).addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key: 0,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2: 0,
             capacity: NonNull::from(&mut state.capacity),
             reserved,
@@ -1255,11 +1255,11 @@ mod tests {
             area: NonNull::new(storage.0.as_mut_ptr()).expect("test storage is non-null"),
             area_bytes: N,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: core::ptr::from_ref(&*state).addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key: 0,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2: 0,
             capacity: state.capacity,
             reserved,
@@ -1270,7 +1270,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn secure_slice_extension_preserves_immediate_and_deferred_heads() {
         let mut storage = Page([0; 4096]);
@@ -1307,7 +1307,7 @@ mod tests {
         assert!(list.pop(false).unwrap().is_none());
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))]
     #[test]
     fn secure_page_extension_trace_matches_pinned_c_source() {
         const BLOCK_SIZE: usize = 32;
@@ -1403,7 +1403,7 @@ mod tests {
         std::println!("CRABC_MI_M7_SECURE_FREE_LIST_TRACE_END");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn secure_extension_refuses_missing_random_before_any_page_write() {
         let mut storage = Page([0xa5; 64]);
@@ -1427,7 +1427,7 @@ mod tests {
         assert!(list.pop(false).unwrap().is_none());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn selected_extension_draws_random_only_for_secure_slice_threading() {
         let mut storage = Page([0; 64]);
@@ -1517,11 +1517,11 @@ mod tests {
                 block_size,
                 // The source null sentinel belongs to metadata, never the
                 // first client block in the separately owned block area.
-                #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
                 page_address: core::ptr::from_ref(&state).addr(),
-                #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
                 page_key: 0,
-                #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
                 page_key2: 0,
                 capacity: NonNull::from(&mut state.capacity),
                 reserved,

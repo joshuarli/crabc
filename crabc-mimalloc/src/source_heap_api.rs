@@ -136,12 +136,12 @@ pub unsafe fn heap_set_numa_affinity(heap: *mut c_void, numa_node: c_int) {
 /// selected debug/statistics profiles. Heap birth makes this ordinary zeroed
 /// request from the subprocess main Heap; private Rust image fields must fit
 /// that extent rather than changing publicly counted requested bytes.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) const SOURCE_HEAP_IMAGE_REQUEST_SIZE: usize = 6464;
 
 // Ordinary source class geometry supplies the native image alignment. Keep
 // the layout bound explicit so a future private image cannot underallocate.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const _: () = {
     type Image = crate::types::heap_registry::lifecycle::NonMainHeapImage;
     assert!(core::mem::size_of::<Image>() <= SOURCE_HEAP_IMAGE_REQUEST_SIZE);
@@ -447,7 +447,7 @@ mod manage_os_alias_tests {
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_manage_os_memory_uses_nonexclusive_external_owner() {
         crate::test_process::run_in_fresh_process(
@@ -618,14 +618,14 @@ pub unsafe fn threadpool_theap_policy(
 /// the calling thread. The caller excludes allocation, other guarded setters,
 /// random-state access, initialization and teardown for the duration of this call.
 pub unsafe fn theap_guarded_set_sample_rate(theap: *mut c_void, rate: usize, seed: usize) {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     {
         let Some(theap) = NonNull::new(theap.cast::<Theap>()) else { return };
         // SAFETY: the caller exclusively retains the initialized sampler and,
         // for a zero seed with rate greater than one, its random state.
         unsafe { Theap::guarded_set_sample_rate_at(theap, rate, seed) };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded")))]
     let _ = (theap, rate, seed);
 }
 
@@ -637,19 +637,19 @@ pub unsafe fn theap_guarded_set_sample_rate(theap: *mut c_void, rate: usize, see
 /// the calling thread. The caller excludes allocation, other guarded setters,
 /// initialization and teardown for the duration of this call.
 pub unsafe fn theap_guarded_set_size_bound(theap: *mut c_void, minimum: usize, maximum: usize) {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     {
         let Some(theap) = NonNull::new(theap.cast::<Theap>()) else { return };
         // SAFETY: the caller exclusively owns the selected live bound fields.
         unsafe { Theap::guarded_set_size_bound_at(theap, minimum, maximum) };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded")))]
     let _ = (theap, minimum, maximum);
 }
 
 /// A source sampling decision never turns a sampled refusal into an ordinary
 /// allocation. Only `NotSampled` permits the caller's ordinary engine route.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) enum GuardedAllocationResult {
     NotSampled,
     Allocated(Sourced<NonNull<u8>>),
@@ -667,7 +667,7 @@ pub(crate) enum GuardedAllocationResult {
 /// path. A supplied alignment is nonzero and a power of two. All allocator
 /// projections and locks have ended; callbacks cannot consume an in-flight
 /// client or tear down its selected owner.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn guarded_allocate_selected(
     theap: NonNull<Theap>, size: usize, aligned: Option<(usize, usize)>, zero: bool,
 ) -> GuardedAllocationResult {
@@ -711,7 +711,7 @@ pub(crate) unsafe fn guarded_allocate_selected(
     }) }.unwrap_or(GuardedAllocationResult::Refused(SourceErrno::Unchanged))
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 fn guarded_public_result(result: GuardedAllocationResult) -> Option<Sourced<Block>> {
     match result {
         GuardedAllocationResult::NotSampled => None,
@@ -721,7 +721,7 @@ fn guarded_public_result(result: GuardedAllocationResult) -> Option<Sourced<Bloc
 }
 
 /// Scalar source selection, not an admitted owner or allocation capability.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) struct GuardedSampledRequest {
     size: usize,
     alignment: Option<usize>,
@@ -738,7 +738,7 @@ pub(crate) struct GuardedSampledRequest {
 /// immutable empty image is permitted only on its read-only rate-zero path.
 /// A nonempty image has mutable provenance for countdown writes. `aligned`,
 /// when present, contains a validated nonzero power-of-two alignment.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn guarded_sample_source_request(
     theap: NonNull<Theap>,
     size: usize,
@@ -757,7 +757,7 @@ pub(crate) unsafe fn guarded_sample_source_request(
 }
 
 /// Source guarded allocation extents, before any engine client exists.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) struct GuardedRequestGeometry {
     object_size: usize,
     source_size: usize,
@@ -767,13 +767,13 @@ pub(crate) struct GuardedRequestGeometry {
 
 /// A sampled request whose source size refusal has already been checked.
 /// It carries no admitted owner, mapping, or release authority.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) struct GuardedCheckedRequest {
     size: usize,
     alignment: Option<usize>,
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl GuardedSampledRequest {
     /// Checks source overflow before acquiring an allocation owner or client.
     /// The diagnostic retains the original public aligned operands.
@@ -793,7 +793,7 @@ impl GuardedSampledRequest {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl GuardedCheckedRequest {
     /// Computes the source canonical extent from the admitted owner's page
     /// size and the selected precise-guard policy, without allocating a client.
@@ -814,13 +814,13 @@ impl GuardedCheckedRequest {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl GuardedRequestGeometry {
     /// The raw, already-padded extent received by the source generic engine.
     pub(crate) fn source_size(&self) -> usize { self.source_size }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) enum GuardedCandidatePlacement {
     ShortGeometry,
     Placed { client: NonNull<u8>, usable_size: usize },
@@ -840,7 +840,7 @@ pub(crate) enum GuardedCandidatePlacement {
 /// entry. Warning callbacks cannot consume the in-flight client or change its
 /// selected owner's lifetime. No statistics merge/reset overlaps the final
 /// current-thread accounting projection after those callbacks return.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn guarded_place_candidate<'owner, 'scope>(
     owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
     candidate: crate::runtime_lifecycle::NativeGuardedCanonical<'owner, 'scope>,
@@ -918,7 +918,7 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
     {
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     if let Some(result) = guarded_public_result(unsafe { guarded_allocate_selected(theap, size, None, zero) }) {
         return result;
     }
@@ -960,7 +960,7 @@ unsafe fn allocate_auxiliary_theap(theap: NonNull<Theap>, size: usize, zero: boo
 /// main-Heap Theap; `None` keeps the existing main-owner fast path.
 pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<Block>> {
     let selected = crate::compiler_tls::default_theap();
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     if let Some(result) = guarded_public_result(unsafe { guarded_allocate_selected(selected, size, None, zero) }) {
         return Some(result);
     }
@@ -1065,7 +1065,7 @@ mod heap_membership_tests {
         assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn public_theap_guarded_controls_preserve_seed_countdown_and_inclusive_bounds() {
         crate::test_process::run_in_fresh_process(
@@ -1099,7 +1099,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     unsafe fn guarded_tail_faults(client: NonNull<u8>, usable: usize) -> bool {
         unsafe extern "C" {
             fn fork() -> c_int;
@@ -1120,7 +1120,7 @@ mod heap_membership_tests {
         status & 0x7f == 11
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn aligned_guarded_eligibility_excludes_large_alignment_before_countdown() {
         crate::test_process::run_in_fresh_process(
@@ -1152,7 +1152,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn public_heap_guarded_sample_preserves_source_tag_and_usable_extent() {
         crate::test_process::run_in_fresh_process(
@@ -1190,7 +1190,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     struct GuardedWarningProbe {
         heap: *mut c_void,
         os_warnings: core::sync::atomic::AtomicUsize,
@@ -1199,7 +1199,7 @@ mod heap_membership_tests {
         warning_order: core::sync::atomic::AtomicUsize,
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     unsafe extern "C" fn guarded_heap_warning_reentry(message: *const core::ffi::c_char, argument: *mut c_void) {
         use core::sync::atomic::Ordering;
         if message.is_null() { return; }
@@ -1228,7 +1228,7 @@ mod heap_membership_tests {
         probe.nested_clients.fetch_add(1, Ordering::Relaxed);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn public_heap_guard_protection_refusal_keeps_client_and_allows_nested_allocation() {
         use core::sync::atomic::{AtomicUsize, Ordering};
@@ -1286,7 +1286,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn live_interior_foreign_and_moved_page_queries_follow_page_identity() {
         crate::test_process::run_in_fresh_process(
@@ -1340,7 +1340,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn live_aligned_block_frees_after_heap_delete() {
         crate::test_process::run_in_fresh_process(
@@ -1381,7 +1381,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn deleted_heap_moves_both_os_pages_to_main() {
         crate::test_process::run_in_fresh_process(
@@ -1423,7 +1423,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn dynamic_os_singleton_multiple_list_trace() -> Vec<(&'static str, usize)> {
         let owner = std::thread::spawn(|| {
             let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
@@ -1514,7 +1514,7 @@ mod heap_membership_tests {
         trace
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn dynamic_os_singleton_worker_exit_releases_exact_heap_list_and_page_map() {
         crate::test_process::run_in_fresh_process(
@@ -1608,7 +1608,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn remote_final_free_after_deleted_heap_owner_exit_retires_moved_page() {
         crate::test_process::run_in_fresh_process(
@@ -1662,7 +1662,7 @@ mod heap_membership_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(miri)))]
     #[test]
     fn secure_page_visitation_decodes_free_chain_and_null_before_live_bitmap() {
         unsafe extern "C" fn collect_live(
@@ -1767,7 +1767,7 @@ mod heap_membership_tests {
         true
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn joined_remote_free_exposes_non_head_page_utilization() {
         crate::test_process::run_in_fresh_process(
@@ -1887,10 +1887,10 @@ unsafe fn heap_visit_free_map(
     capacity: usize,
     bitmap: &mut [usize],
 ) -> Option<usize> {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     // SAFETY: the caller retains the initialized page and its immutable keys.
     let keys = unsafe { Page::source_page_keys_at(page) };
-    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+    #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
     let _ = page;
     let mut free_count = 0usize;
     while !free.is_null() {
@@ -1901,9 +1901,9 @@ unsafe fn heap_visit_free_map(
         free_count += 1;
         // SAFETY: the validated node is in the caller-retained free block
         // area, whose initialized next word remains stable during visitation.
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         { free = unsafe { core::ptr::read(free.cast::<*mut crate::types::Block>()) }; }
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             // SAFETY: encoded links occupy the same initialized first word.
             let encoded = unsafe { core::ptr::read(free.cast::<usize>()) };
@@ -2002,7 +2002,7 @@ pub(crate) unsafe fn visit_heap_page(
 
 #[cfg(test)]
 mod heap_visit_tests {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     struct GuardedVisitCapture {
         heap: *mut core::ffi::c_void,
         clients: [Option<core::ptr::NonNull<u8>>; 4],
@@ -2014,7 +2014,7 @@ mod heap_visit_tests {
         stop: usize,
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     unsafe extern "C" fn capture_guarded_visit(
         heap: *const core::ffi::c_void, area: *const super::HeapArea,
         block: *mut core::ffi::c_void, block_size: usize, argument: *mut core::ffi::c_void,
@@ -2052,7 +2052,7 @@ mod heap_visit_tests {
         capture.stop == 0 || capture.calls < capture.stop
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn guarded_heap_visitation_reports_canonical_slots_and_retained_usable_prefixes() {
         crate::test_process::run_in_fresh_process(
@@ -2125,9 +2125,9 @@ mod heap_visit_tests {
         let second = blocks.as_mut_ptr().wrapping_add(1);
         let mut page = crate::types::Page::remote_free_test_page(2, 0);
         let page = core::ptr::NonNull::from(&mut page);
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         let link = second.addr();
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         // SAFETY: this initialized test page remains exclusive through traversal.
         let link = crate::free_list::encode_page_link(page.as_ptr().addr(),
             unsafe { crate::types::Page::source_page_keys_at(page) }, second.addr());
@@ -2363,7 +2363,7 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
                 SourceErrorReport::BadAlignment { size, alignment, offset }) };
         }
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     {
         let selected_theap = NonNull::new(selected.cast::<Theap>()).unwrap();
         let aligned = match request {
@@ -2381,12 +2381,12 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         }
     }
     if fixed_runtime_theap().is_some_and(|fixed| fixed.as_ptr().cast::<c_void>() == selected) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return match request {
             Request::Plain => crate::source_api::malloc_zero_native(size, zero),
             Request::Aligned { alignment, offset } => crate::source_api::malloc_zero_aligned_at_native(size, alignment, offset, zero),
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         return match (request, zero) {
             (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
             (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),
@@ -2401,12 +2401,12 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         if !unsafe { crate::subproc::lifecycle::native_child_heap_select_theap(heap) } {
             return Sourced { value: None, errno: report_failure(size, request) };
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return match request {
             Request::Plain => crate::source_api::malloc_zero_native(size, zero),
             Request::Aligned { alignment, offset } => crate::source_api::malloc_zero_aligned_at_native(size, alignment, offset, zero),
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         return match (request, zero) {
             (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
             (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),
@@ -2680,7 +2680,7 @@ mod reserve_os_failure_tests {
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_reserve_os_memory_map_failure_clears_output_and_keeps_arena_count() {
         crate::test_process::run_in_fresh_process(
@@ -2731,7 +2731,7 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
     if pages == 0 {
         return Sourced { value: 0, errno: SourceErrno::Unchanged };
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let Some(admission) = crate::subproc::lifecycle::NativeChildArenaAdmission::acquire_current() {
         let Ok(admission) = admission else {
             return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
@@ -2746,7 +2746,7 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
             admission, pages, numa_node, timeout_milliseconds, exclusive, Some(&mut random), warning) };
         return unsafe { huge_reservation_public_result(reserved, errno, arena_id) };
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     if crate::subproc::lifecycle::current_thread_is_child_member() {
         return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
     }
@@ -2764,14 +2764,14 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
     let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
     let backing = MainSubprocess::global().arena_backing();
     let metadata = crate::meta::MetaAllocator::global();
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let warning = crate::process_init::process_output_owner()
         .map(crate::diagnostic_output::HugePageWarningRoute::new);
     // SAFETY: the admitted operation retains the process and arena group;
     // the calling Theap exclusively owns the random image during this call.
     let (reserved, primitive_errno) = unsafe { backing.reserve_huge_at_reporting_errno(
         process, config, metadata, pages, numa_node, timeout_milliseconds, exclusive,
-        Some(&mut random), #[cfg(target_arch = "x86_64")] warning) };
+        Some(&mut random), #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning) };
     unsafe { huge_reservation_public_result(reserved, primitive_errno, arena_id) }
 }
 
@@ -2832,7 +2832,7 @@ pub unsafe fn reserve_huge_os_pages(
     // The deprecation warning can call user output before any node request.
     // Retain an actual child admission across that callback and the complete
     // interleave sequence, without borrowing its record or membership slot.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let _warning_admission = crate::subproc::lifecycle::NativeChildArenaAdmission::acquire_current();
     if let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs() {
@@ -2859,7 +2859,7 @@ mod huge_at_ex_tests {
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_huge_partial_success_keeps_the_failed_mapping_errno() {
         crate::test_process::run_in_fresh_process(
@@ -2880,7 +2880,7 @@ mod huge_at_ex_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_huge_interleave_keeps_successful_nodes_after_a_later_failure() {
         crate::test_process::run_in_fresh_process(
@@ -2903,7 +2903,7 @@ mod huge_at_ex_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn deprecated_huge_reservation_reports_requested_pages_for_a_partial_prefix() {
         crate::test_process::run_in_fresh_process(
@@ -2929,7 +2929,7 @@ mod huge_at_ex_tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_child_huge_reservation_uses_its_own_primitive_and_arena_group() {
         use crate::subproc::lifecycle::{native_subproc_new, native_subproc_add_current_thread,
@@ -3000,7 +3000,7 @@ mod huge_at_ex_tests {
         assert_eq!(reserved, 0);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_huge_at_ex_zero_and_failed_primitive_preserve_arena_owner() {
         crate::test_process::run_in_fresh_process(
@@ -3237,7 +3237,7 @@ pub unsafe fn heap_realloc_aligned(
     offset: Option<usize>,
     zero: bool,
 ) -> Sourced<(Block, FreeOutcome)> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // SAFETY: forwarded public Heap contract. Both forms resolve the
         // same retained target before their original reallocation kernel.
@@ -3263,7 +3263,7 @@ pub unsafe fn heap_realloc_aligned(
             }
         };
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         if offset.is_none() && alignment <= WORD {
             // SAFETY: forwarded Heap lifetime and exact-live-client obligations.
@@ -3462,7 +3462,7 @@ use crate::subproc::lifecycle::{NativeChildThreadAdd, NativeSubprocessId};
 /// A Heap visitor (`mi_heap_visit_fun`).
 pub type HeapVisitor = unsafe extern "C" fn(heap: *mut c_void, argument: *mut c_void) -> bool;
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 mod nested_heap_visit_tests {
     use super::*;
     use crate::subproc::lifecycle::{native_subproc_new, native_subproc_add_current_thread,

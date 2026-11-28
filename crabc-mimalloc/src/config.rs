@@ -47,27 +47,27 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
-pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-secure-5")) {
+pub(crate) const SECURE_LEVEL: usize = if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5")) {
     5
-} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-4")) {
+} else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-4")) {
     4
-} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
+} else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")) {
     3
-} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
+} else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-2")) {
     2
-} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-1")) {
+} else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")) {
     1
 } else {
     0
 };
 /// Defined `MI_XMALLOC` affects only the default allocation-error handler.
 /// The optional x86 profile leaves the AArch64 default handler unchanged.
-pub(crate) const XMALLOC: bool = cfg!(all(target_arch = "x86_64", feature = "mi-xmalloc"));
+pub(crate) const XMALLOC: bool = cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-xmalloc"));
 // Numeric x86 profiles retain the basic debug layout through feature ancestry.
 // Other targets keep the previously selected basic debug level.
-pub(crate) const DEBUG_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-debug-3")) {
+pub(crate) const DEBUG_LEVEL: usize = if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")) {
     3
-} else if cfg!(all(target_arch = "x86_64", feature = "mi-debug-2")) {
+} else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-2")) {
     2
 } else {
     cfg!(feature = "mi-debug-1") as usize
@@ -85,11 +85,11 @@ pub(crate) const FREE_USE_PAGEMAP: bool = false;
 pub(crate) const OPT_FREE_SMALL: bool = false;
 pub(crate) const ENABLE_LARGE_PAGES: bool = true;
 pub(crate) const ENCODE_FREELIST: bool = SECURE_LEVEL >= 3 || DEBUG_LEVEL >= 1;
-pub(crate) const GUARDED: bool = cfg!(all(target_arch = "x86_64", feature = "mi-guarded"));
+pub(crate) const GUARDED: bool = cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"));
 /// Selects the pinned vector bitmap searches independently of CPU tuning.
 /// The bitmap module rejects this opt-in without x86-64 AVX2 target support;
 /// enabling AVX2 alone retains the scalar bitmap implementation.
-pub(crate) const OPT_SIMD: bool = cfg!(all(target_arch = "x86_64", feature = "mi-opt-simd"));
+pub(crate) const OPT_SIMD: bool = cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-opt-simd"));
 pub(crate) const PADDING_SIZE: usize = if SECURE_LEVEL >= 3 || DEBUG_LEVEL >= 1 { 8 } else { 0 };
 pub(crate) const PADDING_WSIZE: usize = PADDING_SIZE / WORD_SIZE;
 pub(crate) const PAGE_KEY_COUNT: usize = if PADDING_SIZE != 0 { 2 } else { 1 };
@@ -1095,17 +1095,17 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 
 const _: [(); 8] = [(); WORD_SIZE];
 const _: [(); 1] = [(); ENABLE_LARGE_PAGES as usize];
-#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+#[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
 const _: [(); 1] = [(); (!ENCODE_FREELIST) as usize];
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 const _: [(); 1] = [(); ENCODE_FREELIST as usize];
-#[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+#[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded")))]
 const _: [(); 1] = [(); (!GUARDED) as usize];
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 const _: [(); 1] = [(); GUARDED as usize];
-#[cfg(not(all(target_arch = "x86_64", feature = "mi-opt-simd")))]
+#[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-opt-simd")))]
 const _: [(); 1] = [(); (!OPT_SIMD) as usize];
-#[cfg(all(target_arch = "x86_64", feature = "mi-opt-simd"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-opt-simd"))]
 const _: [(); 1] = [(); OPT_SIMD as usize];
 const _: [(); 1] = [(); PAGE_META_IS_SEPARATED as usize];
 const _: [(); 1] = [(); (PAGE_META_IS_ALIGNED == (SECURE_LEVEL == 0)) as usize];
@@ -1117,7 +1117,7 @@ const _: [(); 16 * GIB] = [(); ARENA_MAX_SIZE];
 mod tests {
     use super::*;
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3",
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3",
         not(feature = "mi-secure-4"), not(feature = "mi-secure-5"),
         not(feature = "mi-debug-1"), not(feature = "mi-stat-1"), not(feature = "mi-guarded")))]
     #[test]
@@ -1128,7 +1128,7 @@ mod tests {
         assert!(!GUARDED);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn selected_modes_preserve_live_zeroed_clients_through_growth() {
         crate::test_process::run_in_fresh_process(
@@ -1190,22 +1190,22 @@ mod tests {
     fn selected_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
-        assert_eq!(SECURE_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-secure-5")) {
+        assert_eq!(SECURE_LEVEL, if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5")) {
             5
-        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-4")) {
+        } else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-4")) {
             4
-        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
+        } else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")) {
             3
-        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
+        } else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-2")) {
             2
-        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-1")) {
+        } else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")) {
             1
         } else {
             0
         });
-        assert_eq!(DEBUG_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-debug-3")) {
+        assert_eq!(DEBUG_LEVEL, if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")) {
             3
-        } else if cfg!(all(target_arch = "x86_64", feature = "mi-debug-2")) {
+        } else if cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-2")) {
             2
         } else {
             usize::from(cfg!(feature = "mi-debug-1"))
@@ -1221,10 +1221,10 @@ mod tests {
         assert_eq!(FREE_IS_CHECKED, SECURE_LEVEL != 0);
         assert!(!FREE_USE_PAGEMAP);
         assert!(!OPT_FREE_SMALL);
-        let padded = cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")));
+        let padded = cfg!(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")));
         assert_eq!(ENCODE_FREELIST, padded);
-        assert_eq!(GUARDED, cfg!(all(target_arch = "x86_64", feature = "mi-guarded")));
-        assert_eq!(OPT_SIMD, cfg!(all(target_arch = "x86_64", feature = "mi-opt-simd")));
+        assert_eq!(GUARDED, cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded")));
+        assert_eq!(OPT_SIMD, cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-opt-simd")));
         assert_eq!(PADDING_SIZE, if padded { 8 } else { 0 });
         assert_eq!(PADDING_WSIZE, usize::from(padded));
         assert_eq!(PAGE_KEY_COUNT, if padded { 2 } else { 1 });
@@ -1258,7 +1258,7 @@ mod tests {
             assert_eq!(MAX_VABITS, 48);
             assert_eq!(PAGE_MAP_SHIFT, 19);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             assert_eq!(MAX_VABITS, 47);
             assert_eq!(PAGE_MAP_SHIFT, 18);

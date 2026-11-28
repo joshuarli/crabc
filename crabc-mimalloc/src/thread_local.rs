@@ -647,7 +647,7 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
     /// persistent owner.
     #[inline(always)]
     fn set_state(&self, state: PersistentCompilerTlsOwnerState) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if state != PersistentCompilerTlsOwnerState::Active {
             crate::local_fast_path::withdraw();
         }
@@ -1458,7 +1458,7 @@ impl ThreadLocalBackingOwner {
     /// TLS image remain pinned, and `backing` is the original published image
     /// retained by that owner's lifecycle. Clear that foreign root immediately
     /// after success. Failure retains this owner and requires child fail-stop.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn teardown_vanished_child(
         &mut self,
         backing: Option<NonNull<DynamicThreadLocalBacking>>,

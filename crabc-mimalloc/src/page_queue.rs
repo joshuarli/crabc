@@ -2723,7 +2723,7 @@ mod tests {
                 .expect("the source queue keeps its page owner-associated");
             let collected = unsafe { crate::remote_free::collect(owner) }
                 .expect("the source owner force-collects the joined remote list");
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 // SAFETY: remote detach has completed; this callback retains
                 // the live owner and the page's complete writable backing.
@@ -2783,18 +2783,18 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[repr(align(16))]
     struct MixedCollectAbandonRemoteBlock([u8; 16]);
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     impl MixedCollectAbandonRemoteBlock {
         fn pointer(&mut self) -> NonNull<u8> {
             NonNull::from(&mut self.0).cast()
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn remotely_freed_page(block_size: usize, used: usize) -> Page {
         let mut page = Page::remote_free_test_page(
             u16::try_from(used).expect("the focused test page fits source capacity"),
@@ -2804,7 +2804,7 @@ mod tests {
         page
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn generic_collect_abandon_drains_a_mixed_theap_in_source_order() {
         let mut theap = Theap::empty();
@@ -2960,7 +2960,7 @@ mod tests {
         assert!(!page_is_in_full(unsafe { full.as_ref() }));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generic_collect_abandon_drains_a_mixed_theap_in_source_order() {
         use crate::config::ARENA_SLICE_SIZE;
@@ -3629,7 +3629,7 @@ mod tests {
         assert_eq!(theap.direct_page(4), Some(page.as_ptr()));
         assert_eq!(theap.direct_page(5), Some(EMPTY_PAGE.as_ptr()));
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the original initialized Theap and page remain resident.
         // Only this owner changes queue and direct-cache fields; the Heap-list
         // and producer projections stay live while those disjoint fields move.

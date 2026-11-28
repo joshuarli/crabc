@@ -21,13 +21,13 @@ unsafe impl Sync for SourceSubprocessRegistry {}
 /// Narrow facts borrowed from a linked child's original whole-image
 /// allocation. The source list gate retains the image during this scope;
 /// these facts grant no allocation-release authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct RegisteredChildImage<'list> {
     pointer: NonNull<ChildSubprocessImage>,
     _list: core::marker::PhantomData<&'list SourceSubprocessRegistry>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl RegisteredChildImage<'_> {
     pub(crate) fn identity_pointer(&self) -> *mut SubprocessIdentity {
         // SAFETY: this is the retained original whole-image capability. The
@@ -46,7 +46,7 @@ impl RegisteredChildImage<'_> {
 /// A failed source gate release keeps any independently acquired result
 /// explicit, so its caller can retain actual custody instead of dropping a
 /// partially completed admission as though nothing happened.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) enum RegisteredChildImageLookupError<R> {
     Registry(SourceSubprocessRegistryError),
     GateRelease { error: crabc_core::Errno, acquired: R },
@@ -166,7 +166,7 @@ impl SourceSubprocessRegistry {
     /// admission lease. No borrowed image facts or views may survive the list
     /// scope unless that genuine owner admission was acquired. A copied
     /// MemoryId is never returned and grants no storage-release authority.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn with_registered_child_image<R>(
         &'static self,
         identity: *mut SubprocessIdentity,

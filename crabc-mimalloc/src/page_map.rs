@@ -192,14 +192,14 @@ impl PageEntry {
 /// extent determines the flexible-array offset and thus reservation and lazy
 /// commit counts. Keep that extent while using the existing private futex
 /// lock; the remaining bytes are reserved storage, not a pthread ABI object.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[repr(C, align(8))]
 struct PageMapLock {
     inner: PrivateLock,
     reserved: [u8; 40 - size_of::<PrivateLock>()],
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl PageMapLock {
     const fn new() -> Self {
         Self { inner: PrivateLock::new(), reserved: [0; 40 - size_of::<PrivateLock>()] }
@@ -211,7 +211,7 @@ impl PageMapLock {
     fn try_lock(&self) -> Option<crate::lock::PrivateLockGuard<'_>> { self.inner.try_lock() }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 type PageMapLock = PrivateLock;
 
 /// The mapped prefix of the source `mi_page_map_t` flexible-array object.
@@ -664,7 +664,7 @@ impl PageMap {
                         audit.medium_retired_slices += 1;
                     }
                 }
-                #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+                #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
                 if page_ref.aligned_alias_owner() != page {
                     audit.nonprimary_slices += 1;
                 }
@@ -724,7 +724,7 @@ impl PageMap {
     /// for the entire visit. The callback may only record bounded stack scalars:
     /// it cannot allocate, invoke user callbacks, or reenter the allocator or
     /// map publication while the source publication lock is held.
-    #[cfg(all(target_arch = "x86_64", any(test, feature = "native-runtime-test-audit")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(test, feature = "native-runtime-test-audit")))]
     pub(crate) unsafe fn test_visit_mapping_extents(
         &self,
         mut visitor: impl FnMut(usize, usize),
@@ -785,9 +785,9 @@ impl PageMap {
             .min(self.header()?.reserved_size);
         let commit_count = page_map_count_of_size(commit_size);
         if let Err(error) = self.statistics.commit(self.mapping.commit(0, commit_size), commit_size) {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             self.report_commit_failure(error, commit_size)?;
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
             // The failed OS commit has already advanced its call statistic.
             // Source reports that failure before the PageMap refusal; the
@@ -903,9 +903,9 @@ impl PageMap {
         })();
         let unlock = guard.unlock();
         if let Some(error) = failed_map {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             self.report_submap_allocation_failure(error);
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
             // The callback may reenter PageMap. No submap was published, so
             // unlock first, deliver the failed OS allocation warning while
@@ -937,7 +937,7 @@ impl PageMap {
 
     /// Reports an already charged failed commit before its PageMap refusal.
     /// Keep bounded message owners off the successful commitment path.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[cold]
     #[inline(never)]
     fn report_commit_failure(&self, error: Errno, commit_size: usize) -> Result<()> {
@@ -964,7 +964,7 @@ impl PageMap {
     /// Reports a failed submap allocation after the map lock is released.
     /// The failed mmap charge stays between its OS and PageMap warnings, so
     /// reentrant output observes the same source statistics at each boundary.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[cold]
     #[inline(never)]
     fn report_submap_allocation_failure(&self, error: Errno) {
@@ -1075,7 +1075,7 @@ impl PageMap {
     /// grants no independent lifetime, mutation, or release authority.
     #[inline(always)]
     pub(crate) unsafe fn lookup_retained_live_page(&self, address: *const u8) -> *mut Page {
-        if cfg!(target_arch = "x86_64")
+        if cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
             && crate::config::DEBUG_LEVEL == 0
             && crate::config::SECURE_LEVEL == 0
             && !crate::config::FREE_IS_CHECKED
@@ -1102,10 +1102,10 @@ impl PageMap {
     /// through this read and every use of the returned page. The live client
     /// excludes retirement, reuse and release; generic registered external
     /// clients without this native layout must use the PageMap lookup instead.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn lookup_native_retained_live_page(&self, address: *const u8) -> *mut Page {
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         if crate::config::PAGE_META_IS_ALIGNED
             && crate::config::DEBUG_LEVEL == 0
             && crate::config::SECURE_LEVEL == 0
@@ -1427,8 +1427,8 @@ mod tests {
 
     #[test]
     fn mapped_header_changes_max_reservation_and_count_boundaries() {
-        assert_eq!(size_of::<PageMapHeader>(), if cfg!(target_arch = "x86_64") { 88 } else { 56 });
-        #[cfg(target_arch = "x86_64")]
+        assert_eq!(size_of::<PageMapHeader>(), if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) { 88 } else { 56 });
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             assert_eq!(size_of::<PageMapLock>(), 40);
             assert_eq!(core::mem::align_of::<PageMapLock>(), 8);
@@ -1446,7 +1446,7 @@ mod tests {
 
         assert_eq!(source_bytes, size_of::<PageMapHeader>() + (requested - 1) * 8);
         assert!(source_reserved > flat_reserved);
-        assert_eq!(page_map_count_of_size(source_reserved), requested + if cfg!(target_arch = "x86_64") { 502 } else { 506 });
+        assert_eq!(page_map_count_of_size(source_reserved), requested + if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) { 502 } else { 506 });
     }
 
     #[test]
@@ -1458,7 +1458,7 @@ mod tests {
         )
         .unwrap();
         let initial_count = page_map_count_of_size(initial_bytes);
-        assert_eq!(initial_count, minimum + if cfg!(target_arch = "x86_64") { 502 } else { 506 });
+        assert_eq!(initial_count, minimum + if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) { 502 } else { 506 });
 
         let required_index = initial_count + 1;
         let extension_bytes = invariants::align_up(
@@ -1467,10 +1467,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(extension_bytes, 192 * 1024);
-        assert_eq!(page_map_count_of_size(extension_bytes), if cfg!(target_arch = "x86_64") { 24_566 } else { 24_570 });
+        assert_eq!(page_map_count_of_size(extension_bytes), if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) { 24_566 } else { 24_570 });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lazy_commit_extends_at_the_source_linux_header_boundary() {
         let mut page_map = PageMap::initialize(memory_config(false), 47, false)
@@ -1518,7 +1518,7 @@ mod tests {
         assert!(PageMapRange::new(PageMapLocation { map_index: 0, sub_index: PAGE_MAP_SUB_COUNT }, 1).is_none());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn mapping_extent_visit_reports_actual_owner_spans_without_embedded_submap_duplication() {
         let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false).unwrap();
@@ -1871,7 +1871,7 @@ mod tests {
         assert_eq!(control_page_size, 4 * 1024);
         assert!(control_has_overcommit_false);
         // Pinned bits.h selects 47 user-address bits on x86-64, 48 on AArch64.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         assert_eq!(control_max_vabits, 47);
         #[cfg(target_arch = "aarch64")]
         assert_eq!(control_max_vabits, 48);
@@ -2092,7 +2092,7 @@ mod tests {
         assert_eq!(control_page_size, 4 * 1024);
         assert!(control_has_overcommit_false);
         // Keep the C/Rust trace control matched to the target's bits.h profile.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         assert_eq!(control_max_vabits, 47);
         #[cfg(target_arch = "aarch64")]
         assert_eq!(control_max_vabits, 48);
@@ -2253,7 +2253,7 @@ mod tests {
         unsafe { page_map.destroy() }.expect("the retried map release succeeds");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn failed_lazy_submap_warns_after_releasing_its_lock_and_retries() {
         static OUTPUT: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());

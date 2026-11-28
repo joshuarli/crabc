@@ -130,7 +130,7 @@ pub(crate) struct LiveAllocationPointer {
     // Only a root-backed observation carries the process-wide OS page size;
     // isolated metadata fixtures have no process initialization authority.
     // The ordinary x86 source profile has no guard page to subtract.
-    #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+    #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), feature = "mi-guarded"))]
     os_page_size: Option<usize>,
 }
 
@@ -230,9 +230,9 @@ impl LiveAllocationPointer {
     /// the nonzero block size. Ordinary free does not need this extent.
     #[inline]
     pub(crate) fn usable_size(&self) -> usize {
-        #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
         let os_page_size = self.os_page_size;
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded")))]
         let os_page_size = None;
         self.usable_size_with_guarded_page_size(os_page_size)
     }
@@ -245,9 +245,9 @@ impl LiveAllocationPointer {
                 );
             }
         }
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         let canonical_usable = self.block_size;
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         let canonical_usable = {
             // SAFETY: this operation-scoped observation retains the exact
             // live block and its page's immutable padding key. The caller
@@ -414,7 +414,7 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
         client_adjustment,
         block_size,
         xthread_id,
-        #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+        #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), feature = "mi-guarded"))]
         os_page_size: None,
     })
 }
@@ -803,7 +803,7 @@ pub(crate) enum MappedAbandonedClaimOutcome {
     /// The supplied map lease and validated process-page-arena lease name
     /// different immutable PageMap roots. No lock was acquired and no source
     /// state changed.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     PairMismatch,
     /// This root was already terminal, became terminal before the closure
     /// could run. The closure did not run.
@@ -1183,7 +1183,7 @@ impl ProcessPageMapRoot {
     /// after it matches the outer outcome and consumes the linear range token
     /// under that token's contract. A closure that panics or unwinds is
     /// terminally retained before its lock releases.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) unsafe fn try_with_validated_mapped_abandoned_claim(
         self,
         paired: crate::process_arena::ProcessPageArenaLease,
@@ -1371,12 +1371,12 @@ impl ProcessPageMapRoot {
         self,
         client: NonNull<u8>,
     ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: no captured page bypasses this exact client's source lookup.
             unsafe { self.lookup_live_allocation_with_captured_page(client, None) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             self.ensure_ready()?;
             // SAFETY: the READY release follows root publication, so the acquire
@@ -1392,7 +1392,7 @@ impl ProcessPageMapRoot {
             // and metadata stable while immutable geometry plus the source atomic
             // ownership word are copied without forming `&Page`.
             let allocation = unsafe { classify_live_allocation_in_page(page, client) };
-            #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+            #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), feature = "mi-guarded"))]
             let allocation = {
                 let mut allocation = allocation;
                 if let Some(allocation) = allocation.as_mut() {
@@ -1424,7 +1424,7 @@ impl ProcessPageMapRoot {
     /// that custody. The returned facts grant no additional owner, mutation,
     /// or release authority. They have the same operation-scoped lifetime as
     /// [`Self::lookup_live_allocation`].
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn lookup_live_allocation_with_captured_page(
         self,
@@ -1471,7 +1471,7 @@ impl ProcessPageMapRoot {
     /// plain PageMap entry throughout this observation, excluding an
     /// overlapping entry write. This scalar grants no page, owner, mutation,
     /// or release authority and does not validate an arbitrary C pointer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn lookup_live_block_size(
         self,
@@ -1502,12 +1502,12 @@ impl ProcessPageMapRoot {
     pub(crate) unsafe fn lookup_native_page_for_live_client(
         self, client: NonNull<u8>,
     ) -> Result<Option<NonNull<Page>>, ProcessPageMapError> {
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             // SAFETY: the non-x86 target retains its existing source map policy.
             unsafe { self.lookup_page_for_live_client(client) }
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             self.ensure_ready()?;
             if self.storage.root.load().is_none() {
@@ -1531,12 +1531,12 @@ impl ProcessPageMapRoot {
     pub(crate) unsafe fn lookup_native_live_allocation(
         self, client: NonNull<u8>,
     ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: no capture bypasses the selected native source lookup.
             unsafe { self.lookup_native_live_allocation_with_captured_page(client, None) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             // SAFETY: the non-x86 target retains its existing source map policy.
             unsafe { self.lookup_live_allocation(client) }
@@ -1552,7 +1552,7 @@ impl ProcessPageMapRoot {
     /// native normal or checked lookup in this exact map for this client, and
     /// remains live without reuse or release. A prior refused consuming attempt
     /// cannot supply capture; configured checked validation cannot be skipped.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn lookup_native_live_allocation_with_captured_page(
         self, client: NonNull<u8>, captured_page: Option<NonNull<Page>>,
@@ -1590,7 +1590,7 @@ impl ProcessPageMapRoot {
     /// The client satisfies `lookup_native_page_for_live_client`'s native alias
     /// lifetime contract. The source block size stays fixed until final page
     /// retirement. This grants no canonical-block, owner or release authority.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn lookup_native_live_block_size(
         self, client: NonNull<u8>,
@@ -2347,7 +2347,7 @@ mod tests {
         unsafe { page.as_mut() }.set_exclusive_used(1);
         let block = NonNull::new(unsafe { base.as_ptr().add(page_offset) })
             .expect("the fixture canonical block is non-null");
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         // SAFETY: the fixture exclusively owns this complete live block and
         // initialized Page; a padding-enabled client must have a real record.
         unsafe {
@@ -2381,7 +2381,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))]
     fn live_secure_client_reported_extent_and_reallocation_copy_exclude_the_padding_record() {
         with_live_pointer_fixture_block_size(160, |lease, page, canonical| {
             // SAFETY: this fixture owns the complete live block. Model a
@@ -2443,7 +2443,7 @@ mod tests {
             let client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(4096 - 81)) };
             let allocation = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(allocation.canonical_block(), canonical);
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             {
                 // SAFETY: the exact adjusted client retains its captured page
                 // and readable canonical tag throughout this same-map scope.
@@ -2460,7 +2460,7 @@ mod tests {
                 4177 - crate::config::PADDING_SIZE);
             // An ordinary aligned block with a different first word has no
             // guard; its usable extent excludes any source padding record.
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             unsafe {
                 crate::alloc::initialize_source_padding(
                     canonical, 8192, 8192 - crate::config::PADDING_SIZE,
@@ -2487,7 +2487,7 @@ mod tests {
             let marked = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(marked.xthread_id(), 16 | PAGE_IN_FULL_QUEUE | PAGE_HAS_INTERIOR_POINTERS);
             assert_eq!(marked.canonical_block(), canonical);
-            #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+            #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), feature = "mi-guarded"))]
             assert_eq!(marked.os_page_size, Some(4096));
         });
     }
@@ -2541,7 +2541,7 @@ mod tests {
                 // SAFETY: the retained current client pins its source-plain
                 // entry and immutable Page geometry through this observation.
                 let facts = unsafe { root.lookup_live_allocation(self.0) }.unwrap().unwrap();
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 // SAFETY: this same retained client excludes writes to its
                 // entry and immutable stride while disjoint pages change.
                 assert_eq!(unsafe { root.lookup_live_block_size(self.0) }, Ok(Some(facts.block_size())));
@@ -2875,7 +2875,7 @@ mod tests {
         // allocation and starts at the source page offset.
         let block = NonNull::new(unsafe { base.as_ptr().add(page_offset + BLOCK_SIZE) })
             .expect("the fixture block address is non-null");
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         // SAFETY: the fixture owns the complete live second block and stable
         // Page keys until its exact registration and allocation are released.
         unsafe {
@@ -2921,12 +2921,12 @@ mod tests {
         ));
         assert!(!normal.has_interior_pointers());
         assert_eq!(normal.block_size(), BLOCK_SIZE);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the same exact normal client pins the registered page and
         // immutable stride through this scalar-only observation.
         assert_eq!(unsafe { lease.lookup_live_block_size(block) }, Ok(Some(normal.block_size())));
         assert_eq!(normal.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this same-map lookup selected the exact retained page;
             // the fixture excludes every overlapping entry write or free.
@@ -2966,12 +2966,12 @@ mod tests {
         assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.block_size(), BLOCK_SIZE);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this exact adjusted client remains in the registered source
         // block; its stride is independent of canonical-block recovery.
         assert_eq!(unsafe { lease.lookup_live_block_size(client) }, Ok(Some(pointer.block_size())));
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: the exact live adjusted client pins the selected page
             // through fresh classification without an intervening callback.
@@ -2991,7 +2991,7 @@ mod tests {
             .expect("the final interior client resolves through the source page map");
         assert_eq!(last.canonical_block(), block);
         assert_eq!(last.usable_size(), 1);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the fixture retains this exact final-byte client and its
         // source page throughout both immutable observations.
         assert_eq!(unsafe { lease.lookup_live_block_size(last_client) }, Ok(Some(last.block_size())));
@@ -3002,7 +3002,7 @@ mod tests {
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let retained_page = pointer.page();
         let interior_reallocation = pointer.into_reallocation_copy_source(BLOCK_SIZE);
         assert_eq!(interior_reallocation.copy_client(), client);
@@ -3021,7 +3021,7 @@ mod tests {
         assert_eq!(abandoned.page_flags(), PAGE_IN_FULL_QUEUE);
         assert_eq!(abandoned.page_state(), LiveAllocationPageState::Abandoned);
         assert!(!abandoned.is_associated_with(thread_id));
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: the fixture's original page selection remains registered
             // for this exact live block despite the atomic ownership transition.
@@ -3559,7 +3559,7 @@ mod tests {
     /// over-allocation fallback maps and trims it, and the process starts and
     /// allocates. Prints the joined TID-normalized startup output as hex, the
     /// main-subprocess VM statistics, and the first allocation result.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_page_map_first_map_fallback_c_rust_trace() {
         static CAPTURE: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());
@@ -3612,7 +3612,7 @@ mod tests {
     /// A failed direct reservation reaches the aligned fallback. Its failed
     /// suffix release leaves one escaped raw mapping while the PageMap owns
     /// the aligned middle, so startup and later allocation still proceed.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_page_map_fallback_trim_fault_c_rust_trace() {
         static CAPTURE: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());
@@ -3685,7 +3685,7 @@ mod tests {
     /// A failed lazy submap map leaves the process root ready. The source
     /// rollback pass creates an empty submap, which the next registration
     /// reuses without another OS mapping.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_page_map_lazy_map_rollback_c_rust_trace() {
         static CAPTURE: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());

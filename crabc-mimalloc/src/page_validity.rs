@@ -104,7 +104,7 @@ impl LivePageValidityAssertion {
     /// refusal. Every allocator and metadata projection or lock ends before
     /// entry. Callback registration and arguments remain live and serialized;
     /// nested operations cannot reuse that retained page or attachment.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn dispatch_source_attached(
         self, witness: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
     ) -> Result<core::convert::Infallible, Self> {
@@ -130,7 +130,7 @@ impl LivePageValidityAssertion {
     /// and metadata projection or lock ends before entry. Callback registration
     /// and arguments remain valid and serialized; nested operations cannot
     /// reuse the retained candidate.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn dispatch_source_initialization(
         self, witness: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>,
     ) -> Result<core::convert::Infallible, Self> {
@@ -156,7 +156,7 @@ impl LivePageValidityAssertion {
     /// Theap, map and allocator projection or lock ends before entry. Output
     /// callback registration and arguments remain live and serialized, and
     /// nested operations cannot reuse the retained page.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn dispatch(self, owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>) -> ! {
         let (file, line, function) = self.source_site();
         // SAFETY: the original operation retains its output domain and page
@@ -194,7 +194,7 @@ impl FreshPageInitializationAssertion {
     /// lock ends before entry. Output callback registration and arguments stay
     /// valid and serialized; nested operations cannot reuse the candidate or
     /// select it as an initialized free list.
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     pub(crate) unsafe fn dispatch_source_attached(
         self,
         witness: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
@@ -228,7 +228,7 @@ impl FreshPageInitializationAssertion {
     /// Output callback registration and arguments remain valid and serialized
     /// throughout delivery. Nested operations must not reuse the retained
     /// candidate or select it as an initialized free list.
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     pub(crate) unsafe fn dispatch_source_initialization(
         self,
         witness: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>,
@@ -260,7 +260,7 @@ impl FreshPageInitializationAssertion {
     /// Its output callback registration and argument lifetime must remain
     /// serialized and valid throughout delivery. Nested allocation must not
     /// reuse the retained candidate or observe it as an initialized free list.
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     pub(crate) unsafe fn dispatch(
         self,
         owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
@@ -331,7 +331,7 @@ impl SourcePageInvariant {
 /// Copied source owner and queue facts. No pointer from this image can be
 /// followed: the selected owner separately retains every actual image and
 /// finishes its short field and queue observations before assertion delivery.
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PageSourceOwnerSnapshot {
     pub(crate) heap_present: bool,
@@ -347,7 +347,7 @@ pub(crate) struct PageSourceOwnerSnapshot {
     pub(crate) in_full: bool,
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 impl PageSourceOwnerSnapshot {
     /// Copies the source owner disjunction after a retained Page projection.
     /// Queue facts come from the same selected owner's stable queues.
@@ -410,14 +410,14 @@ impl PageSourceOwnerSnapshot {
     }
 }
 
-#[cfg(all(test, target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 #[derive(Clone, Copy)]
 struct LivePageOwnerValidityTestObserver {
     observe: unsafe fn(&PageValiditySnapshot, &mut PageSourceOwnerSnapshot, *mut core::ffi::c_void),
     argument: *mut core::ffi::c_void,
 }
 
-#[cfg(all(test, target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 std::thread_local! {
     static LIVE_PAGE_OWNER_VALIDITY_TEST_OBSERVER:
         core::cell::Cell<Option<LivePageOwnerValidityTestObserver>> = const { core::cell::Cell::new(None) };
@@ -433,7 +433,7 @@ std::thread_local! {
 /// copied inputs and modify its own test state, but cannot retain snapshots
 /// or pointers, mutate allocator metadata or backing, allocate, emit output
 /// or reenter the allocator. This supplies no Page or issuer lifetime rights.
-#[cfg(all(test, target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 pub(crate) unsafe fn with_live_page_owner_validity_observer_for_test<R>(
     observe: unsafe fn(&PageValiditySnapshot, &mut PageSourceOwnerSnapshot, *mut core::ffi::c_void),
     argument: *mut core::ffi::c_void,
@@ -457,7 +457,7 @@ pub(crate) unsafe fn with_live_page_owner_validity_observer_for_test<R>(
 /// and stable PageMap obligations as `source_page_lists_valid` apply. `owner`
 /// was copied from this exact Page and its retained issuer under the same
 /// operation; its queue facts remain stable until this predicate returns.
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 pub(crate) unsafe fn source_page_is_valid(
     state: &PageValiditySnapshot, map: &PageMap, owner: &PageSourceOwnerSnapshot, queued: bool,
 ) -> Result<(), SourcePageInvariant> {
@@ -494,7 +494,7 @@ pub(crate) struct CollectionSourceHeaderSnapshot {
     pub(crate) queue_count_override: Option<(usize, usize)>,
 }
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 std::thread_local! {
     static COLLECTION_HEADER_TEST_OBSERVER: core::cell::Cell<Option<(
         unsafe fn(&mut CollectionSourceHeaderSnapshot, *mut core::ffi::c_void),
@@ -509,7 +509,7 @@ std::thread_local! {
 /// The observer changes only this scalar copy or its own test state; it must
 /// not touch allocator metadata, allocate, emit output, or reenter. It grants
 /// no lifetime, issuer, or Page retention authority.
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 pub(crate) unsafe fn with_collection_header_observer_for_test<R>(
     observer: unsafe fn(&mut CollectionSourceHeaderSnapshot, *mut core::ffi::c_void),
     argument: *mut core::ffi::c_void,
@@ -543,7 +543,7 @@ pub(crate) struct CollectionSourceFailure {
 /// allocations and disjoint atomic producer fields. The current source Heap
 /// selector and TLS images remain initialized and stable. This predicate
 /// confers no output, retention, mutation, or release rights on its caller.
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 pub(crate) unsafe fn source_theap_collection_is_valid(
     theap: NonNull<crate::types::Theap>, map: &PageMap,
 ) -> Result<(), CollectionSourceFailure> {
@@ -622,14 +622,14 @@ pub(crate) unsafe fn source_theap_collection_is_valid(
     Ok(())
 }
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 #[derive(Clone, Copy)]
 struct LivePageValidityTestObserver {
     observe: unsafe fn(&PageValiditySnapshot, *mut core::ffi::c_void) -> Option<usize>,
     argument: *mut core::ffi::c_void,
 }
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 std::thread_local! {
     static LIVE_PAGE_VALIDITY_TEST_OBSERVER:
         core::cell::Cell<Option<LivePageValidityTestObserver>> = const { core::cell::Cell::new(None) };
@@ -649,7 +649,7 @@ std::thread_local! {
 /// scalar, but may not retain the snapshot or derived memory-access pointers.
 /// This scope stays on the same native thread; it supplies no Page retention,
 /// observation, registration or release authority to the operation.
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 pub(crate) unsafe fn with_live_page_validity_observer_for_test<R>(
     observe: unsafe fn(&PageValiditySnapshot, *mut core::ffi::c_void) -> Option<usize>,
     argument: *mut core::ffi::c_void,
@@ -692,10 +692,10 @@ pub(crate) unsafe fn source_page_lists_valid(
 
 unsafe fn source_page_lists_valid_with_owner(
     state: &PageValiditySnapshot, map: &PageMap,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] owner: Option<&PageSourceOwnerSnapshot>,
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))] _owner: Option<&()>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] owner: Option<&PageSourceOwnerSnapshot>,
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))] _owner: Option<&()>,
 ) -> Result<(), SourcePageInvariant> {
-    #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     let observed = {
         let mut observed = *state;
         if let Some(observer) = LIVE_PAGE_VALIDITY_TEST_OBSERVER.with(|slot| slot.get()) {
@@ -707,12 +707,12 @@ unsafe fn source_page_lists_valid_with_owner(
         }
         observed
     };
-    #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     let state = &observed;
     if state.block_size == 0 { return Err(SourcePageInvariant::BlockSize); }
     if state.used > usize::from(state.capacity) { return Err(SourcePageInvariant::UsedCapacity); }
     if state.capacity > state.reserved { return Err(SourcePageInvariant::CapacityReserved); }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     if let Some(owner) = owner { owner.valid_init()?; }
     // SAFETY: the caller supplies stable backing and initialized list links
     // with collection excluded and immutable published links; each walk
@@ -811,14 +811,14 @@ pub(crate) unsafe fn source_initial_page_is_zero(
     Ok(())
 }
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 #[derive(Clone, Copy)]
 struct FreshInitializationTestObserver {
     observe: unsafe fn(&PageValiditySnapshot, NonNull<crate::types::Page>, *mut core::ffi::c_void),
     argument: *mut core::ffi::c_void,
 }
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 std::thread_local! {
     static FRESH_INITIALIZATION_TEST_OBSERVER:
         core::cell::Cell<Option<FreshInitializationTestObserver>> = const { core::cell::Cell::new(None) };
@@ -836,7 +836,7 @@ std::thread_local! {
 /// It must not allocate, emit output, reenter the allocator, mutate metadata
 /// or registration, change protection, or retain the snapshot reference.
 /// `operation` must not transfer the observer or argument to another thread.
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 pub(crate) unsafe fn with_fresh_page_initialization_observer_for_test<R>(
     observe: unsafe fn(&PageValiditySnapshot, NonNull<crate::types::Page>, *mut core::ffi::c_void),
     argument: *mut core::ffi::c_void,
@@ -865,7 +865,7 @@ pub(crate) unsafe fn with_fresh_page_initialization_observer_for_test<R>(
 /// registration/statistics, and modify an owned backing byte, but may not
 /// allocate, emit output, reenter the allocator, mutate metadata or registration,
 /// change protection, or retain a reference to the snapshot after returning.
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 pub(crate) unsafe fn observe_fresh_page_initialization_for_test(
     state: &PageValiditySnapshot,
     page: NonNull<crate::types::Page>,
@@ -955,7 +955,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     unsafe extern "C" fn fresh_assertion_stderr(message: *const core::ffi::c_char) {
         unsafe extern "C" {
             fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
@@ -966,7 +966,7 @@ mod tests {
         unsafe { let _ = fputs(message, stderr); }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     enum FreshAssertionTestClaim {
         Os(crate::os_page::OsAlignedPageClaim),
         Arena(crate::arena::SourceInitializationClaimCustody),
@@ -975,7 +975,7 @@ mod tests {
     /// Creates actual fresh backing inside the already-admitted owner scope.
     /// Page publication records the real selected Theap; no list or client
     /// initialization occurs in this backing before the assertion control.
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     fn with_admitted_fresh_page(
         owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
         arena: bool,
@@ -1123,7 +1123,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     fn with_fresh_assertion_owner(
         test: impl for<'scope> FnOnce(crate::runtime_lifecycle::NativeAllocationOwner<'scope>),
     ) {
@@ -1141,7 +1141,7 @@ mod tests {
         assert_eq!(unsafe { runtime::native_free(seed) }, NativePageFreeResult::Freed);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn actual_os_and_arena_claims_preserve_nonfatal_initialization_errors() {
         crate::test_process::run_in_fresh_process(
@@ -1174,7 +1174,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn actual_initially_zero_assertion_retains_os_and_arena_backing_until_abort() {
         const CHILD: &str = "CRABC_FRESH_PAGE_ASSERTION_CHILD";
@@ -1241,7 +1241,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     struct NativeFreshProbe {
         map: crate::process_page_map::ProcessPageMapRoot,
         theap: NonNull<Theap>,
@@ -1251,7 +1251,7 @@ mod tests {
         poison: bool,
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     impl NativeFreshProbe {
         fn new(owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>, poison: bool) -> Self {
             let theap = owner.selected_theap();
@@ -1296,20 +1296,20 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     struct NativeFreshProbeGuard<'a> {
         previous: Option<FreshInitializationTestObserver>,
         retained: core::marker::PhantomData<&'a NativeFreshProbe>,
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     impl Drop for NativeFreshProbeGuard<'_> {
         fn drop(&mut self) {
             FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| slot.set(self.previous));
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn native_fresh_os_initialization_publishes_map_and_stats_before_lists() {
         crate::test_process::run_in_fresh_process(
@@ -1334,7 +1334,7 @@ mod tests {
             });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn native_fresh_os_zero_assertion_retains_registered_backing_during_reentry() {
         const CHILD: &str = "CRABC_NATIVE_FRESH_ZERO_CHILD";
@@ -1440,7 +1440,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn live_validity_observer_changes_only_one_copied_count_and_restores_scope() {
         with_page(|page, map| unsafe {
@@ -1488,7 +1488,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     #[test]
     fn copied_owner_and_queue_inputs_preserve_source_validity_disjunctions() {
         with_page(|page, map| unsafe {
@@ -1704,7 +1704,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn native_registered_regular_client(test_name: &'static str, block_size: usize, span: usize) {
         use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
         crate::test_process::run_in_fresh_process(
@@ -1751,7 +1751,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_first_medium_client_has_registered_valid_lists() {
         native_registered_regular_client(
@@ -1759,7 +1759,7 @@ mod tests {
             12_288, crate::config::MEDIUM_PAGE_SIZE);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_first_large_client_has_registered_valid_lists() {
         native_registered_regular_client(
@@ -1767,7 +1767,7 @@ mod tests {
             131_072, crate::config::LARGE_PAGE_SIZE);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_small_client_reservation_excludes_the_source_protected_tail() {
         native_registered_regular_client(
@@ -1775,7 +1775,7 @@ mod tests {
             256, crate::config::SMALL_PAGE_SIZE);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn native_sampled_clients_retain_valid_page_lists_through_legal_use() {
         use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};

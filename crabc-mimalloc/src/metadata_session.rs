@@ -94,7 +94,7 @@ impl theap_page_session_sealed::Sealed for CanonicalMetadataTheapSession {}
 // separate interior-mutability/lock boundary. References are scoped to a
 // session borrow, so local mutation cannot overlap a returned observation.
 unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -106,14 +106,14 @@ unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
             self.theap, heap, TheapOwner::Detached, block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the actual metadata/thread owner retains this issuer and
         // original Page; source registration callbacks have already ended.
         unsafe { Page::initialize_fresh_page_keys_at(page, self.theap) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 
     fn theap(&self) -> &Theap { unsafe { self.theap.as_ref() } }
@@ -278,7 +278,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         // An admitted synchronous callback still owns this same initialized
         // child member. Its recurse marker suppresses nested callback delivery,
         // not ordinary allocation on the live selected Heap.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let attached = attached || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(
             thread, sequence, identity,
         );
@@ -339,7 +339,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         // it does not revoke this same thread's allocation authority. The
         // caller retains the selected Heap, TLD and member through the
         // synchronous callback, and this session cannot retire those owners.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let attached = attached || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(
             thread, sequence, identity,
         );
@@ -381,7 +381,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
     /// callback or source observation can resume. The session may only drain
     /// inherited pages and must end before source lists or metadata retire.
     /// `arena_pages` must refuse fresh allocation; drain uses existing records.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn new_for_vanished_main_subprocess_heap(
         subprocess: &'static crate::subproc::MainSubprocess,
         tld: NonNull<ThreadLocalData>,
@@ -447,10 +447,10 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         // A source deferred callback keeps the recursion flag set to
         // suppress another callback, while ordinary same-owner allocation
         // remains eligible on this exact attached thread and subprocess.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
             || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(thread, sequence, identity);
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity);
         if !identity.is_registered()
             || heap_ref.is_subprocess_main()
@@ -575,7 +575,7 @@ impl theap_page_session_sealed::Sealed for ChildOrdinaryTheapPageSession<'_, '_>
 // unique local-field authority for its detached Theap. Child page backing and
 // Heap addresses remain retained by the external owner for the operation.
 unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -585,14 +585,14 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
             self.theap, heap, TheapOwner::Detached, block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the actual metadata/thread owner retains this issuer and
         // original Page; source registration callbacks have already ended.
         unsafe { Page::initialize_fresh_page_keys_at(page, self.theap) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 
     fn theap(&self) -> &Theap { self.theap() }
@@ -687,9 +687,9 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
             || !task.belongs_to_subprocess(unsafe { self.child.as_ref() }) {
             return Err(task);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut task = task;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this prebound slot's actual owner retains the original
             // Heap, Theap, TLD and subprocess beyond this engine projection.
@@ -717,9 +717,9 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
             || !task.belongs_to_subprocess(unsafe { self.child.as_ref() }) {
             return Err(task);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut task = task;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this prebound slot's actual owner retains the original
             // Heap, Theap, TLD and subprocess beyond this engine projection.
@@ -761,7 +761,7 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
 // operation. The originating thread, or an exclusive sole-child vanished
 // owner continuation, is the only mutator of the local fields.
 unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -771,17 +771,17 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
             self.theap, heap, TheapOwner::Live(self.thread), block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the actual metadata/thread owner retains this issuer and
         // original Page; source registration callbacks have already ended.
         unsafe { Page::initialize_fresh_page_keys_at(page, self.theap) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_generic_allocation_administration(&mut self) -> crate::bootstrap::GenericAllocationAdministrationStart {
         use crate::bootstrap::GenericAllocationAdministrationStart;
         if self.vanished_child_drain || self.pending_os_release.is_some()
@@ -796,7 +796,7 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
             None => GenericAllocationAdministrationStart::NotDue,
         }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_generic_allocation_administration(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
@@ -811,7 +811,7 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
         // getter callbacks; the finish observes current source counters.
         Some(unsafe { Theap::finish_generic_allocation_administration_at(self.theap, request, frequency) })
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
         if self.vanished_child_drain || self.pending_os_release.is_some()
             || *self.page_engine != crate::meta::ChildPageEngineState::Active { return None; }
@@ -840,11 +840,11 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
     // Theap to `_mi_page_abandon`; this ordinary Theap of a child main Heap
     // or of any non-main Heap follows that source branch whenever its
     // `allow_page_abandon` is set, never the non-abandoning `BIN_FULL` queue.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
         self.theap().allows_page_abandon()
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool { true }
     fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the retained Heap's OS-abandoned list is serialized by its
@@ -960,9 +960,9 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
             || !task.belongs_to_subprocess(unsafe { self.child.as_ref() }) {
             return Err(task);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut task = task;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this prebound slot's actual owner retains the original
             // Heap, Theap, TLD and subprocess beyond this engine projection.
@@ -990,9 +990,9 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
             || !task.belongs_to_subprocess(unsafe { self.child.as_ref() }) {
             return Err(task);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut task = task;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this prebound slot's actual owner retains the original
             // Heap, Theap, TLD and subprocess beyond this engine projection.

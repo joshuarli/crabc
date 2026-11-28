@@ -785,7 +785,7 @@ impl Chunk {
     // inlining it duplicates five atomic attempts for every field. The caller
     // retains the source initial load and skips empty fields before this call.
     #[cfg(not(feature = "mi-opt-simd"))]
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn try_claim_one_in_nonzero_field(field: &AtomicWord, mut value: usize) -> Option<usize> {
         debug_assert_ne!(value, 0);
         let mut tries = 0;

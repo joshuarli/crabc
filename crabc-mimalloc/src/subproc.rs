@@ -205,7 +205,7 @@ pub(crate) struct ChildSubprocessImage {
     native_record: core::sync::atomic::AtomicPtr<lifecycle::NativeChildSubprocess>,
     // These initialized bytes are included in the requested child extent;
     // the control never occupies allocator padding or a second allocation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     native_control: NativeChildControlSlot,
     _pin: PhantomPinned,
 }
@@ -213,13 +213,13 @@ pub(crate) struct ChildSubprocessImage {
 /// Initialized only by the exclusive unpublished creator. Once published,
 /// all control mutations use the record's own lock or atomic fields; shared
 /// child identity projections never cover these interior mutable bytes.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildControlSlot(core::cell::UnsafeCell<MaybeUninit<lifecycle::NativeChildSubprocess>>);
 
 // SAFETY: initialization precedes publication and the record serializes all
 // subsequent mutation. The surrounding allocation remains owned until the
 // last actual TLS member finishes.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe impl Sync for NativeChildControlSlot {}
 
 impl core::ops::Deref for ChildSubprocessImage {
@@ -233,7 +233,7 @@ impl ChildSubprocessImage {
         Self {
             identity: SubprocessIdentity::new_with_role(SubprocessRole::Child),
             native_record: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             native_control: NativeChildControlSlot(core::cell::UnsafeCell::new(MaybeUninit::uninit())),
             _pin: PhantomPinned,
         }
@@ -268,7 +268,7 @@ impl ChildSubprocessImage {
 
     /// Storage for the control record inside the exact child allocation.
     /// The unpublished creator alone may initialize this address.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn native_control_pointer(&self) -> core::ptr::NonNull<lifecycle::NativeChildSubprocess> {
         // SAFETY: an initialized child image has non-null aligned slot storage.
         unsafe { core::ptr::NonNull::new_unchecked(self.native_control.0.get().cast()) }
@@ -2071,7 +2071,7 @@ impl MainStaticThreadLocalData {
     /// Returns the original static TLD capability without a whole-image
     /// projection. The retaining owner must remain live and exclude retirement
     /// and overlapping field access throughout any initialization operation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn source_initialization_pointer(&self) -> core::ptr::NonNull<ThreadLocalData> {
         self.pointer
     }
@@ -2152,7 +2152,7 @@ mod tests {
             assert_eq!(child.total_thread_count(), 0);
             assert_eq!(child.statistics().source_snapshot(), expected.statistics().source_snapshot());
             assert_eq!(child.statistics().snapshot(), expected.statistics().snapshot());
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 let start = core::ptr::from_ref(child).addr();
                 let control = child.native_control_pointer().as_ptr().addr();

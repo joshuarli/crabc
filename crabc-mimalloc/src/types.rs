@@ -48,7 +48,7 @@ use core::mem::{align_of, size_of};
 use core::num::NonZeroUsize;
 use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize, Ordering};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use core::sync::atomic::AtomicBool;
 
 use crate::config::{
@@ -202,7 +202,7 @@ pub(crate) struct Heap {
 
 /// Immutable Heap selection copied without borrowing its mutable lists.
 /// Pointer values transfer no allocation, mutation, or retirement authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct HeapSourceSnapshot {
     pub(crate) subprocess: *mut SubprocessIdentity,
@@ -217,7 +217,7 @@ impl Heap {
     /// # Safety
     /// The original initialized Heap remains live without replacement. Its
     /// sequence is fixed at initialization; mutable lists need no projection.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn heap_sequence_at(heap: NonNull<Self>) -> usize {
         // SAFETY: the retained Heap's immutable scalar is copied directly.
         unsafe { core::ptr::addr_of!((*heap.as_ptr()).heap_seq).read() }
@@ -229,7 +229,7 @@ impl Heap {
     /// The caller retains the original initialized Heap and excludes image
     /// replacement and retirement. The copied fields stay immutable while
     /// lists, statistics, and affinity may change independently.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn source_snapshot_at(heap: NonNull<Self>) -> HeapSourceSnapshot {
         let raw = heap.as_ptr();
         // SAFETY: only the four retained immutable fields are copied.
@@ -318,7 +318,7 @@ impl Heap {
     /// No TLS replacement, image retirement or teardown overlaps the query.
     /// The returned pointer conveys identity only; the caller must retain its
     /// actual Theap before projecting any fields from it.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn source_theap_peek_at(heap: NonNull<Self>) -> *mut Theap {
         let cached = crate::compiler_tls::cached_theap();
         // SAFETY: the retained calling-thread cache names a live image.
@@ -944,7 +944,7 @@ impl Heap {
     /// # Safety
     /// The initialized Heap remains resident through the load. Any later page
     /// lookup still requires its own retained backing and source owner claim.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn has_abandoned_page_in_bin_at(heap: NonNull<Self>, bin: usize) -> bool {
         if bin >= BIN_COUNT { return false; }
@@ -961,7 +961,7 @@ impl Heap {
     /// The initialized Heap remains resident through the load. The caller must
     /// separately retain any returned record before projecting its bitmaps and
     /// exclude record retirement while those projections remain in use.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn arena_pages_pointer_at(heap: NonNull<Self>, arena_index: usize) -> Option<NonNull<ArenaPages>> {
         if arena_index >= MAX_ARENAS { return None; }
@@ -1199,7 +1199,7 @@ impl Heap {
     /// The caller retains both live image capabilities and has already
     /// Release-published the incoming Heap predicate. Existing members remain
     /// live; all list writers and retirement obey this same private lock.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn attach_theap_after_heap_publication_at(
         heap: NonNull<Self>, theap: NonNull<Theap>, blocking: bool,
     ) -> Result<(), HeapTheapListError> {
@@ -1372,7 +1372,7 @@ impl Heap {
                 let _ = guard.unlock();
                 return Err(HeapTheapListError::Membership);
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if (&*core::ptr::addr_of!((*theap).retained_fresh_task)).load(Ordering::Acquire) {
                 guard.unlock().map_err(HeapTheapListError::Lock)?;
                 return Err(HeapTheapListError::RetainedFreshTask);
@@ -1709,7 +1709,7 @@ impl Heap {
 pub(crate) enum HeapTheapListError {
     Busy,
     Membership,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     RetainedFreshTask,
     Lock(crabc_core::Errno),
 }
@@ -1717,13 +1717,13 @@ pub(crate) enum HeapTheapListError {
 /// Actual progress of a persistent task's retirement-refusal transition.
 /// An unlock error after the bit changed does not undo that publication.
 /// Neither disposition grants allocation lifetime or identifies a task.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) enum RetainedFreshTaskMarkerOutcome {
     Unchanged(HeapTheapListError),
     Changed(Result<(), crabc_core::Errno>),
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl RetainedFreshTaskMarkerOutcome {
     fn into_result(self) -> Result<(), HeapTheapListError> {
         match self {
@@ -2514,7 +2514,7 @@ impl ThreadLocalData {
     /// The body performs only bounded operations: it neither allocates nor
     /// invokes a runtime allocator entry. Other field projections need their
     /// own independent authority; protected list access requires its lock.
-    #[cfg(all(test, target_arch = "x86_64"))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn with_locked_theap_list_for_test_at<R>(
         pointer: NonNull<Self>, body: impl FnOnce() -> R,
     ) -> Option<R> {
@@ -3342,7 +3342,7 @@ impl ThreadLocalData {
     /// Existing list members remain live through the locked random snapshot.
     /// The owner also excludes mutation of the selected head's random fields;
     /// the list mutex alone protects membership, not arbitrary random draws.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn attach_one_theap_at(
         tld: NonNull<Self>, theap: NonNull<Theap>,
     ) -> Result<Option<TheapRandomImage>, ThreadLocalTheapListError> {
@@ -3549,7 +3549,7 @@ impl ThreadLocalData {
             ));
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if unsafe { (&*core::ptr::addr_of!((*theap).retained_fresh_task)) }.load(Ordering::Acquire) {
             let _ = tld_guard.unlock();
             let _ = heap_guard.unlock();
@@ -3696,7 +3696,7 @@ impl ThreadLocalData {
             return Err(ThreadLocalTheapListError::Membership);
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if unsafe { (&*core::ptr::addr_of!((*theap).retained_fresh_task)) }.load(Ordering::Acquire) {
             let _ = tld_guard.unlock();
             let _ = heap_guard.unlock();
@@ -4243,11 +4243,11 @@ pub(super) struct PageFreeListState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_key: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_key2: usize,
     pub(super) capacity: NonNull<u16>,
     pub(super) reserved: u16,
@@ -4272,9 +4272,9 @@ pub(super) struct PageFreeListState {
 pub(super) struct PageRemoteFreeProducerState {
     pub(super) xthread_id: NonNull<AtomicUsize>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) keys: [usize; 2],
 }
 
@@ -4304,9 +4304,9 @@ pub(super) struct PageRemoteFreeOwnerState {
     /// caller retains that same backing throughout collection and reuse.
     pub(super) area: NonNull<u8>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) keys: [usize; 2],
     pub(super) free: NonNull<*mut Block>,
     pub(super) local_free: NonNull<*mut Block>,
@@ -4327,11 +4327,11 @@ pub(super) struct PageLocalCollectState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_key: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     pub(super) page_key2: usize,
     pub(super) capacity: u16,
     pub(super) reserved: u16,
@@ -4372,7 +4372,7 @@ pub(crate) struct PageOwnerSnapshot {
 /// This carries no owner claim, memory provenance capability, or release
 /// authority. The committed prefix remains the source page count: its byte
 /// extent also depends on the caller's actual OS page size and area offset.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct PageValiditySnapshot {
     pub(crate) page: NonNull<Page>,
@@ -4527,7 +4527,7 @@ pub(crate) const EMPTY_PAGE_QUEUES: [PageQueue; BIN_COUNT] = empty_page_queues()
 // release image omits it; the debug image carries both keys after memid.
 #[repr(C)]
 pub(crate) struct Page {
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     self_: AtomicPtr<Page>,
     xthread_id: AtomicUsize,
     free: *mut Block,
@@ -4546,7 +4546,7 @@ pub(crate) struct Page {
     next: *mut Page,
     prev: *mut Page,
     memid: MemoryId,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     keys: [usize; crate::config::PAGE_KEY_COUNT],
 }
 
@@ -4775,7 +4775,7 @@ impl Page {
     /// registration must remain stable for this short projection; remote
     /// publications may independently change atomic fields. No reference to
     /// the full page or its owner survives the copied image.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn arena_print_snapshot_at(page: NonNull<Self>) -> crate::arena_print::PagePrintSnapshot {
         let raw = page.as_ptr();
         // SAFETY: the caller retains these initialized ordinary subobjects
@@ -4811,7 +4811,7 @@ impl Page {
     /// Producers allowed to collect after publication must be excluded.
     /// Retained backing and collector exclusion keep the captured chain live;
     /// the Acquire load alone grants neither lifetime nor release permission.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn validity_snapshot_at(page: NonNull<Self>) -> PageValiditySnapshot {
         let raw = page.as_ptr();
         // SAFETY: the caller retains each initialized scalar field and the
@@ -4884,7 +4884,7 @@ impl Page {
 
     const fn empty() -> Self {
         Self {
-            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+            #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
             self_: AtomicPtr::new(null_mut()),
             xthread_id: AtomicUsize::new(THREAD_ID_ABANDONED),
             free: null_mut(),
@@ -4903,7 +4903,7 @@ impl Page {
             next: null_mut(),
             prev: null_mut(),
             memid: MemoryId::static_empty(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             keys: [0; crate::config::PAGE_KEY_COUNT],
         }
     }
@@ -4928,10 +4928,10 @@ impl Page {
     /// `self` atomic in these aliases. Every zero bit-pattern below is a valid
     /// Rust field value, including `MemoryKind::None`; spelling out the image
     /// avoids treating arbitrary bytes as an initialized `Page`.
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     const fn empty_aligned_alias() -> Self {
         Self {
-            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+            #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
             self_: AtomicPtr::new(null_mut()),
             xthread_id: AtomicUsize::new(0),
             free: null_mut(),
@@ -4950,7 +4950,7 @@ impl Page {
             next: null_mut(),
             prev: null_mut(),
             memid: MemoryId::none(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             keys: [0; crate::config::PAGE_KEY_COUNT],
         }
     }
@@ -4966,7 +4966,7 @@ impl Page {
     /// while a current client can look up this slot. The caller computes the
     /// exact source alias span before publication; this grants no release right.
     #[inline]
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     pub(crate) unsafe fn publish_aligned_alias_owner_at(
         slot: NonNull<Page>, owner: NonNull<Page>,
     ) {
@@ -4984,7 +4984,7 @@ impl Page {
     /// owner operation separately keeps the returned primary Page live;
     /// the loaded pointer itself supplies no lifetime or release authority.
     #[inline]
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     pub(crate) unsafe fn aligned_alias_owner_at(slot: NonNull<Page>) -> *mut Page {
         // SAFETY: only the retained initialized atomic field is projected.
         unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
@@ -5004,7 +5004,7 @@ impl Page {
     /// value or be visible to a concurrent lookup until this call returns.
     /// `owner` must remain address-stable and live until this exact slot is
     /// cleared or its entire mapping is released after reader quiescence.
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     pub(crate) unsafe fn publish_aligned_alias_at(
         slot: NonNull<Page>,
         owner: NonNull<Page>,
@@ -5028,7 +5028,7 @@ impl Page {
     /// [`Self::publish_aligned_alias_at`]. The caller must serialize this
     /// transition with other writers and establish lookup quiescence before
     /// releasing the containing mapping.
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     pub(crate) unsafe fn clear_aligned_alias_at(
         slot: NonNull<Page>,
         owner: NonNull<Page>,
@@ -5046,7 +5046,7 @@ impl Page {
 
     /// Reads the aligned metadata owner published in this slot.
     #[inline]
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     pub(crate) fn aligned_alias_owner(&self) -> *mut Page {
         self.self_.load(core::sync::atomic::Ordering::Acquire)
     }
@@ -5259,11 +5259,11 @@ impl Page {
         self.next = null_mut();
         self.prev = null_mut();
         self.memid = memid;
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         { self.keys = [0; crate::config::PAGE_KEY_COUNT]; }
         // SAFETY: forwarded exact Heap identity/lifetime contract.
         unsafe { self.associate_exclusive_owner_with_heap_pointer(theap, heap, owner) };
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         self.self_
             .store(metadata.as_ptr(), core::sync::atomic::Ordering::Release);
         true
@@ -5394,7 +5394,7 @@ impl Page {
         // SAFETY: these bounded scalar projections use the retained original
         // capabilities; no whole Page, Heap or Theap reference is created.
         unsafe {
-            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+            #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
             if (&*core::ptr::addr_of!((*raw).self_)).load(Ordering::Acquire) != raw { return false; }
             if core::ptr::addr_of!((*raw).theap).read() != theap.as_ptr()
                 || core::ptr::addr_of!((*raw).heap).read().is_null()
@@ -5410,7 +5410,7 @@ impl Page {
                 || (&*core::ptr::addr_of!((*raw).xthread_free)).load(Ordering::Acquire) != 1 {
                 return false;
             }
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             {
                 if core::ptr::addr_of!((*raw).keys).read() != [0; crate::config::PAGE_KEY_COUNT] { return false; }
                 let random = &mut *core::ptr::addr_of_mut!((*theap.as_ptr()).random);
@@ -5520,7 +5520,7 @@ impl Page {
         }
 
         let memid = self.memid;
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         self.self_
             .store(null_mut(), core::sync::atomic::Ordering::Release);
         self.xthread_id
@@ -5614,9 +5614,9 @@ impl Page {
                 PageRemoteFreeOwnerState {
                     area: NonNull::new_unchecked(raw.cast::<u8>().wrapping_add((*raw).page_offset)),
                     xthread_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).xthread_free)),
-                    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
                     page_address: page.addr().get(),
-                    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
                     keys: (*raw).keys,
                     free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).free)),
                     local_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).local_free)),
@@ -6008,9 +6008,9 @@ impl Page {
         PageRemoteFreeProducerState {
             xthread_id,
             xthread_free,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             keys: unsafe { (*page).keys },
         }
     }
@@ -6073,9 +6073,9 @@ impl Page {
             // offset selects that backing without exposing its provenance.
             area: unsafe { NonNull::new_unchecked(page.cast::<u8>().wrapping_add((*page).page_offset)) },
             xthread_free,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             keys: unsafe { (*page).keys },
             free,
             local_free,
@@ -6262,11 +6262,11 @@ impl Page {
             area,
             area_bytes,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key: unsafe { (*page).keys[0] },
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2: unsafe { (*page).keys[1] },
             capacity,
             reserved,
@@ -6343,11 +6343,11 @@ impl Page {
             area,
             area_bytes,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key: unsafe { (*page).keys[0] },
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2: unsafe { (*page).keys[1] },
             capacity,
             reserved,
@@ -6457,9 +6457,9 @@ impl Page {
             // offset selects that backing without exposing its provenance.
             area: unsafe { NonNull::new_unchecked(page.cast::<u8>().wrapping_add((*page).page_offset)) },
             xthread_free,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             keys: unsafe { (*page).keys },
             free,
             local_free,
@@ -6519,11 +6519,11 @@ impl Page {
             area,
             area_bytes,
             block_size,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key: unsafe { (*page).keys[0] },
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             page_key2: unsafe { (*page).keys[1] },
             // SAFETY: these raw pointers name only the caller-owned ordinary
             // subobjects and manufacture no whole-page reference.
@@ -6549,7 +6549,7 @@ impl Page {
     ///
     /// `page` must name initialized live page metadata kept stable through
     /// this scalar read. The caller must not permit page retirement or reuse.
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     #[inline]
     pub(crate) unsafe fn source_page_keys_at(page: NonNull<Self>) -> [usize; 2] {
         // SAFETY: the caller retains the initialized source page through the
@@ -6668,9 +6668,9 @@ impl Page {
 
     #[cfg(test)]
     unsafe fn remote_free_test_next(&self, block: *mut u8) -> *mut u8 {
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         { unsafe { core::ptr::read(block.cast::<*mut u8>()) } }
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             let encoded = unsafe { core::ptr::read(block.cast::<usize>()) };
             let address = crate::free_list::decode_page_link(core::ptr::from_ref(self).addr(), self.keys, encoded);
@@ -6842,7 +6842,7 @@ const fn detached_thread_local_ptr() -> *mut ThreadLocalData {
 /// Lazy option initialization can deliver a registered output callback. The
 /// resulting scalar image is therefore passed into Theap initialization rather
 /// than reading the process table while its Heap, TLD, or Theap is borrowed.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct SourceTheapOptions {
     allow_page_reclaim: bool,
@@ -6850,21 +6850,21 @@ pub(crate) struct SourceTheapOptions {
     page_full_retain: isize,
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GuardedSampleOptions {
     sample_rate: usize,
     sample_seed: usize,
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GuardedSizeOptions {
     size_min: usize,
     size_max: usize,
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GuardedTheapOptions {
     sample_rate: usize,
@@ -6873,7 +6873,7 @@ pub(crate) struct GuardedTheapOptions {
     size_max: usize,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl SourceTheapOptions {
     /// Captures the scalar inputs of `mi_theap_options_init`.
     ///
@@ -6916,7 +6916,7 @@ impl SourceTheapOptions {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl GuardedSampleOptions {
     /// Captures rate/seed after the selected Theap's cookie draw.
     ///
@@ -6949,7 +6949,7 @@ impl GuardedSampleOptions {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl GuardedSizeOptions {
     /// Captures bounds after sample-rate initialization, including any
     /// selected-Theap random draw for a zero seed and rate greater than one.
@@ -6982,7 +6982,7 @@ impl GuardedSizeOptions {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl GuardedTheapOptions {
     /// Captures guarded options after the selected Theap's random split and
     /// cookie initialization, preserving callback effects on the source RNG.
@@ -7008,7 +7008,7 @@ impl GuardedTheapOptions {
 
 /// Independently observed atomic publication fields of a retained Theap.
 /// This image is not a coherent lifecycle transaction or a lifetime capability.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct TheapPublicationSnapshot {
     pub(crate) heap: *mut Heap,
@@ -7019,7 +7019,7 @@ pub(crate) struct TheapPublicationSnapshot {
 /// Source owner fields copied during a short admitted owner operation.
 /// A post-exit TLD value is only its former owner's identity; copying it
 /// neither dereferences the former TLD nor admits a replacement owner.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) struct TheapOwnerSnapshot {
     pub(crate) heap: NonNull<Heap>,
@@ -7031,7 +7031,7 @@ pub(crate) struct TheapOwnerSnapshot {
 }
 
 /// The concrete source initializer admitted by a retained image owner.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 pub(crate) enum TheapInitializationKind {
     ProcessStatic,
@@ -7047,7 +7047,7 @@ pub(crate) enum TheapInitializationKind {
 /// This phase witness owns no allocation or release capability. The actual
 /// static, metadata, or arena owner must keep all three images live and retain
 /// a partial image on failure. No references or list guards cross a callback.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct PreparedTheapInitialization {
     theap: NonNull<Theap>,
@@ -7062,14 +7062,14 @@ pub(crate) struct PreparedTheapInitialization {
 /// the incoming image has been linked and must retain its storage terminally.
 /// An unattached phase does not prove its TLD mutex is quiescent: a foreign
 /// guard or waiter may still retain that exact lock and its containing image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct TheapAttachmentFailure {
     error: TheapMainStaticInitError,
     unattached: Option<PreparedTheapInitialization>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl TheapAttachmentFailure {
     pub(crate) fn error(&self) -> TheapMainStaticInitError { self.error }
 
@@ -7080,7 +7080,7 @@ impl TheapAttachmentFailure {
 
 /// The original source list-head decision awaiting its random branch.
 /// No new head lookup or list splice occurs after a warning callback.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) enum TheapRandomInitialization {
     FirstHead(FirstHeadTheapInitialization),
@@ -7089,29 +7089,29 @@ pub(crate) enum TheapRandomInitialization {
 
 /// A first TLD member retaining its exact unpublished image while normal
 /// entropy initialization delivers a source warning outside all projections.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct FirstHeadTheapInitialization(PreparedTheapInitialization);
 
 /// The TLD-linked image whose random split and cookie are complete, but whose
 /// initialized Heap predicate is still null while guarded options are read.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct LinkedTheapInitialization(PreparedTheapInitialization);
 
 /// The source sample-rate setter has run, including its conditional random
 /// draw. Bounds callbacks run next with all projections released.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 #[must_use]
 pub(crate) struct SampledTheapInitialization(PreparedTheapInitialization);
 
 /// A fully initialized private image awaiting source statistics accounting
 /// and the final Release Heap/list publication.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct ReadyTheapInitialization(PreparedTheapInitialization);
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl PreparedTheapInitialization {
     /// Applies inert ordinary options, then links the current TLD head and
     /// performs the selected source random split and cookie draw.
@@ -7196,7 +7196,7 @@ impl PreparedTheapInitialization {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl FirstHeadTheapInitialization {
     /// Installs material whose source warning has already been delivered,
     /// then performs the original selected-image cookie draw.
@@ -7218,7 +7218,7 @@ impl FirstHeadTheapInitialization {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl LinkedTheapInitialization {
     /// Applies rate/seed before the subsequent bound getter callbacks.
     ///
@@ -7241,7 +7241,7 @@ impl LinkedTheapInitialization {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 impl SampledTheapInitialization {
     /// Applies bound scalars after their separate callback window.
     ///
@@ -7256,7 +7256,7 @@ impl SampledTheapInitialization {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ReadyTheapInitialization {
     /// Release-publishes the source initialized predicate and then inserts
     /// the image on the selected Heap list. Source statistics must already
@@ -7324,20 +7324,20 @@ pub(crate) struct Theap {
     is_detached: bool,
     // These initialized administration bytes occupy the source structure's
     // internal alignment gap; the page queues retain their source offset.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle,
     // One actual issuer slot retains an unfinished task and its original
     // owners. This bit only refuses retirement; it never grants lifetime or
     // callback admission. Changes and list detachment share the Heap lock.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     retained_fresh_task: AtomicBool,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     guarded_size_min: usize,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     guarded_size_max: usize,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     guarded_sample_rate: usize,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     guarded_sample_count: usize,
     pages: [PageQueue; BIN_COUNT],
     memid: MemoryId,
@@ -7346,7 +7346,7 @@ pub(crate) struct Theap {
 
 // The source's three flag bytes precede the next word-aligned field. Both
 // private lifecycle bytes and the refusal bit must fit that existing gap.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const _: () = {
     let gap_end = core::mem::offset_of!(Theap, page_full_retain)
         + core::mem::size_of::<isize>() + core::mem::align_of::<usize>();
@@ -7379,14 +7379,14 @@ pub(crate) enum GenericAllocationAdministration {
 /// counters or field-access authority. The actual selected owner retains
 /// lifetime and resumes on the same image after releasing projections needed
 /// by nested allocation. Identity equality alone never proves retained custody.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct GenericAllocationFrequencyRequest {
     issuer: NonNull<Theap>,
     _owner_thread: core::marker::PhantomData<*mut ()>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl GenericAllocationFrequencyRequest {
     /// Checks identity only; the retained session still supplies field access.
     pub(crate) fn matches_theap(&self, pointer: NonNull<Theap>) -> bool {
@@ -7401,7 +7401,7 @@ impl Theap {
     /// The original typed Theap allocation stays live throughout this call.
     /// Image replacement, exclusive whole-image references, and retirement
     /// are excluded; atomic publication and disjoint field mutation may overlap.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn publication_snapshot_at(theap: NonNull<Self>) -> TheapPublicationSnapshot {
         let raw = theap.as_ptr();
         // SAFETY: these short references cover only atomic fields.
@@ -7421,7 +7421,7 @@ impl Theap {
     /// and excludes writes to the copied fields, image replacement, Heap
     /// detachment, and retirement for this call. Page queues and random or
     /// guarded counters can be mutated independently by their admitted owners.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn owner_snapshot_at(theap: NonNull<Self>) -> Option<TheapOwnerSnapshot> {
         let raw = theap.as_ptr();
         // SAFETY: publication is atomic; ordinary copies rely on retained
@@ -7447,7 +7447,7 @@ impl Theap {
     /// TLD, excluding TLD replacement, thread teardown and identity mutation
     /// for this short projection. Former post-exit TLD pointers cannot be
     /// followed under this contract.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn page_validity_thread_id_at(theap: NonNull<Self>) -> ThreadId {
         // SAFETY: only the retained owner pointer and TLD scalar are read.
         unsafe {
@@ -7468,7 +7468,7 @@ impl Theap {
     /// mutation or list retirement. Before invoking a source option capture,
     /// all Heap/TLD/Theap/owner references and locks that its callback could
     /// reach must end. The phase witness alone grants no cleanup authority.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_initialization_at(
         theap: NonNull<Theap>, heap: NonNull<Heap>, tld: NonNull<ThreadLocalData>,
         kind: TheapInitializationKind,
@@ -7594,17 +7594,17 @@ impl Theap {
             allow_page_reclaim: false,
             allow_page_abandon: true,
             is_detached: true,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle::empty(),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             retained_fresh_task: AtomicBool::new(false),
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             guarded_size_min: 0,
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             guarded_size_max: 0,
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             guarded_sample_rate: 0,
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             guarded_sample_count: 1,
             pages: EMPTY_PAGE_QUEUES,
             memid: MemoryId::static_empty(),
@@ -7637,7 +7637,7 @@ impl Theap {
     /// after an unattached initialization phase has returned its authority.
     fn reset_empty_preserving_ownership(&mut self) {
         let memid = self.memid;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let lifecycle = self.main_heap_lifecycle;
         let destination = NonNull::from(&mut *self);
         // SAFETY: exclusive access excludes observers and field projections.
@@ -7649,7 +7649,7 @@ impl Theap {
             Self::write_empty_at(destination);
         }
         self.memid = memid;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { self.main_heap_lifecycle = lifecycle; }
     }
 
@@ -8387,7 +8387,7 @@ impl Theap {
         if self.is_initialized() {
             return false;
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !owner.is_detached() && !tld.theaps.is_null() {
             // A bounded live bootstrap represents only the fresh-TLD arm.
             // A pre-existing head needs source snapshot-and-split ownership,
@@ -8432,7 +8432,7 @@ impl Theap {
         // introducing mutable option state.
         debug_assert!(page_full_retain == 2 || (page_full_retain == -1 && !owner.is_detached()));
         self.page_full_retain = page_full_retain;
-        if owner.is_detached() || cfg!(target_arch = "x86_64") {
+        if owner.is_detached() || cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
             // The preceding fresh-TLD guard proves `mi_tld_init`'s null
             // head before `_mi_theap_init`, so both the detached and native
             // live private bootstrap take its normal first-head random
@@ -8527,7 +8527,7 @@ impl Theap {
     /// guarded fields. The immutable source empty image has rate zero and
     /// count one; that exact path performs no write. Every other image must
     /// carry mutable provenance for its potentially updated countdown.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn guarded_sample_at(pointer: NonNull<Self>, size: usize) -> bool {
         let raw = pointer.as_ptr();
         // SAFETY: the caller supplies initialized, exclusively owned fields.
@@ -8550,7 +8550,7 @@ impl Theap {
     /// # Safety
     /// The live image and initialized rate remain stable through this read;
     /// no overlapping rate write, initialization, or teardown is allowed.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn guarded_sample_rate_at(pointer: NonNull<Self>) -> usize {
         unsafe { core::ptr::addr_of!((*pointer.as_ptr()).guarded_sample_rate).read() }
     }
@@ -8561,7 +8561,7 @@ impl Theap {
     /// The caller exclusively owns a writable live sampling-rate field and
     /// excludes initialization and teardown. An immutable empty image must
     /// never be passed for a write.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn guarded_replace_sample_rate_at(pointer: NonNull<Self>, rate: usize) -> usize {
         unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*pointer.as_ptr()).guarded_sample_rate), rate) }
     }
@@ -8572,7 +8572,7 @@ impl Theap {
     /// `rate > 1 && seed == 0`, it additionally owns the initialized selected
     /// Theap random field and excludes every overlapping random projection.
     /// No initializer, teardown, or user callback overlaps these projections.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn guarded_set_sample_rate_at(pointer: NonNull<Self>, rate: usize, mut seed: usize) {
         let raw = pointer.as_ptr();
         unsafe {
@@ -8593,7 +8593,7 @@ impl Theap {
     /// # Safety
     /// The caller exclusively owns both writable guarded bound fields in a
     /// live image, excluding initialization, teardown, and sampler accesses.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn guarded_set_size_bound_at(pointer: NonNull<Self>, min: usize, max: usize) {
         unsafe {
             core::ptr::addr_of_mut!((*pointer.as_ptr()).guarded_size_min).write(min);
@@ -8605,7 +8605,7 @@ impl Theap {
     /// # Safety
     /// The caller retains the current-thread Theap and excludes statistics
     /// merge, reset, initialization, and teardown during this projection.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     pub(crate) unsafe fn record_guarded_allocation_statistics_at(
         pointer: NonNull<Self>, internal_request: usize, original_request: usize,
     ) {
@@ -8634,7 +8634,7 @@ impl Theap {
     /// The caller retains this initialized, Heap-published Theap and its
     /// actual Heap/member lifetime. The subprocess association remains fixed
     /// through this read; no whole-Theap reference or image retirement overlaps.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn subprocess_identity_at(
         pointer: NonNull<Self>,
     ) -> *mut SubprocessIdentity {
@@ -8673,7 +8673,7 @@ impl Theap {
     /// # Safety
     /// The caller retains this live Theap and excludes every overlapping
     /// whole-Theap or random-field reference for this call.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn reinitialize_random_if_weak_at(
         pointer: NonNull<Self>,
     ) -> crate::random::RandomReinitialization {
@@ -8693,7 +8693,7 @@ impl Theap {
     ///
     /// # Safety
     /// The same exclusion as [`Self::reinitialize_random_if_weak_at`].
-    #[cfg(all(test, target_arch = "x86_64"))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn test_random_is_weak_at(pointer: NonNull<Self>) -> Option<bool> {
         // SAFETY: forwarded; the projection only reads the weak flag.
         unsafe { Self::with_os_reservation_random_at(pointer, |random| random.map(|random| random.is_weak())) }
@@ -8712,7 +8712,7 @@ impl Theap {
     /// # Safety
     /// The typed image remains live, and no writer changes its memory ID
     /// during this bounded read. No whole-Theap borrow is created.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn memory_id_at(theap: NonNull<Self>) -> MemoryId {
         unsafe { core::ptr::addr_of!((*theap.as_ptr()).memid).read() }
     }
@@ -8723,7 +8723,7 @@ impl Theap {
     /// The caller retains the image and owns exclusive administration access
     /// or its exact lifecycle lock. The projection must not overlap a mutable
     /// page session, initialization, release, or another control mutation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn main_heap_lifecycle_at(theap: NonNull<Self>)
         -> *mut crate::subproc::main_heaps::MainHeapTheapLifecycle {
         unsafe { core::ptr::addr_of_mut!((*theap.as_ptr()).main_heap_lifecycle) }
@@ -8737,7 +8737,7 @@ impl Theap {
     /// this bounded atomic read. A pointer recovered from lookup or matching
     /// identity alone does not establish that lifetime. The result grants no
     /// task, mutation, cancellation or subsequent image-access authority.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn retains_fresh_initialization_at(theap: NonNull<Self>) -> bool {
         unsafe { (&*core::ptr::addr_of!((*theap.as_ptr()).retained_fresh_task)).load(Ordering::Acquire) }
     }
@@ -8753,7 +8753,7 @@ impl Theap {
     /// owners before the outer admission ends, including on an unlock error
     /// after publication. Pointer equality and this bit grant no ownership.
     /// A failed publication cannot release or abandon the retained task.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn mark_retained_fresh_task_at(
         theap: NonNull<Self>, heap: NonNull<Heap>,
     ) -> Result<(), HeapTheapListError> {
@@ -8766,7 +8766,7 @@ impl Theap {
     /// All original-owner and exact persistent-slot obligations of
     /// `mark_retained_fresh_task_at` apply. A changed outcome belongs only to
     /// that actual task's linear producer state, not another matching pointer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn mark_retained_fresh_task_at_with_progress(
         theap: NonNull<Self>, heap: NonNull<Heap>,
     ) -> RetainedFreshTaskMarkerOutcome {
@@ -8780,7 +8780,7 @@ impl Theap {
     /// task no longer owns unfinished metadata, callbacks or cleanup. No
     /// other task can occupy the slot until this operation completes. The
     /// marker is not cancellation or permission to discard task ownership.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn clear_retained_fresh_task_at(
         theap: NonNull<Self>, heap: NonNull<Heap>,
     ) -> Result<(), HeapTheapListError> {
@@ -8793,14 +8793,14 @@ impl Theap {
     /// All exact-task settlement and original-owner obligations of
     /// `clear_retained_fresh_task_at` apply. A changed outcome does not admit
     /// any further access to an issuer whose task has already settled.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn clear_retained_fresh_task_at_with_progress(
         theap: NonNull<Self>, heap: NonNull<Heap>,
     ) -> RetainedFreshTaskMarkerOutcome {
         unsafe { Self::change_retained_fresh_task_at(theap, heap, true) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     /// Publishes exact task refusal while its owner-exit TLD list lock still
     /// retains the original Heap. Try the Heap lock in source list order;
     /// contention must retain the complete protected failure, never block
@@ -8811,7 +8811,7 @@ impl Theap {
     /// the exact unfinished task and every issuer image, and invokes no user
     /// callback before both source locks have ended. A changed result must be
     /// recorded in that task even when unlocking fails.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn mark_retained_task_while_tld_locked(
         theap: NonNull<Self>, heap: NonNull<Heap>,
     ) -> RetainedFreshTaskMarkerOutcome {
@@ -8824,7 +8824,7 @@ impl Theap {
         unsafe { Self::change_retained_fresh_task_with_lock_at(theap, heap, expected, false) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn change_retained_fresh_task_with_lock_at(
         theap: NonNull<Self>, heap: NonNull<Heap>, expected: bool, tld_locked: bool,
     ) -> RetainedFreshTaskMarkerOutcome {
@@ -9385,7 +9385,7 @@ impl Theap {
         pointer: NonNull<Theap>,
         generic_collect_frequency: impl FnOnce() -> isize,
     ) -> GenericAllocationAdministration {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let Some(request) = (unsafe { Self::begin_generic_allocation_administration_at(pointer) }) else {
                 return GenericAllocationAdministration::None;
@@ -9393,7 +9393,7 @@ impl Theap {
             let frequency = generic_collect_frequency();
             unsafe { Self::finish_generic_allocation_administration_at(pointer, request, frequency) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
         const GENERIC_ADMIN_FREQUENCY: isize = 1_000;
 
@@ -9443,7 +9443,7 @@ impl Theap {
     /// counters for this short operation; their valid values cannot overflow.
     /// Before capturing options, park the actual owner and end projections
     /// the callback may access while retaining this same image's lifetime.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn begin_generic_allocation_administration_at(
         pointer: NonNull<Theap>,
     ) -> Option<GenericAllocationFrequencyRequest> {
@@ -9468,7 +9468,7 @@ impl Theap {
     /// `request` began administration on this exact retained Theap. The same
     /// admitted owner has resumed with exclusive counter authority, and
     /// `frequency` is the source-clamped value `1..=1_000_000`.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn finish_generic_allocation_administration_at(
         pointer: NonNull<Theap>, _request: GenericAllocationFrequencyRequest, frequency: isize,
     ) -> GenericAllocationAdministration {
@@ -9931,9 +9931,9 @@ const _: [(); 648] = [(); size_of::<Arena>()];
 const _: [(); 8] = [(); align_of::<Arena>()];
 const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
-#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+#[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
 const _: [(); 120 + 8 * crate::config::PAGE_META_IS_ALIGNED as usize] = [(); size_of::<Page>()];
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 const _: [(); 136 + 8 * crate::config::PAGE_META_IS_ALIGNED as usize] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
 // `Heap` stops at the source `memid` field and uses allocator-private futex
@@ -9941,20 +9941,20 @@ const _: [(); 8] = [(); align_of::<Page>()];
 // layout assertion.
 const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
 const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
-#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+#[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
 const _: [(); 8104 + if crate::config::GUARDED { 32 } else { 0 }] = [(); size_of::<Theap>()];
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 const _: [(); 8112 + if crate::config::GUARDED { 32 } else { 0 }] = [(); size_of::<Theap>()];
 const _: [(); 8] = [(); align_of::<Theap>()];
-#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+#[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
 const _: [(); 129] = [(); PAGES_DIRECT];
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 const _: [(); 130] = [(); PAGES_DIRECT];
 const _: [(); 74] = [(); BIN_FULL];
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_unfaulted_test_random(branch: TheapRandomInitialization) -> LinkedTheapInitialization {
         match branch {
             TheapRandomInitialization::SplitComplete(linked) => linked,
@@ -10024,7 +10024,7 @@ mod tests {
         assert_eq!(crate::bootstrap::empty_default_theap().refcount(), 1);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn owner_snapshots_preserve_field_authority_during_atomic_and_local_mutation() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10100,7 +10100,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn prepared_theap_list_contention_preserves_incoming_preimage() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10146,7 +10146,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn unattached_reset_preserves_live_tld_mutex_and_original_owner_image() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10190,7 +10190,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn unattached_phase_resume_splits_callback_published_head_after_real_mutex_failure() {
         use crate::config::SourceOption;
@@ -10305,7 +10305,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_option_capture_observes_warning_callback_replacement_on_prepared_image() {
         use crate::diagnostic_output::OutputOwner;
@@ -10388,7 +10388,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn staged_live_owner_kinds_preserve_source_options_random_and_publication_order() {
         use crate::config::SourceOption;
@@ -10449,7 +10449,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn staged_guarded_zero_seed_draw_precedes_bound_callbacks_on_unpublished_image() {
         use crate::config::SourceOption;
@@ -10505,7 +10505,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn staged_child_metadata_preserves_parent_tld_random_order_and_child_options() {
         use crate::subproc::ChildSubprocessImage;
@@ -10561,7 +10561,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn staged_initializer_contention_distinguishes_unattached_reset_from_published_retention() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10621,7 +10621,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn staged_initializer_rejects_recapturing_prepared_and_linked_unpublished_images() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10670,7 +10670,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generic_frequency_resume_observes_nested_collection_reset_instead_of_stale_count() {
         let mut image = Theap::empty();
@@ -10695,7 +10695,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn prepared_theap_keeps_prefix_custody_and_links_callback_created_head_before_publication() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10789,7 +10789,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn first_head_random_warning_precedes_material_cookie_and_heap_publication() {
         use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
@@ -10889,7 +10889,7 @@ mod tests {
         assert!((unsafe { heap.theaps.get().read() }).is_null());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn theap_option_snapshots_read_the_supplied_output_owner() {
         use crate::config::SourceOption;
@@ -10950,7 +10950,7 @@ mod tests {
         assert!(theap.matches_owner(TheapOwner::Detached));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn selected_published_metadata_theap_identity_matches_its_actual_heap_owner() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10978,8 +10978,8 @@ mod tests {
         assert!(tld.theaps.is_null());
     }
 
-    #[cfg(target_arch = "x86_64")]
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_sampler_preserves_source_bounds_countdown_and_rate_suspension() {
         let mut image = Theap::empty();
@@ -11749,12 +11749,12 @@ mod tests {
         // boundary, not a byte-layout claim about `pthread_mutex_t`.
         let (empty_page_memid_base_is_null, empty_page_memid_size) =
             empty_page_memid.test_static_empty_info();
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         record!(
             "m1.bootstrap.empty_page.self_is_null",
             empty_page.self_.load(Ordering::Relaxed).is_null() as usize
         );
-        #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1"))]
         record!("m1.bootstrap.empty_page.self_is_null", 0);
         record!(
             "m1.bootstrap.empty_page.xthread_id",
@@ -12133,7 +12133,7 @@ mod tests {
         record!("offsetof.mi_block_t.next", offset_of!(Block, next));
         record!("sizeof.mi_page_t", size_of::<Page>());
         record!("alignof.mi_page_t", align_of::<Page>());
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         record!("offsetof.mi_page_t.self", offset_of!(Page, self_));
         record!("offsetof.mi_page_t.xthread_id", offset_of!(Page, xthread_id));
         record!("offsetof.mi_page_t.free", offset_of!(Page, free));
@@ -12898,7 +12898,7 @@ mod tests {
         }
 
         let empty_page = EMPTY_PAGE.as_ref();
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         assert!(empty_page.self_.load(Ordering::Relaxed).is_null());
         assert_eq!(empty_page.xthread_id.load(Ordering::Relaxed), 0);
         assert!(empty_page.free.is_null());
@@ -13060,7 +13060,7 @@ mod tests {
         assert_unchanged_static_source_image(&threadpool_candidate);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn retained_tld_list_guard_reports_real_contention_and_restores_availability() {
         let mut tld = ThreadLocalData::detached();
@@ -13080,7 +13080,7 @@ mod tests {
         assert!(tld.test_theap_head_is(core::ptr::null_mut()));
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1"))]
     #[test]
     fn secure_checked_page_layout_matches_pinned_source() {
         assert!(crate::config::FREE_IS_CHECKED);
@@ -13164,9 +13164,9 @@ mod tests {
         assert_eq!(offset_of!(PageQueue, count), 16);
         assert_eq!(offset_of!(PageQueue, block_size), 24);
         let metadata_shift = 8 * usize::from(!crate::config::PAGE_META_IS_ALIGNED);
-        assert_eq!(size_of::<Page>(), if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 144 } else { 128 } - metadata_shift);
+        assert_eq!(size_of::<Page>(), if cfg!(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))) { 144 } else { 128 } - metadata_shift);
         assert_eq!(align_of::<Page>(), 8);
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         assert_eq!(offset_of!(Page, self_), 0);
         assert_eq!(offset_of!(Page, xthread_id), 8 - metadata_shift);
         assert_eq!(offset_of!(Page, free), 16 - metadata_shift);
@@ -13185,7 +13185,7 @@ mod tests {
         assert_eq!(offset_of!(Page, next), 88 - metadata_shift);
         assert_eq!(offset_of!(Page, prev), 96 - metadata_shift);
         assert_eq!(offset_of!(Page, memid), 104 - metadata_shift);
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             assert_eq!(crate::config::PAGE_KEY_COUNT, 2);
             assert_eq!(offset_of!(Page, keys), 128 - metadata_shift);
@@ -13200,7 +13200,7 @@ mod tests {
         const STORAGE_WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
         const LIVE_THREAD_ID: usize = 12;
 
-        assert_eq!(PAGE_OFFSET, if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 144 } else { 128 });
+        assert_eq!(PAGE_OFFSET, if cfg!(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))) { 144 } else { 128 });
         assert_eq!(STORAGE_WORDS * size_of::<usize>(), PAGE_OFFSET + 2 * BLOCK_SIZE);
 
         // This address-stable backing contains one source-stride `Page`
@@ -13210,7 +13210,7 @@ mod tests {
         let mut storage = [core::mem::MaybeUninit::<usize>::uninit(); STORAGE_WORDS];
         let page_pointer = storage.as_mut_ptr().cast::<Page>();
         let mut initial = Page::remote_free_test_page(2, 1);
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             initial.keys = [17, usize::MAX - 31];
         }
@@ -13308,7 +13308,7 @@ mod tests {
                 // valid. This worker retains only raw atomic subobject
                 // pointers plus the source-permitted immutable geometry.
                 let producer = unsafe { Page::remote_free_producer_state_at(page) };
-                #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
                 {
                     // SAFETY: the live client retains the initialized page;
                     // keys remain immutable while owner-local counts change.
@@ -13358,7 +13358,7 @@ mod tests {
         // geometry fields were immutable throughout the live page lifetime.
         assert_eq!(unsafe { (*page.as_ptr()).block_size }, BLOCK_SIZE);
         assert_eq!(unsafe { (*page.as_ptr()).page_offset }, PAGE_OFFSET);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: the producer joined; this owner retains the complete
             // metadata and block area without mutation through these reads.
@@ -13534,7 +13534,7 @@ mod tests {
         assert_eq!(size_of::<TheapRandomImage>(), 136);
         assert_eq!(offset_of!(Theap, pages_free_direct), 0);
         assert_eq!(offset_of!(Theap, tld), PAGES_DIRECT * size_of::<*mut Page>());
-        let direct_offset = if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 8 } else { 0 };
+        let direct_offset = if cfg!(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))) { 8 } else { 0 };
         assert_eq!(offset_of!(Theap, heap), 1_040 + direct_offset);
         assert_eq!(offset_of!(Theap, random), 1_080 + direct_offset);
         assert_eq!(offset_of!(Theap, pages), 1_312 + direct_offset);
@@ -13725,7 +13725,7 @@ mod tests {
         assert!(forged_successor.prev.is_null());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn live_bootstrap_rejects_existing_random_head_without_mutation() {
         let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
@@ -13758,7 +13758,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_arch = "x86_64", not(miri), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
     fn source_page_map_failure_precedes_fresh_page_key_random_draws() {
         use crate::os::{MemoryConfig, PageSize, fault};
         use crate::os_page::OsAlignedPageClaim;
@@ -13822,7 +13822,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
     fn source_page_keys_follow_registered_primary_and_intervening_original_random_draw() {
         use crate::os::{MemoryConfig, PageSize, fault};
         use crate::os_page::OsAlignedPageClaim;
@@ -13890,9 +13890,9 @@ mod tests {
             assert_eq!((*theap.as_ptr()).random.test_output_available(), available);
             // Loading and dereferencing the stored original self capability
             // after key writes must remain valid under strict provenance.
-            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+            #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
             let primary = (*page.as_ptr()).self_.load(Ordering::Acquire);
-            #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1"))]
             let primary = page.as_ptr();
             assert_eq!((*primary).block_size, layout.block_size());
             page_map.unregister_range(slice_start.as_ptr(), layout.page_map_size()).unwrap();
@@ -13938,7 +13938,7 @@ mod tests {
             memid,
         ));
 
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         assert_eq!(page.self_.load(core::sync::atomic::Ordering::Acquire), core::ptr::from_mut(&mut page));
         assert_eq!(page.theap(), core::ptr::from_mut(&mut theap));
         assert_eq!(page.heap(), core::ptr::from_mut(&mut heap));
@@ -14028,7 +14028,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     fn aligned_metadata_alias_publishes_only_its_primary_owner() {
         let mut primary = Page::empty();
         let mut alias = Page::empty();
@@ -14105,7 +14105,7 @@ mod tests {
             .retire_exclusive()
             .expect("fresh page is free and queue-detached");
         assert_eq!(released.kind(), MemoryKind::External);
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         assert!(page.self_.load(core::sync::atomic::Ordering::Acquire).is_null());
         assert_eq!(
             page.xthread_id.load(core::sync::atomic::Ordering::Acquire),

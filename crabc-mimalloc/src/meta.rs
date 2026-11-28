@@ -152,7 +152,7 @@ pub(crate) enum MetaError {
     /// mapping, so retrying would overwrite live process state.
     InitializationRetained,
     /// The actual winning bootstrap output admission refused or changed.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError),
     /// Direct OS/page-map/arena bootstrap could not complete but left no
     /// published private metadata backing. The detached-Theap identity remains
@@ -1045,7 +1045,7 @@ impl MetaAllocation<'static> {
     /// wrappers and other accesses through recovery and terminal release.
     /// SourceOwned is a checked marker, not proof of these lifetime rights.
     /// Rejection retains the source owner and grants no raw release right.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn recover_last_reference_main_heap_theap(
         owner: Pin<&'static MetaAllocator>, pointer: NonNull<Theap>,
     ) -> Option<Self> {
@@ -1884,7 +1884,7 @@ impl ChildHeapStorage<'_> {
 
     /// Returns projection authority only while native bytes remain a live
     /// Heap image. Diagnostic identity is separately available after release.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn pointer_for_live_image(&self) -> Option<NonNull<Heap>> {
         match self {
             Self::Native(image) if image.state != NativeChildHeapImageState::Live => None,
@@ -1936,7 +1936,7 @@ pub(crate) enum ChildHeapRelease<'a, 'heap> {
     Terminal,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeChildHeapImageState {
     Live,
@@ -1956,22 +1956,22 @@ enum NativeChildHeapImageState {
 pub(crate) struct NativeChildHeapImage {
     pointer: NonNull<Heap>,
     initialized: bool,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     state: NativeChildHeapImageState,
 }
 
 impl NativeChildHeapImage {
     const fn image_request_size() -> usize {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { size_of::<Heap>() }
     }
 
     /// `mi_heap_zalloc(parent->heap_main, sizeof(mi_heap_t))` on the calling
     /// thread, through the native runtime's current owner.
     pub(crate) fn allocate() -> Option<Self> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             const _: () = assert!(size_of::<Heap>() <= crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE);
             let parent = crate::source_heap_api::heap_main();
@@ -1992,7 +1992,7 @@ impl NativeChildHeapImage {
             }
             Some(Self { pointer: pointer.cast(), initialized: false, state: NativeChildHeapImageState::Live })
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         match crate::runtime_lifecycle::native_allocate_aligned(
             size_of::<Heap>(), core::mem::align_of::<Heap>(), true,
         ) {
@@ -2009,7 +2009,7 @@ impl NativeChildHeapImage {
     }
 
     fn initialize_empty_image(&mut self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.state != NativeChildHeapImageState::Live { return false; }
         if self.initialized || self.pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0 {
             return false;
@@ -2025,7 +2025,7 @@ impl NativeChildHeapImage {
         &mut self,
         operation: impl for<'image> FnOnce(Pin<&'image mut Heap>) -> R,
     ) -> Option<R> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.state != NativeChildHeapImageState::Live { return None; }
         if !self.initialized { return None; }
         // SAFETY: the linear token retains this exact allocation, no mutable
@@ -2047,7 +2047,7 @@ impl NativeChildHeapImage {
     /// the exact current allocation. Terminal custody is admitted only to
     /// refuse before any pointer is passed to the release primitive.
     pub(crate) unsafe fn free(self) -> Result<(), Self> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let mut image = self;
             if image.state == NativeChildHeapImageState::Terminal { return Err(image); }
@@ -2063,7 +2063,7 @@ impl NativeChildHeapImage {
                 unsafe { crate::subproc::main_heaps::free_prepared_subproc_safe_with_progress(pointer) }
             }) };
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         // SAFETY: the token owns this exact live native allocation.
         match unsafe { crate::runtime_lifecycle::native_free(self.pointer.cast()) } {
             crate::runtime_lifecycle::NativePageFreeResult::Freed => Ok(()),
@@ -2075,7 +2075,7 @@ impl NativeChildHeapImage {
     /// The exact live or prepared allocation and its issuing owner remain
     /// retained with `operation`; teardown is complete. No image projection
     /// spans preparation callbacks, which cannot free this in-flight client.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn prepare_for_free(
         &mut self,
         operation: &crate::runtime_lifecycle::NativeSubprocessOperation,
@@ -2108,7 +2108,7 @@ impl NativeChildHeapImage {
     /// Live or prepared custody owns the exact current allocation and its
     /// completed teardown. `release` reports actual consumption and retains backing on
     /// error. Terminal custody cannot invoke `release` or access image bytes.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn free_with_progress(
         mut self,
         release: impl FnOnce(NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
@@ -2217,7 +2217,7 @@ pub(crate) struct ChildThreadOwner {
     // A failed growth retains the copied unpublished allocation alongside
     // any old array whose release refused before consumption. Neither is
     // active compiler-TLS storage after the thread owner becomes terminal.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pending_thread_locals: Option<ChildMetadataImageBlock>,
     /// The one retained raw-unmap retry of this thread's Theaps for non-main
     /// Heaps, with the Theap whose engine it latched `RetryPending` (`None`
@@ -2278,7 +2278,7 @@ impl ChildThreadOwner {
     /// Moves a source assertion from this exact retained current member.
     /// The caller already retains its actual issuer and ends every member
     /// and record projection before delivering diagnostic output.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) fn take_thread_done_live_validity(&mut self)
         -> Option<crate::single_thread::PendingLivePageValidity> {
         self.pending_live_page_validity.take().or_else(|| {
@@ -2593,7 +2593,7 @@ impl ChildThreadOwner {
 
 /// Physical initializedness of one caller-retained owner slot. This does
 /// not replace the source thread owner's lifecycle state.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ChildThreadInitializationStorageState { Vacant, Owned, Consumed }
 
@@ -2602,13 +2602,13 @@ enum ChildThreadInitializationStorageState { Vacant, Owned, Consumed }
 /// and completion prevents a caller from consuming it between those phases.
 /// Retained bytes deliberately have no implicit resource-releasing drop;
 /// the actual child initialization admission must survive a terminal outcome.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct ChildThreadInitializationStorage {
     owner: core::mem::MaybeUninit<ChildThreadOwner>,
     state: ChildThreadInitializationStorageState,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ChildThreadInitializationStorage {
     pub(crate) const fn vacant() -> Self {
         Self { owner: core::mem::MaybeUninit::uninit(), state: ChildThreadInitializationStorageState::Vacant }
@@ -2681,7 +2681,7 @@ impl ChildThreadInitializationStorage {
 
 /// Preparation returns only its source phase or scalar refusal. The original
 /// candidate stays in the caller-retained slot on every initialized outcome.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) enum ChildThreadPreparationOutcome {
     Prepared(crate::types::PreparedTheapInitialization),
@@ -2691,7 +2691,7 @@ pub(crate) enum ChildThreadPreparationOutcome {
 
 /// Final source publication shared by direct keepers and caller-retained
 /// storage. A refusal terminalizes the original owner without guessed teardown.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn complete_child_thread_source(
     owner: &mut ChildThreadOwner, ready: crate::types::ReadyTheapInitialization,
 ) -> Result<(), ChildThreadStartError> {
@@ -2712,14 +2712,14 @@ unsafe fn complete_child_thread_source(
 
 /// The original child-thread blocks and registration awaiting source
 /// option and random phases. Dropping this owner never guesses teardown.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct PendingChildThreadInitialization {
     keeper: ChildThreadInitializationOwner,
     phase: crate::types::PreparedTheapInitialization,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl PendingChildThreadInitialization {
     pub(crate) fn into_phase(self) -> (ChildThreadInitializationOwner, crate::types::PreparedTheapInitialization) {
         (self.keeper, self.phase)
@@ -2728,11 +2728,11 @@ impl PendingChildThreadInitialization {
 
 /// Actual allocation and registration custody independent of the raw
 /// initializer phase. The enclosing admission retains the original child.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct ChildThreadInitializationOwner(ChildThreadOwner);
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ChildThreadInitializationOwner {
     pub(crate) fn retain_refusal(mut self) -> ChildThreadStartFailure {
         self.0.state = ChildThreadOwnerState::Terminal;
@@ -2763,7 +2763,7 @@ impl ChildThreadInitializationOwner {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn child_dynamic_init_error(error: crate::types::TheapMainStaticInitError) -> crate::types::TheapDynamicInitError {
     use crate::types::{TheapDynamicInitError as Dynamic, TheapMainStaticInitError as Static};
     match error {
@@ -2775,7 +2775,7 @@ fn child_dynamic_init_error(error: crate::types::TheapMainStaticInitError) -> cr
 
 /// A checked existing child Theap or the exact new candidate awaiting
 /// source getters. Existing cache/slot selection creates no initializer.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) enum ChildHeapTheapSelection {
     Existing(NonNull<Theap>),
     Pending(PendingChildHeapTheapInitialization),
@@ -2784,14 +2784,14 @@ pub(crate) enum ChildHeapTheapSelection {
 
 /// The original child metadata or requested-arena allocation, together with
 /// its prepared phase. Neither field borrows a member or child projection.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct PendingChildHeapTheapInitialization {
     keeper: ChildHeapTheapInitializationOwner,
     phase: crate::types::PreparedTheapInitialization,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl PendingChildHeapTheapInitialization {
     pub(crate) fn into_phase(self) -> (ChildHeapTheapInitializationOwner, crate::types::PreparedTheapInitialization) {
         (self.keeper, self.phase)
@@ -2801,7 +2801,7 @@ impl PendingChildHeapTheapInitialization {
 /// Exact candidate storage and source selection carried through callback
 /// windows. The enclosing real admission retains the child, Heap and TLD.
 /// Dropping this keeper deliberately leaves its original storage retained.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct ChildHeapTheapInitializationOwner {
     block: ChildMetadataImageBlock,
@@ -2811,7 +2811,7 @@ pub(crate) struct ChildHeapTheapInitializationOwner {
     key: crate::thread_local::ThreadLocalKey,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ChildHeapTheapInitializationOwner {
     pub(crate) fn retain(self, error: crate::types::TheapMainStaticInitError) -> ChildHeapTheapInitializationFailure {
         ChildHeapTheapInitializationFailure { keeper: self,
@@ -2826,7 +2826,7 @@ impl ChildHeapTheapInitializationOwner {
 /// A refused phase carrying the original allocated candidate. Its caller
 /// retains the actual child admission rather than inferring lifetime from
 /// this ticket's addresses or forgetting a partially linked source image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) struct ChildHeapTheapInitializationFailure {
     pub(crate) keeper: ChildHeapTheapInitializationOwner,
@@ -2907,7 +2907,7 @@ fn heap_theap_key(heap: NonNull<Heap>) -> Option<crate::thread_local::ThreadLoca
 /// replacement, mutation or teardown
 /// overlaps this short query; no reference survives it. The root alone does
 /// not grant backing lifetime or authority to follow a returned Theap.
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 pub(crate) unsafe fn source_regular_slot_peek(key: crate::thread_local::ThreadLocalKey) -> *mut () {
     let Some(mut backing) = crate::compiler_tls::dynamic_backing_peek() else {
         return core::ptr::null_mut();
@@ -2931,7 +2931,7 @@ impl ChildThreadOwner {
 
     /// Retained terminal arrays carry release custody, never active slot
     /// projection authority. This check precedes every safe regular-slot read.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn active_thread_local_backing(
         storage: &Option<ChildMetadataImageBlock>,
         state: ChildThreadOwnerState,
@@ -2941,9 +2941,9 @@ impl ChildThreadOwner {
 
     /// `_mi_thread_local_get` for a regular key (`threadlocal.c:169-190`).
     fn thread_local_get(&self, key: crate::thread_local::ThreadLocalKey) -> *mut () {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let block = Self::active_thread_local_backing(&self.thread_locals, self.state);
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let block = self.thread_locals.as_ref();
         let Some(block) = block else { return core::ptr::null_mut() };
         // SAFETY: this owner retains the exact slot image it installed, and
@@ -2955,7 +2955,7 @@ impl ChildThreadOwner {
     /// A failed slot operation retains allocation custody and withdraws the
     /// regular, fast and cached compiler-TLS roots. Terminal state refuses
     /// engine projection; the TLD's owned cached reference stays retained.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn poison_thread_local_owner(state: &mut ChildThreadOwnerState) {
         *state = ChildThreadOwnerState::Terminal;
         crate::compiler_tls::clear_dynamic_backing();
@@ -2966,7 +2966,7 @@ impl ChildThreadOwner {
     /// Settle client ownership inside the free closure, before engine finish
     /// can fail. Consumed storage is never an initialized live array again.
     /// Refusal retains its exact allocation only under terminal owner custody.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn observe_thread_local_release(
         storage: &mut Option<ChildMetadataImageBlock>,
         state: &mut ChildThreadOwnerState,
@@ -2987,7 +2987,7 @@ impl ChildThreadOwner {
     /// Publication waits for successful source release and engine finish.
     /// Failure retains the unpublished copied replacement; the old token is
     /// retained only when its precise release never consumed it.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn complete_thread_local_growth(
         storage: &mut Option<ChildMetadataImageBlock>,
         pending: &mut Option<ChildMetadataImageBlock>,
@@ -3026,7 +3026,7 @@ impl ChildThreadOwner {
 
     /// Source thread-done removes regular and fast roots when consumption is
     /// observed, even when subsequent local lifecycle or finish reports fail.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn complete_thread_local_release(
         storage: &mut Option<ChildMetadataImageBlock>,
         state: &mut ChildThreadOwnerState,
@@ -3057,7 +3057,7 @@ impl ChildThreadOwner {
     /// # Safety
     /// This runs exclusively on this owner's attached thread; `child` is its
     /// context and retains the source detached metadata engine and backing.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn thread_local_set(
         &mut self,
         child: &mut ChildMainHeapContextOwner<'_>,
@@ -3121,7 +3121,7 @@ impl ChildThreadOwner {
     /// # Safety
     /// This is the attached owner's finishing thread and exact context. No
     /// slot image, value or compiler-TLS projection spans the source free.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn free_thread_locals(
         &mut self,
         child: &mut ChildMainHeapContextOwner<'_>,
@@ -3152,7 +3152,7 @@ impl ChildThreadOwner {
     ///
     /// # Safety
     /// This runs on this owner's thread; `child` is its context.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe fn thread_local_set(
         &mut self,
         child: &mut ChildMainHeapContextOwner<'_>,
@@ -3216,7 +3216,7 @@ impl ChildThreadOwner {
     ///
     /// # Safety
     /// As for [`Self::thread_local_set`]; no slot is used again.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe fn free_thread_locals(
         &mut self,
         child: &mut ChildMainHeapContextOwner<'_>,
@@ -3376,7 +3376,7 @@ impl ChildThreadOwner {
     /// Ends ordinary allocation after an initializer retains a partial
     /// image on this member's actual TLD. The caller must keep the original
     /// admission and failure keeper; this changes state, not lifetime custody.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn retain_heap_theap_initialization_failure(
         &mut self, failure: &ChildHeapTheapInitializationFailure,
     ) -> bool {
@@ -3397,7 +3397,7 @@ impl ChildThreadOwner {
     /// retained child. The caller retains both and the TLD across all phases;
     /// each image/list transition excludes overlapping projections, while
     /// callbacks may perform independently admitted source operations.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_heap_theap_selection(
         &mut self, child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding, heap: NonNull<Heap>,
@@ -3448,7 +3448,7 @@ impl ChildThreadOwner {
     /// `ready` derives from `keeper`'s exact preparation. The caller retains
     /// the original member/child/Heap admission across every callback and
     /// excludes competing lifecycle operations through this final transition.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn complete_heap_theap_initialization(
         &mut self, child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
@@ -3482,7 +3482,7 @@ impl ChildThreadOwner {
     /// # Safety
     /// The caller owns this member's allocation operation and retains its
     /// child, Heap, TLD and any requested parent arena through initialization.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn allocate_heap_theap_candidate(
         &mut self, child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
@@ -3883,7 +3883,7 @@ impl ChildThreadOwner {
     /// first regular slot is set).
     #[cfg(test)]
     pub(crate) fn test_thread_local_count(&self) -> usize {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.state != ChildThreadOwnerState::Attached { return 0; }
         self.thread_locals.as_ref().map_or(0, |block| {
             // SAFETY: the retained slot image.
@@ -3966,7 +3966,7 @@ impl ChildThreadOwner {
     /// live captured allocation. Its source Theap owns the allocation and
     /// belongs to this owner's TLD. No competing local free or page mutation
     /// may race this operation. A consumed client is never accessed or retried.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn free_local_heap_metadata_with_progress(
         this: *mut Self,
         child: *mut ChildMainHeapContextOwner<'_>,
@@ -4084,7 +4084,7 @@ pub(crate) enum ChildThreadStartFailure {
 /// Whether caller-retained child-owner storage contains an initialized
 /// owner after metadata allocation. Retained keeps the original partial
 /// TLD, Theap and registration custody; Rejected owns no source resource.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use = "initialized child-owner storage must be consumed or retained"]
 enum ChildThreadOwnerInitializationOutcome {
     Ready,
@@ -4092,7 +4092,7 @@ enum ChildThreadOwnerInitializationOutcome {
     Retained(ChildThreadStartError),
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl ChildThreadOwnerInitializationOutcome {
     fn reject_cold_owner(owner: &mut ChildThreadOwner, error: ChildThreadStartError) -> Self {
         debug_assert!(owner.tld.is_none() && owner.theap.is_none() && owner.registration.is_none()
@@ -4338,9 +4338,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// Heap (its statistics) may use it.
     #[inline]
     pub(crate) fn main_heap_pointer(&self) -> Option<NonNull<Heap>> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return self.heap_storage.as_ref().and_then(ChildHeapStorage::pointer_for_live_image);
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity)
     }
 
@@ -4763,7 +4763,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// The caller retains this child and the actual current-thread operation
     /// across every option and warning callback. No competing child or TLS
     /// lifecycle operation may retire the resulting candidate or registration.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_child_thread_initialization(
         &mut self, binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<PendingChildThreadInitialization, ChildThreadStartFailure> {
@@ -4788,7 +4788,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// The caller retains the original child and current-thread admission
     /// through callbacks and completion. Destination is vacant and exclusively
     /// borrowed throughout; no competing lifecycle may consume its images.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_child_thread_initialization_in(
         &mut self, binding: crate::process_init::ProcessMainBackingBinding,
         destination: &mut ChildThreadInitializationStorage,
@@ -4831,7 +4831,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// # Safety
     /// The caller owns current-thread TLS admission and excludes competing
     /// child operations until the allocated blocks and registration are retained.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn allocate_child_thread_owner(
         &mut self, binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
@@ -4856,7 +4856,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// caller must consume or retain it. Rejected leaves vacant storage that
     /// must not be read or dropped as an owner. No destination projection may
     /// overlap this call or a metadata callback.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn allocate_child_thread_owner_into(
         &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
@@ -4968,7 +4968,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe fn allocate_child_thread_owner(
         &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
@@ -5005,7 +5005,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             pending_live_page_validity: None,
             page_engine: ChildPageEngineState::Active,
             thread_locals: None,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             pending_thread_locals: None,
             heap_theap_pending_os_release: None,
             heap_theap_pending_fresh_initialization: None,
@@ -5711,13 +5711,13 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         image: NativeChildHeapImage,
     ) {
         debug_assert!(heap_storage.is_none());
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if image.state == NativeChildHeapImageState::Terminal {
             // Earlier Heap teardown stays complete, but a consumed or rejected
             // image cannot continue child release or regain live capability.
             *stage = ChildMainHeapStage::Terminal;
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let _ = stage;
         *heap_storage = Some(ChildHeapStorage::Native(image));
     }
@@ -5936,9 +5936,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 }
             }
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let native_record = self.context.with_image(|image| image.native_record()).flatten();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some(record) = native_record {
             // SAFETY: source Heap, Theap, arena, and registry teardown have
             // finished. Native destruction holds this record's lock, and no
@@ -6107,7 +6107,7 @@ enum MetadataPageAllocator<'owner> {
 impl MetadataPageAllocator<'_> {
     /// Moves the exact original claim retained by a direct allocation adapter.
     /// The caller keeps its preallocation issuer admission through settlement.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn take_pending_fresh_initialization(&mut self)
         -> Option<crate::single_thread::PendingFreshOsPageInitialization> {
         match self {
@@ -6117,7 +6117,7 @@ impl MetadataPageAllocator<'_> {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn take_pending_live_page_validity(&mut self)
         -> Option<crate::single_thread::PendingLivePageValidity> {
         match self {
@@ -6236,7 +6236,7 @@ pub(crate) struct MetaAllocatorBound<'owner> {
 /// Refusal to capture the original metadata diagnostic domain before a
 /// fresh process-backed candidate is created. Refusal grants no replacement
 /// allocation, cleanup or process-readiness authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SourceInitializationOutputAdmissionError {
     Metadata(MetaError),
@@ -6251,7 +6251,7 @@ pub(crate) enum SourceInitializationOutputAdmissionError {
 /// exact Theap, canonical Heap and PageMap. No image projection or allocator
 /// lock is retained. This is captured before the original page candidate,
 /// and cannot be persisted beside a task that outlives the startup scope.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct SourceInitializationOutputWitness<'scope, 'startup, 'owner> {
     scope: &'scope crate::process_init::ScopedBootstrapOutput<'startup>,
     issuer: MetaAllocatorBound<'owner>,
@@ -6262,7 +6262,7 @@ pub(crate) struct SourceInitializationOutputWitness<'scope, 'startup, 'owner> {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl SourceInitializationOutputWitness<'_, '_, '_> {
     fn validate(&self) -> Result<(), SourceInitializationOutputAdmissionError> {
         use SourceInitializationOutputAdmissionError as Error;
@@ -6356,7 +6356,7 @@ impl<'owner> MetaAllocatorBound<'owner> {
     /// Heap, Theap, TLD and random projection or guard before output delivery.
     /// Callback registrations and arguments remain valid and serialized; no
     /// nested operation may reuse the unpublished original candidate.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn capture_startup_source_initialization_output<'scope, 'startup>(
         self,
         scope: &'scope crate::process_init::ScopedBootstrapOutput<'startup>,
@@ -6635,7 +6635,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// subprocess metadata Theap (`src/init.c:526-531`). Returns whether the
     /// weak image retried entropy and whether it remains weak. The source
     /// metadata lock is released before these facts reach a diagnostic caller.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn reinitialize_detached_metadata_random_if_weak(
         self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
     ) -> Result<crate::random::RandomReinitialization, MetaError> {
@@ -6645,7 +6645,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// Retry the exact bound detached random image. End all metadata entry
     /// projections before delivering a weak-entropy warning, then reacquire
     /// the same source image and apply the already prepared entropy material.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn reinitialize_detached_metadata_random_if_weak_with_warning(
         self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
         warning: impl FnOnce(),
@@ -6689,7 +6689,7 @@ impl<'owner> MetadataEngine<'owner> {
 
     /// Test-only weak-random observation of the detached metadata Theap
     /// under the same entry and source lock as its reseed.
-    #[cfg(all(test, target_arch = "x86_64"))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) fn test_detached_metadata_random_is_weak(
         self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
     ) -> Option<bool> {
@@ -6761,7 +6761,7 @@ impl<'owner> MetadataEngine<'owner> {
     /// actual VM, subprocess and canonical foundation through this call.
     /// No Heap/TLD/Theap, allocator session or metadata entry projection
     /// survives an option getter or entropy-warning delivery.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_for_main_heap_with_bootstrap_output(
         self: Pin<&'owner Self>, config: MemoryConfig, subprocess: &'static MainSubprocess,
         foundation: crate::main_theap::MainStaticHeapFoundation,
@@ -7742,8 +7742,8 @@ impl<'owner> MetadataEngine<'owner> {
     /// Initializes the bounded Rust backing for an already source-bound
     /// detached metadata image on its first real metadata request.
     /// Keep first-backing temporaries out of the already-ready entry frame.
-    #[cfg_attr(target_arch = "x86_64", cold)]
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), cold)]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn initialize_backing(
         self: Pin<&'owner Self>,
         entry: &mut MetaEntry<'_, 'owner>,
@@ -7984,14 +7984,14 @@ unsafe fn decommit_metadata_backing_guard(
 /// Exclusive custody of one original static metadata slot while callback
 /// windows run without a metadata entry. An incomplete slot is retained;
 /// dropping this token never frees or restores an untouched bootstrap image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct SourceMetadataBinding<'owner> {
     owner: Pin<&'owner MetadataEngine<'owner>>,
     bootstrap: NonNull<ExclusiveTheapBootstrap>,
     complete: bool,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl SourceMetadataBinding<'_> {
     /// # Safety
     /// The phase was prepared from this exact claimed bootstrap allocation.
@@ -8018,7 +8018,7 @@ impl SourceMetadataBinding<'_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for SourceMetadataBinding<'_> {
     fn drop(&mut self) {
         if !self.complete {
@@ -8044,7 +8044,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
     /// Ends the prefix entry before callback-producing source operations.
     /// An unknown unlock result cannot admit user code or release the retained
     /// prefix custody through ordinary Rust destruction.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn end_source_prefix_entry(mut self) {
         if let Some(guard) = self.theap_meta_guard.take() {
             if guard.unlock().is_err() { crabc_core::process::exit_immediately(134); }
@@ -8077,7 +8077,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
     }
 
     // Keep the shared readiness checks separate from first-backing initialization.
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn ensure_ready(
         &mut self,
         config: &MemoryConfig,
@@ -8197,7 +8197,7 @@ mod tests {
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn child_tls_array_fixture(
         allocator: Pin<&'static MetaAllocator>,
         count: usize,
@@ -8213,7 +8213,7 @@ mod tests {
         (ChildMetadataImageBlock { pointer, size }, allocation)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn child_thread_local_consumption_survives_release_and_completion_errors() {
         use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
@@ -8277,7 +8277,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn child_thread_local_refusal_retains_exact_arrays_in_terminal_custody() {
         use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
@@ -8339,7 +8339,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn child_thread_local_growth_preserves_copied_slots_and_independent_fast_slot() {
         use crate::single_thread::LocalClientFreeProgress as Progress;
@@ -8393,7 +8393,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn refused_native_child_heap_image_retains_exact_live_custody_for_release() {
         use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
@@ -8436,7 +8436,7 @@ mod tests {
             });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn native_child_heap_image_guard_warning_reentry_retains_exact_tls_release_custody() {
         struct Callback {
@@ -8540,7 +8540,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn native_child_heap_image_release_after_issuing_worker_finish_uses_retained_source_page() {
         struct Transfer(NativeChildHeapImage);
@@ -8592,7 +8592,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn prepared_native_child_heap_image_refusal_retains_only_release_authority() {
         use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
@@ -8640,7 +8640,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn consumed_native_child_heap_image_keeps_only_terminal_diagnostic_custody() {
         use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
@@ -8687,7 +8687,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn child_owner_destination_stays_vacant_until_heap_is_ready() {
         crate::main_heap_page::tests::with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
@@ -8734,7 +8734,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn child_image_projection_preserves_embedded_control_borrow() {
         let mut storage = std::boxed::Box::new(core::mem::MaybeUninit::<crate::subproc::ChildSubprocessImage>::uninit());
@@ -8767,7 +8767,7 @@ mod tests {
         drop(storage);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn child_metadata_engine_drop_retains_original_live_page_assertion() {
         unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
@@ -8821,7 +8821,7 @@ mod tests {
             });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn child_metadata_engine_drop_retains_original_fresh_os_claim() {
         use crate::subproc::lifecycle::*;
@@ -8908,7 +8908,7 @@ mod tests {
             });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_metadata_prelink_refusal_resets_only_theap_and_retains_claimed_slot() {
         struct ScopedTldMutex(NonNull<ThreadLocalData>);
@@ -8977,7 +8977,7 @@ mod tests {
         selection.retain();
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_attached_deferred_callback_allocates_on_fixed_and_auxiliary_heaps() {
         use crate::subproc::lifecycle::*;
@@ -9196,7 +9196,7 @@ mod tests {
     /// under the metadata entry lock. Its no-live-thread session identity is
     /// `THREAD_ID_DETACHED`, which public free must distinguish from a
     /// selected main Heap's abandoned OS-list identity.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn canonical_metadata_os_singleton_frees_with_detached_identity() {
         thread::spawn(|| {
@@ -9272,7 +9272,7 @@ mod tests {
     /// The recovery trace records each lazy PageMap submap separately because
     /// the kernel may place fresh mappings on opposite sides of a submap
     /// boundary in otherwise equivalent processes.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_metadata_publication_fault_receiver_trace() {
         const WARM_SIZE: usize = 64;
@@ -9403,7 +9403,7 @@ mod tests {
             "the recovery sequence must exercise lazy PageMap publication");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn main_heap_last_reference_recovers_exact_transferred_metadata_once() {
         crate::test_process::run_in_fresh_process(
@@ -9689,7 +9689,7 @@ mod tests {
         unsafe { storage.test_prepare_vm_process_backing_binding(config(), options, subprocess, map) }.unwrap()
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_metadata_map_refusal_covers_source_reservation_and_page_retries() {
         crate::test_process::run_in_fresh_process(

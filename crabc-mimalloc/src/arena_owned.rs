@@ -4665,7 +4665,7 @@ mod tests {
         assert!(huge.release_for_process(&mut [0]).is_ok());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn public_regular_reservation_commit_warning_permits_recursive_reservation() {
         crate::test_process::run_in_fresh_process(
@@ -5127,7 +5127,7 @@ mod tests {
         process_with_options(options)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_arena_purge_budget_failure_c_rust_trace() {
         let fault = fault::install(fault::Plan::disabled());
@@ -5853,7 +5853,7 @@ mod tests {
         assert_eq!(after.committed_current, before.committed_current - debit);
     }
 
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-secure-2")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-secure-1", feature = "mi-secure-2")))]
     #[test]
     fn secure_arena_guard_refusal_warns_then_reports_and_preserves_published_ownership() {
         use crate::diagnostic_output::OutputOwner;
@@ -5946,7 +5946,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn public_external_os_guard_warning_can_recursively_register_an_arena() {
         crate::test_process::run_in_fresh_process(
@@ -6601,7 +6601,7 @@ mod tests {
         emit_lifecycle_stats_delta(trace, owner, before);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     struct LifecycleExternalCallback {
         process: VmProcess<'static>,
         base: usize,
@@ -6612,7 +6612,7 @@ mod tests {
         events: std::sync::Mutex<std::vec::Vec<[i64; 10]>>,
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     unsafe extern "C" fn lifecycle_external_callback(
         commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
     ) -> bool {
@@ -6638,7 +6638,7 @@ mod tests {
         result
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn emit_lifecycle_external_callback(trace: &mut LifecycleTrace, state: &LifecycleExternalCallback) {
         let mut events = state.events.lock().unwrap();
         assert!(events.len() <= 4);
@@ -6649,7 +6649,7 @@ mod tests {
         events.clear();
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn emit_external_callback_lifecycle(trace: &mut LifecycleTrace, fault: &fault::Guard) {
         trace.marker(24);
         for (cell, (committed_slices, needs_recommit, delay)) in [
@@ -7485,7 +7485,7 @@ mod tests {
             }
             isolated.registry.count.store(0, Ordering::Release);
         }
-        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
         {
             emit_external_callback_lifecycle(&mut trace, &fault);
             trace.marker(25);
@@ -7526,14 +7526,14 @@ mod tests {
             unsafe { (*pinned.as_ptr()).memid.is_pinned = false; }
             trace.marker(27);
         }
-        #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri))))]
         trace.marker(24);
     }
 
     /// Emits the three `mi_reserve_os_memory_ex2` failure cases with
     /// `show_errors`, including each return code and its TID-normalized
     /// output fragments as hex.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_reservation_warnings_c_rust_trace() {
         static CAPTURE: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>> =

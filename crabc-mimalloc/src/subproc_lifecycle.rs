@@ -282,14 +282,14 @@ unsafe fn new_child_with<'heap>(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildSubprocessDestroyError {
     /// A scoped callback still retains the actual child owner.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     CallbackActive,
     /// The owner is not a created child or is terminally retained.
     InvalidState,
     /// The retained release header and huge-release ownership bits could not
     /// be allocated before source teardown. The complete live child remains
     /// available for retry.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     TrackingAllocation(MetaError),
     Attachment(MainHeapThreadAttachmentError),
     /// Registry unlink or the metadata-page drain that must precede it.
@@ -791,13 +791,13 @@ pub(crate) struct NativeChildSubprocess {
     /// Exact parent-issued destruction scratch retains ordinary raw failures
     /// as well as any huge-owner failure bits. Its pending owner retains those
     /// bits through retry and never enlarges the inline birth control image.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     destroy_state: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
     parent_metadata: ChildParentMetadata,
     /// A nested child's parent-issued context outlives source teardown when
     /// actual TLS still retains its inline record. Keep that parent pinned
     /// until the exact context allocation returns at final record release.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     parent_admission: core::cell::UnsafeCell<Option<NativeChildCallbackLease>>,
     registry: &'static SourceSubprocessRegistry,
     /// Actual compiler-TLS member tokens, including a failed finish whose
@@ -805,7 +805,7 @@ pub(crate) struct NativeChildSubprocess {
     /// destruction until the last retained token completes terminal finish.
     members: core::cell::UnsafeCell<usize>,
     /// Admission retained across callbacks after owner projections and locks end.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     callback_leases: core::sync::atomic::AtomicUsize,
 }
 
@@ -878,10 +878,10 @@ impl NativeSubprocessId {
 /// One actual child-record admission retained while no owner projection or
 /// private lock spans user callbacks. The record's count is the final release
 /// target, after every callback-derived process view has ended.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildCallbackLease(core::ptr::NonNull<NativeChildSubprocess>);
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for NativeChildCallbackLease {
     fn drop(&mut self) {
         // SAFETY: acquisition retained the record independently of a child
@@ -895,7 +895,7 @@ impl Drop for NativeChildCallbackLease {
 /// # Safety
 /// The caller retains this exact live id while independent record custody is
 /// acquired. No projection or lock survives successful acquisition.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn acquire_native_child_record_lease(id: NativeSubprocessId)
     -> Result<(core::ptr::NonNull<crate::subproc::SubprocessIdentity>, NativeChildCallbackLease), NativeSubprocessError> {
     let mut admitted = None;
@@ -927,7 +927,7 @@ unsafe fn acquire_native_child_record_lease(id: NativeSubprocessId)
 /// Actual admission to one child arena group and its detached metadata.
 /// It retains the original record independently of TLS and ends only after
 /// every reservation projection and diagnostic callback has ended.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct NativeChildArenaAdmission {
     id: NativeSubprocessId,
     binding: ProcessMainBackingBinding,
@@ -937,7 +937,7 @@ pub(crate) struct NativeChildArenaAdmission {
     _operation: crate::runtime_lifecycle::NativeSubprocessOperation,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildArenaAdmission {
     /// Selects only the current actual child membership. A failed child
     /// admission never supplies the process-main arena or metadata owner.
@@ -998,14 +998,14 @@ impl NativeChildArenaAdmission {
 
 /// One child-issued huge-release tracker and its actual issuing admission.
 /// Failed storage return leaves the same capability and issuer retained.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct NativeChildArenaMetadata {
     route: ChildParentMetadata,
     allocation: crate::meta::ChildMetadataAllocation,
     admission: Option<NativeChildArenaAdmission>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildArenaMetadata {
     /// Reports remaining client-release authority, not issuer availability.
     /// A consumed or rejected client can never supply bytes or another free.
@@ -1044,7 +1044,7 @@ impl NativeChildArenaMetadata {
 /// The callback must not delete that selected Heap, finish its selected member,
 /// or free its in-flight client. All exclusive page-engine, child and member
 /// projections ended before this call. Other ordinary allocation may reenter.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn with_native_child_callback_owner<R>(
     heap: core::ptr::NonNull<crate::types::Heap>,
     callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
@@ -1055,7 +1055,7 @@ pub(crate) unsafe fn with_native_child_callback_owner<R>(
 
 /// A refused child callback admission. Only lock contention can be retried;
 /// no owner, scope, or release authority is returned on either error.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeChildCallbackAdmissionError {
     Busy,
@@ -1074,7 +1074,7 @@ pub(crate) enum NativeChildCallbackAdmissionError {
 /// acquisition and the synchronous callback. No engine, member, or child
 /// projection or allocator lock crosses this call. The callback must not
 /// destroy its selected Heap, finish its member, or free its in-flight client.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn try_with_native_child_callback_owner<R>(
     heap: core::ptr::NonNull<crate::types::Heap>,
     callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
@@ -1100,7 +1100,7 @@ pub(crate) unsafe fn try_with_native_child_callback_owner<R>(
 /// live through acquisition and use of the returned lease. No allocator
 /// projection or lock spans this call. The lease must outlive every view of
 /// its returned child identity and end before the process operation does.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(never)]
 unsafe fn acquire_native_child_callback_owner(
     heap: core::ptr::NonNull<crate::types::Heap>,
@@ -1173,7 +1173,7 @@ unsafe fn acquire_native_child_callback_owner(
 /// The pending initializer owns its allocation separately; this admission
 /// retains the original child, selected Heap, and process across callbacks.
 /// It grants no initialized-Theap allocation authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildInitializationAdmission {
     heap: core::ptr::NonNull<crate::types::Heap>,
     output: &'static crate::diagnostic_output::OutputOwner,
@@ -1184,14 +1184,14 @@ struct NativeChildInitializationAdmission {
 /// Synchronous initializer admissions share the existing thread-owned TLS
 /// root. Each actual ticket retains its own admission, including nested
 /// initializers of the same Heap; no scalar count supplies their lifetime.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildInitializationScope {
     admission: Option<NativeChildInitializationAdmission>,
     previous: *const Self,
     _pinned: core::marker::PhantomPinned,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildInitializationScope {
     /// Keeps a failed original initializer's admission after its exact keeper
     /// has been retained terminally. No linked image is rolled back or freed.
@@ -1215,7 +1215,7 @@ impl NativeChildInitializationScope {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for NativeChildInitializationScope {
     fn drop(&mut self) {
         // SAFETY: the scope is pinned and synchronous nested admissions have
@@ -1235,7 +1235,7 @@ impl Drop for NativeChildInitializationScope {
 /// The caller retains its actual pending initializer keeper across callbacks
 /// and supplies that same keeper to completion. An auxiliary initializer's
 /// actual member and TLD remain retained until completion or terminal custody.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn with_native_child_initialization_scope<R>(
     id: NativeSubprocessId,
     heap: core::ptr::NonNull<crate::types::Heap>,
@@ -1286,7 +1286,7 @@ unsafe fn with_native_child_initialization_scope<R>(
 /// retains it, the original child admission, and any existing member/TLD.
 /// No record, member, Heap, Theap, TLD, or metadata projection crosses this
 /// call. The same keeper must consume the ready phase or retain its failure.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn initialize_native_child_theap_source(
     scope: core::ptr::NonNull<NativeChildInitializationScope>,
     phase: crate::types::PreparedTheapInitialization,
@@ -1346,7 +1346,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
         Some(id) => ChildParentMetadata::Child { id, binding },
         None => ChildParentMetadata::Process { allocator: metadata, main: parent, config },
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let parent_admission = match parent_metadata {
         ChildParentMetadata::Child { id, .. } => {
             // SAFETY: the calling thread's actual member retains this parent
@@ -1355,13 +1355,13 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
         },
         ChildParentMetadata::Process { .. } => None,
     };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let mut storage = parent_metadata
         .allocate(core::mem::size_of::<NativeChildSubprocess>())
         .map_err(NativeSubprocessError::RecordAllocation)?;
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let record = storage.pointer().cast::<NativeChildSubprocess>();
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     if record.as_ptr().addr() % core::mem::align_of::<NativeChildSubprocess>() != 0 {
         return match parent_metadata.free(&mut storage) {
             Ok(()) => Err(NativeSubprocessError::RecordAllocation(crate::meta::MetaError::InitializationRetained)),
@@ -1381,9 +1381,9 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     let mut child = match child {
         Ok(child) => child,
         Err(ChildSubprocessNewFailure::Released(error)) => {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             return Err(NativeSubprocessError::New(error));
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             return match parent_metadata.free(&mut storage) {
                 Ok(()) => Err(NativeSubprocessError::New(error)),
                 Err(_) => Err(NativeSubprocessError::Retained),
@@ -1392,12 +1392,12 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
         Err(ChildSubprocessNewFailure::Retained(_)) => {
             // The unpublished child still owns exact parent-issued blocks;
             // a retained creation failure cannot release their actual issuer.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             core::mem::forget(parent_admission);
             return Err(NativeSubprocessError::Retained);
         },
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let record = child.with_child_image(|image| image.native_control_pointer())
         .ok_or(NativeSubprocessError::Retained)?;
     // SAFETY: the block is exclusively owned, large enough, and aligned for
@@ -1409,22 +1409,22 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
         core::ptr::addr_of_mut!((*image).lock).write(crate::lock::PrivateLock::new());
         core::ptr::addr_of_mut!((*image).owner)
             .cast::<Option<ChildMainHeapContextOwner<'static>>>().write(Some(child));
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         core::ptr::addr_of_mut!((*image).storage)
             .cast::<Option<crate::meta::ChildMetadataAllocation>>().write(None);
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         core::ptr::addr_of_mut!((*image).storage)
             .cast::<Option<crate::meta::ChildMetadataAllocation>>().write(Some(storage));
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         core::ptr::addr_of_mut!((*image).destroy_state)
             .cast::<Option<crate::meta::ChildMetadataAllocation>>().write(None);
         core::ptr::addr_of_mut!((*image).parent_metadata).write(parent_metadata);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         core::ptr::addr_of_mut!((*image).parent_admission)
             .cast::<Option<NativeChildCallbackLease>>().write(parent_admission);
         core::ptr::addr_of_mut!((*image).registry).write(registry);
         core::ptr::addr_of_mut!((*image).members).cast::<usize>().write(0);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         core::ptr::addr_of_mut!((*image).callback_leases)
             .write(core::sync::atomic::AtomicUsize::new(0));
     }
@@ -1476,19 +1476,19 @@ struct CurrentChildMember {
     record_member: NativeChildRecordMember,
     binding: ProcessMainBackingBinding,
     member: ChildThreadMember,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     generic_frequency_captures: usize,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     allocation_scope: *const NativeChildAllocationScope,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     retained_page_issuer: Option<NativeChildRetainedPageIssuer>,
 }
 
 struct NativeChildThreadSlot {
     member: Option<CurrentChildMember>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     initialization: *const NativeChildInitializationScope,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     retained_initialization: Option<NativeChildInitializationAdmission>,
 }
 
@@ -1496,15 +1496,15 @@ struct NativeChildThreadSlot {
 static CURRENT_CHILD_MEMBER: core::cell::UnsafeCell<NativeChildThreadSlot> =
     core::cell::UnsafeCell::new(NativeChildThreadSlot {
         member: None,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         initialization: core::ptr::null(),
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         retained_initialization: None,
     });
 
 /// A child-subprocess membership is an attached pthread owner, so a timer
 /// callback's application TLS reset cannot replace this live membership.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn native_timer_tls_span() -> crate::runtime_lifecycle::NativeAllocatorTlsSpan {
     crate::runtime_lifecycle::NativeAllocatorTlsSpan::of(core::ptr::addr_of!(CURRENT_CHILD_MEMBER))
 }
@@ -1577,7 +1577,7 @@ pub(crate) enum NativeChildThreadAdd {
 
 /// Scalar admission result while any original owner remains in its caller's
 /// storage. Only Added permits the final member-publication move.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 enum NativeChildSourceThreadAdd {
     Added,
     AlreadyInitialized { in_other_subprocess: bool },
@@ -1588,14 +1588,14 @@ enum NativeChildSourceThreadAdd {
 /// Keeps the actual initialization admission with an initialized original
 /// owner on any early return or Rust unwind. The storage borrow is local to
 /// this operation; no owner projection spans its source callbacks.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildThreadInitializationCustody<'storage> {
     storage: &'storage mut crate::meta::ChildThreadInitializationStorage,
     scope: core::ptr::NonNull<NativeChildInitializationScope>,
     armed: bool,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildThreadInitializationCustody<'_> {
     fn retain_admission(&mut self) {
         if !self.armed { return; }
@@ -1608,7 +1608,7 @@ impl NativeChildThreadInitializationCustody<'_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for NativeChildThreadInitializationCustody<'_> {
     fn drop(&mut self) {
         if self.armed && self.storage.owns_candidate() { self.retain_admission(); }
@@ -1621,7 +1621,7 @@ impl Drop for NativeChildThreadInitializationCustody<'_> {
 ///
 /// # Safety
 /// The id is live, and this thread owns its default/cached/fast TLS roots.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn add_native_child_thread_source(
     id: NativeSubprocessId, binding: ProcessMainBackingBinding,
     storage: &mut crate::meta::ChildThreadInitializationStorage,
@@ -1719,7 +1719,7 @@ unsafe fn add_native_child_thread_source(
 /// retains the child, binding and compiler-TLS roots, owns an empty actual
 /// member slot, and excludes concurrent root/member/lifecycle operations.
 /// Every source callback ended and the main local fast path was withdrawn.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(never)]
 unsafe fn publish_native_child_thread_member(
     storage: &mut crate::meta::ChildThreadInitializationStorage,
@@ -1760,7 +1760,7 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
         .ok_or(NativeSubprocessError::NotReady)?;
     // SAFETY: forwarded id and current-thread obligations; the record lock
     // excludes every other operation on the child context.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let mut storage = crate::meta::ChildThreadInitializationStorage::vacant();
         // SAFETY: the caller's original vacant slot remains exclusively
@@ -1791,7 +1791,7 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
             }
         });
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let (outcome, record_member) = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) => {
@@ -1809,21 +1809,21 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
             None => Err(NativeSubprocessError::Gone),
         })
     }??;
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     Ok(match outcome {
         Ok(ChildThreadAddOutcome::Added(member)) => {
             // SAFETY: current-thread slot, checked empty above.
             // A child member allocates from its own Theap; the main owner's
             // local fast-path publication no longer applies.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             crate::local_fast_path::withdraw();
             *unsafe { current_child_member() } = Some(CurrentChildMember {
                 record_member: record_member.expect("actual admission issued its record token"), binding, member,
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 generic_frequency_captures: 0,
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 allocation_scope: core::ptr::null(),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 retained_page_issuer: None,
             });
             NativeChildThreadAdd::Added
@@ -1845,7 +1845,7 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
 /// [`ChildThreadMember::thread_done`]. The slot is cleared only on success.
 /// Returns `None` when the thread is not a child member.
 pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadDoneError>> {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // Reject the original in-flight initializer before any exit Page
         // traversal can consume metadata that it still genuinely owns.
@@ -1969,7 +1969,7 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
             }
         };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     native_child_thread_done_in_completion(None)
 }
 
@@ -1977,7 +1977,7 @@ fn native_child_thread_done_in_completion(
     mut completion: Option<ChildThreadPageDrainCompletion>,
 ) -> Option<Result<(), NativeChildThreadDoneError>> {
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if unsafe { !(*CURRENT_CHILD_MEMBER.get()).initialization.is_null()
         || (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() }
     {
@@ -1986,7 +1986,7 @@ fn native_child_thread_done_in_completion(
     // SAFETY: current-thread slot, no other reference live.
     let slot = unsafe { current_child_member() };
     let current = slot.as_mut()?;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if current.generic_frequency_captures != 0
         || !current.allocation_scope.is_null() || current.retained_page_issuer.is_some()
     {
@@ -2101,7 +2101,7 @@ pub(crate) fn native_child_thread_allocate(
 pub(crate) unsafe fn native_child_thread_free_local(
     block: core::ptr::NonNull<u8>,
 ) -> Option<crate::runtime_lifecycle::NativePageFreeResult> {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         use crate::runtime_lifecycle::NativePageFreeResult;
         // SAFETY: the exact client retains its Page and the actual member
@@ -2129,7 +2129,7 @@ pub(crate) unsafe fn native_child_thread_free_local(
             }).unwrap_or(NativePageFreeResult::Retained)
         }) }.unwrap_or(NativePageFreeResult::Retained));
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     unsafe { native_child_thread_free_local_without_validity(block) }
 }
 
@@ -2176,7 +2176,7 @@ unsafe fn native_child_thread_free_local_without_validity(
 pub(crate) fn native_child_reclaim_on_free(
     candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>,
 ) -> crate::abandoned::ReclaimOnFreeOutcome {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         use crate::abandoned::ReclaimOnFreeOutcome::Declined;
         let Some(heap) = core::ptr::NonNull::new(candidate.page_heap()) else { return Declined; };
@@ -2200,7 +2200,7 @@ pub(crate) fn native_child_reclaim_on_free(
             }).unwrap_or(Declined)
         }) }.unwrap_or(Declined);
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     native_child_reclaim_on_free_without_validity(candidate)
 }
 
@@ -2281,13 +2281,13 @@ pub(crate) unsafe fn native_child_theap_allocate(
 /// payload projection, and failed admission or resume leaves that member
 /// retained rather than making its allocator state available for retirement.
 #[must_use = "resume the originating child issuer or retain its member"]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildGenericFrequencyCapture {
     id: NativeSubprocessId,
     theap: core::ptr::NonNull<crate::types::Theap>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildGenericFrequencyCapture {
     /// # Safety
     /// The request came from this exact Theap's engine. Its actual child,
@@ -2320,7 +2320,7 @@ impl NativeChildGenericFrequencyCapture {
 /// A real child source admission acquired while the original READY owner
 /// is held. The actual member owns its issuing TLD/Theap; the child lease
 /// retains its context and source registration independently of projections.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildOriginalIssuer {
     id: NativeSubprocessId,
     theap: core::ptr::NonNull<crate::types::Theap>,
@@ -2331,13 +2331,13 @@ struct NativeChildOriginalIssuer {
 
 /// Terminal original custody, including a task that a refused engine could
 /// not take. A marker can refuse teardown but never replaces this admission.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildRetainedPageIssuer {
     issuer: NativeChildOriginalIssuer,
     _task: Option<NativeChildRetainedPageTask>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 enum NativeChildRetainedPageTask {
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
     LiveValidity(crate::single_thread::PendingLivePageValidity),
@@ -2345,7 +2345,7 @@ enum NativeChildRetainedPageTask {
 
 /// A stack-pinned synchronous selected-issuer scope. Linked scopes allow
 /// nested allocation on the same or another Heap without a capacity bound.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildAllocationScope {
     issuer: Option<NativeChildOriginalIssuer>,
     previous: *const Self,
@@ -2353,7 +2353,7 @@ struct NativeChildAllocationScope {
     _pin: core::marker::PhantomPinned,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildAllocationScope {
     /// Selects the exact source-list issuer before its exit collector observes
     /// a Page. The independent child record lease retains the same actual
@@ -2404,7 +2404,7 @@ impl NativeChildAllocationScope {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for NativeChildAllocationScope {
     fn drop(&mut self) {
         if !self.installed { return; }
@@ -2420,7 +2420,7 @@ impl Drop for NativeChildAllocationScope {
 /// The original READY owner was acquired before any candidate. Its caller
 /// retains the actual selected Heap, Theap and member through this scope;
 /// pointer checks only refuse a different original issuer.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn with_native_child_allocation_scope<R>(
     owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
     operation: impl FnOnce(core::ptr::NonNull<NativeChildAllocationScope>) -> R,
@@ -2473,7 +2473,7 @@ unsafe fn with_native_child_allocation_scope<R>(
 /// Canonical guarded requests enter the counted generic path directly.
 enum NativeChildAllocationRequest {
     Ordinary { size: usize, aligned: Option<(usize, usize)>, zero: bool },
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     GuardedCanonical { source_size: usize },
 }
 
@@ -2518,7 +2518,7 @@ pub(crate) unsafe fn native_child_theap_allocate_variant(
 /// every getter/callback and continuation; none may be retired or replaced.
 /// `source_size` passed the source guarded geometry checks. This returns no
 /// diagnostic authority and manufactures no allocation-owner admission.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn native_child_theap_allocate_guarded_canonical(
     theap: core::ptr::NonNull<crate::types::Theap>,
     source_size: usize,
@@ -2545,7 +2545,7 @@ unsafe fn native_child_theap_allocate_request(
     theap: core::ptr::NonNull<crate::types::Theap>,
     request: NativeChildAllocationRequest,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeChildAllocationRefusal> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // SAFETY: the caller retains its actual initialized member and selected
         // Heap, TLD and Theap. READY admission precedes the candidate and stays
@@ -2556,7 +2556,7 @@ unsafe fn native_child_theap_allocate_request(
             })?
         }) }.map_err(|_| NativeChildAllocationRefusal::Retained)?;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe { native_child_theap_allocate_request_in_owner(theap, request) }
 }
 
@@ -2577,7 +2577,7 @@ unsafe fn with_native_child_allocation_phase(
         phase = Some(operation(engine));
     }) }.is_some();
     match phase {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(task))) =>
             Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(task)),
         Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task))) =>
@@ -2590,7 +2590,7 @@ unsafe fn with_native_child_allocation_phase(
 /// # Safety
 /// The original READY admission and stack issuer scope predate observation;
 /// all member, engine and Page projections have ended before this delivery.
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
 unsafe fn settle_child_live_page_validity(
     mut task: crate::single_thread::PendingLivePageValidity,
     owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
@@ -2612,13 +2612,13 @@ unsafe fn settle_child_live_page_validity(
 unsafe fn native_child_theap_allocate_request_in_owner(
     theap: core::ptr::NonNull<crate::types::Theap>,
     request: NativeChildAllocationRequest,
-    #[cfg(target_arch = "x86_64")] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
-    #[cfg(target_arch = "x86_64")] scope: core::ptr::NonNull<NativeChildAllocationScope>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] scope: core::ptr::NonNull<NativeChildAllocationScope>,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeChildAllocationRefusal> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let canonical = matches!(&request, NativeChildAllocationRequest::GuardedCanonical { .. });
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
         .ok_or(NativeChildAllocationRefusal::Retained)?;
     // SAFETY: forwarded exact current-thread Theap lifetime. Each engine
@@ -2628,7 +2628,7 @@ unsafe fn native_child_theap_allocate_request_in_owner(
             None => engine.begin_deferred_free_allocation(size, zero),
             Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
         }),
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         NativeChildAllocationRequest::GuardedCanonical { source_size } =>
             engine.begin_deferred_free_guarded_canonical_checked(source_size)
                 .map_err(|_| NativeChildAllocationRefusal::Retained),
@@ -2636,7 +2636,7 @@ unsafe fn native_child_theap_allocate_request_in_owner(
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::LiveValidity(mut task) => {
                 let (original_theap, heap) = unsafe { NativeChildAllocationScope::issuer_at(scope) };
                 #[cfg(feature = "mi-debug-3")]
@@ -2652,7 +2652,7 @@ unsafe fn native_child_theap_allocate_request_in_owner(
                 unsafe { NativeChildAllocationScope::retain_live_at(scope, task); }
                 return Err(NativeChildAllocationRefusal::Retained);
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 let (original_theap, heap) = unsafe { NativeChildAllocationScope::issuer_at(scope) };
                 if original_theap != theap || !task.matches_theap(original_theap) {
@@ -2715,7 +2715,7 @@ unsafe fn native_child_theap_allocate_request_in_owner(
                 // it must not recreate or mark an unfinished metadata task.
                 return Err(NativeChildAllocationRefusal::Retained);
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // SAFETY: the originating engine projection ended above. The
                 // public call retains the exact selected Heap, Theap and member.
@@ -2760,7 +2760,7 @@ unsafe fn native_child_theap_allocate_request_in_owner(
                     let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
                 }
                 phase = unsafe { with_native_child_allocation_phase(theap, |engine| {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     if canonical {
                         return engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)
                             .map_err(|_| NativeChildAllocationRefusal::Retained);
@@ -2785,7 +2785,7 @@ unsafe fn with_native_child_heap_theap_engine<R>(
         &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'image, 'static>,
     ) -> R,
 ) -> Option<R> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if unsafe { (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() } { return None; }
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
@@ -2830,7 +2830,7 @@ unsafe fn with_native_child_heap_theap_engine<R>(
 /// the exact selected member, Heap, TLD, Theap, and live captured allocation
 /// through this callback-free cleanup. A consumed client is never retried or
 /// returned as live, even when the final lifecycle result is an error.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn native_child_theap_free_captured_with_progress(
     theap: core::ptr::NonNull<crate::types::Theap>,
     allocation: crate::process_page_map::LiveAllocationPointer,
@@ -2856,7 +2856,7 @@ pub(crate) unsafe fn native_child_theap_free_captured_with_progress(
 
 /// Retains a failed original auxiliary image and poisons its actual member
 /// before ending the initializer's callback scope. No image is reselected.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn retain_native_child_heap_initializer(
     scope: core::ptr::NonNull<NativeChildInitializationScope>,
     id: NativeSubprocessId,
@@ -2877,7 +2877,7 @@ unsafe fn retain_native_child_heap_initializer(
 /// # Safety
 /// The selected Heap and this thread's actual member/TLD remain retained
 /// across preparation, callbacks, and completion of the same owned ticket.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn native_child_heap_theap_source(
     heap: core::ptr::NonNull<crate::types::Heap>,
 ) -> Option<core::ptr::NonNull<crate::types::Theap>> {
@@ -2983,9 +2983,9 @@ unsafe fn native_child_heap_theap_source(
 pub(crate) unsafe fn native_child_heap_theap(
     heap: core::ptr::NonNull<crate::types::Heap>,
 ) -> Option<core::ptr::NonNull<crate::types::Theap>> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     { return unsafe { native_child_heap_theap_source(heap) }; }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
@@ -3041,7 +3041,7 @@ pub(crate) unsafe fn native_child_theap_collect(
     theap: core::ptr::NonNull<crate::types::Theap>,
     force: bool,
 ) {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // SAFETY: the caller retains the actual current child issuer before
         // its deferred callback and every collecting Page observation.
@@ -3051,20 +3051,20 @@ pub(crate) unsafe fn native_child_theap_collect(
             })
         }) };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     unsafe { native_child_theap_collect_in_owner(theap, force) };
 }
 
 unsafe fn native_child_theap_collect_in_owner(
     theap: core::ptr::NonNull<crate::types::Theap>,
     force: bool,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] original: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] scope: core::ptr::NonNull<NativeChildAllocationScope>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] original: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] scope: core::ptr::NonNull<NativeChildAllocationScope>,
 ) {
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return };
     // SAFETY: caller retains the initialized Theap and its current TLD.
     let Some(tld) = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) }) else { return };
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         let phase = unsafe { with_native_child_allocation_phase(theap, |engine| Ok(engine.begin_deferred_free_collection(force))) };
         match phase {
@@ -3090,7 +3090,7 @@ unsafe fn native_child_theap_collect_in_owner(
     } else {
         crate::single_thread::GenericAllocationCollection::Full
     };
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         let phase = unsafe { with_native_child_allocation_phase(theap, |engine| Ok(
             engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
@@ -3099,7 +3099,7 @@ unsafe fn native_child_theap_collect_in_owner(
             unsafe { settle_child_live_page_validity(task, original, scope) };
         }
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     {
     let collect = |engine: &mut crate::single_thread::ChildOrdinaryPageAllocator<'_, '_, 'static>| {
         engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
@@ -3361,7 +3361,7 @@ pub(crate) unsafe fn native_child_heap_release(
         NativeSubprocessError,
     >,
 > {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // SAFETY: every linked initializer owns its exact original admission
         // and remains pinned until its synchronous nested scopes have ended.
@@ -3563,17 +3563,17 @@ pub(crate) unsafe fn destroy_all_native_children_terminal() -> Result<(), Native
 /// The exact preallocated header and trailing failure bits for one native
 /// child destruction. The record owns its parent-issued allocation; a pending
 /// raw failure borrows only the same allocation's separate trailing words.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeChildArenaDestroyState {
     pending: Option<crate::arena::DestroyedArenas<'static>>,
     words: usize,
 }
 
 // Fresh raw field assignment must not drop a previous header image.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const _: () = assert!(!core::mem::needs_drop::<NativeChildArenaDestroyState>());
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeChildArenaDestroyState {
     fn tracking_offset() -> usize {
         let alignment = core::mem::align_of::<usize>();
@@ -3586,7 +3586,7 @@ impl NativeChildArenaDestroyState {
 /// No prior failure-bit projection or raw retry is live. The returned bits
 /// remain in the record's exact parent-issued allocation through every raw
 /// release failure, and may never outlive its final successful storage return.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn native_child_destroy_tracking(
     record: core::ptr::NonNull<NativeChildSubprocess>,
     child: &mut ChildMainHeapContextOwner<'static>,
@@ -3652,7 +3652,7 @@ unsafe fn native_child_destroy_tracking(
 /// # Safety
 /// The caller holds the record lock or has exclusive terminal ownership of
 /// this record. No arena-release retry remains pending.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_native_child_destroy_tracking(
     record: core::ptr::NonNull<NativeChildSubprocess>,
 ) -> Result<(), NativeSubprocessError> {
@@ -3694,11 +3694,11 @@ unsafe fn destroy_record(
         id.with_owner(|owner| {
             // Check before taking any owner or changing a source list. The
             // callback holds no child lock, so nested allocation can proceed.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if record.callback_leases.load(core::sync::atomic::Ordering::Acquire) != 0 {
                 return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let retained_state = unsafe { match (*record.destroy_state.get()).as_ref() {
                 // A prior parent return may have ended this scratch capability
                 // after source teardown. Its retained record grants no access
@@ -3714,7 +3714,7 @@ unsafe fn destroy_record(
                     // refused. Retry its scratch return while any actual TLS
                     // member still retains this same record.
                     let members = unsafe { *record.members.get() };
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     if members != 0 {
                         // SAFETY: source teardown completed before the record
                         // retained only actual TLS members and its context.
@@ -3724,7 +3724,7 @@ unsafe fn destroy_record(
                 }
                 None => return Err(NativeSubprocessError::Gone),
             };
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(state) = retained_state {
                 // SAFETY: the live parent-issued header is protected by the
                 // record lock; no tracking-tail projection exists yet.
@@ -3738,7 +3738,7 @@ unsafe fn destroy_record(
                     }
                 }
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let empty_registry = if retained_state.is_none() {
                 match child.with_child_image(|image| {
                     image.get_ref().identity().arena_backing().registry().count() == 0
@@ -3752,9 +3752,9 @@ unsafe fn destroy_record(
             } else {
                 false
             };
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let no_arena_tracking = empty_registry;
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let tracking = if child.stage() == ChildMainHeapStage::ArenaBackingDestroyed {
                 &mut []
             } else if no_arena_tracking {
@@ -3765,9 +3765,9 @@ unsafe fn destroy_record(
                     Err(error) => { *owner = Some(child); return Err(error); }
                 }
             };
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let tracking = &mut [];
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let arena_destination = unsafe {
                 if no_arena_tracking {
                     ChildArenaDestroyDestination::EmptyRegistry
@@ -3781,7 +3781,7 @@ unsafe fn destroy_record(
                     )
                 }
             };
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let arena_destination = ChildArenaDestroyDestination::ReturnOwned;
             // Source destroys a child under its permanently quiescent
             // threads. Rust TLS can still retain a member after the source
@@ -3802,7 +3802,7 @@ unsafe fn destroy_record(
                 Ok(()) => {
                     // Destruction consumes no actual TLS token; each member
                     // later completes its own terminal finish against this record.
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     if members != 0 && !terminal {
                         // SAFETY: successful arena teardown leaves no retry
                         // owner, and the record lock excludes final TLS finish.
@@ -3849,7 +3849,7 @@ unsafe fn destroy_record(
 /// # Safety
 /// The caller exclusively owns this record's child teardown under its lock;
 /// the child identity is detached and no source image projection remains.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn retain_native_child_control_storage(
     record: core::ptr::NonNull<NativeChildSubprocess>,
     storage: crate::meta::ChildMetadataAllocation,
@@ -3868,7 +3868,7 @@ unsafe fn free_record(record: core::ptr::NonNull<NativeChildSubprocess>) -> Resu
     // SAFETY: forwarded exclusivity; the owner cell is empty. Copy every
     // release input before the parent free invalidates this inline record.
     // No reference to the record spans its enclosing allocation's return.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // SAFETY: record destruction has exclusive terminal ownership.
         unsafe { free_native_child_destroy_tracking(record) }?;
@@ -3876,18 +3876,18 @@ unsafe fn free_record(record: core::ptr::NonNull<NativeChildSubprocess>) -> Resu
     let mut storage = unsafe { (*(*record.as_ptr()).storage.get()).take() }
         .ok_or(NativeSubprocessError::Retained)?;
     let parent_metadata = unsafe { (*record.as_ptr()).parent_metadata };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let parent_admission = unsafe { (*(*record.as_ptr()).parent_admission.get()).take() };
     if parent_metadata.free(&mut storage).is_err() {
         // The unreturned exact context remains parent-issued storage. Keep
         // its original issuer retained even when no caller can retry it.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         core::mem::forget(parent_admission);
         return Err(NativeSubprocessError::Retained);
     }
     // The exact context is now returned, and the final child-record access
     // ended before the parent's admission can permit its own destruction.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     drop(parent_admission);
     Ok(())
 }
@@ -4288,7 +4288,7 @@ pub(crate) mod tests {
             .0
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_creation_metadata_failure_returns_parent_custody_before_retry() {
         crate::test_process::run_in_fresh_process(
@@ -4328,7 +4328,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_empty_child_destroy_needs_no_arena_failure_storage() {
         crate::test_process::run_in_fresh_process(
@@ -4386,7 +4386,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_manage_external_os_memory_retains_child_context_and_caller_mapping() {
         use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
@@ -4522,7 +4522,7 @@ pub(crate) mod tests {
     /// The child's statistics merge into main with the member still counted
     /// and its cached Theap for the Heap still live, and the member's later
     /// thread finish touches nothing of the destroyed child.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_subproc_destroy_destroys_a_child_under_its_live_thread() {
         use crate::runtime_lifecycle::{
@@ -4580,7 +4580,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_arena_admission_retains_original_metadata_across_failed_storage_return() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -4629,7 +4629,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_destroy_orphan_finish_returns_gone_after_terminal_context_refusal() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -4685,7 +4685,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_huge_teardown_keeps_exact_context_and_failed_page_set_for_retry() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -4772,7 +4772,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn terminal_child_tree_releases_parent_issuer_after_permanent_tls_exclusion() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -4840,7 +4840,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn nested_child_terminal_record_retains_its_parent_until_final_tls_finish() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -4904,7 +4904,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_callback_owner_parks_projections_and_releases_nested_leases() {
         use crate::runtime_lifecycle::{
@@ -4959,7 +4959,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_callback_owner_retains_foreign_heap_from_original_registry_allocation() {
         use crate::runtime_lifecycle::{
@@ -5048,7 +5048,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_thread_teardown_consumes_metadata_custody_when_source_os_release_fails() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -5141,7 +5141,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_destroy_retains_record_until_failed_teardown_member_finishes() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
@@ -5211,7 +5211,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(miri)))]
     #[test]
     fn child_guarded_canonical_transport_uses_original_main_and_auxiliary_issuers() {
         use crate::runtime_lifecycle::{finish_current_thread_native_after_user_destructors,
@@ -5265,7 +5265,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn child_fresh_os_assertion_retains_original_issuer_during_output_reentry() {
         use crate::process_page_map::ProcessPageMapRoot;
@@ -5371,7 +5371,7 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn child_live_page_assertion_retains_original_page_during_output_reentry() {
         use core::ptr::NonNull;
@@ -5464,7 +5464,7 @@ pub(crate) mod tests {
 
     /// A live Heap of one child cannot become another child's cached Theap.
     /// Both child images remain live during the attempted selection.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_heap_selector_refuses_another_childs_heap() {
         use crate::runtime_lifecycle::{
@@ -5514,7 +5514,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_initialization_rust_unwind_retains_original_owner_and_admission() {
         crate::test_process::run_in_fresh_process(
@@ -5574,7 +5574,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn initialized_child_admission_distinguishes_same_and_other_subprocess() {
         crate::test_process::run_in_fresh_process(
@@ -5614,7 +5614,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_child_heap_theap_reselects_the_main_cache() {
         use crate::runtime_lifecycle::{
@@ -5653,7 +5653,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn public_child_theap_direct_allocation_and_default_restore() {
         use crate::runtime_lifecycle::{
@@ -5705,7 +5705,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_thread_finishes_with_live_blocks_and_the_child_is_destroyed() {
         use crate::runtime_lifecycle::{
@@ -5751,7 +5751,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_regular_child_destroy_retains_a_header_without_huge_tracking_words() {
         use crate::runtime_lifecycle::{finish_current_thread_native_after_user_destructors,
@@ -5815,7 +5815,7 @@ pub(crate) mod tests {
     /// the threads belong to the child; they finish through the runtime's
     /// thread-exit entry, and a runtime worker other than the creator
     /// destroys the child.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_child_threads_allocate_concurrently_and_another_thread_destroys() {
         use crate::runtime_lifecycle::{

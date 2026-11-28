@@ -137,13 +137,13 @@ fn owner_local_page_engine_state() -> MainHeapThreadOwnerLocalPageEngineState {
 /// `Borrowed -> Idle` transition that ends that session publishes it. Every
 /// other engine-state transition (a new borrow, drain, finish, terminal
 /// latch) withdraws the publication.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[thread_local]
 static mut OWNER_LOCAL_FAST_STAGED: Option<crate::local_fast_path::LocalFastOwner> = None;
 
 /// These owner-local state words retain the same page engine between timer
 /// callbacks on one continuing pthread.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn native_timer_tls_spans() -> [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 2] {
     use crate::runtime_lifecycle::NativeAllocatorTlsSpan as Span;
     [
@@ -157,7 +157,7 @@ fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineSt
     // SAFETY: the current thread alone reads and writes these compiler-TLS
     // words; no reference to them escapes.
     unsafe {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let staged = OWNER_LOCAL_FAST_STAGED.take();
             if state == MainHeapThreadOwnerLocalPageEngineState::Idle
@@ -175,7 +175,7 @@ fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineSt
 /// Records whether the currently bound owner-local operation left its engine
 /// usable by the local fast paths. Only the `Borrowed -> Idle` transition
 /// that ends this binding may publish the candidate.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 pub(crate) fn stage_owner_local_fast_owner(owner: Option<crate::local_fast_path::LocalFastOwner>) {
     if owner_local_page_engine_state() != MainHeapThreadOwnerLocalPageEngineState::Borrowed {
@@ -658,7 +658,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             ));
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // SAFETY: this raw field is aligned uninitialized Option storage
             // inside the caller's exclusive destination. No attachment view
@@ -678,7 +678,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             unsafe { Self::begin_with_thread_local_data_into(destination, main_heap,
                 metadata, config, page_mode, generic_collect_policy, thread) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             let tld = match unsafe {
                 ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata(
@@ -718,16 +718,16 @@ impl<'main> MainHeapThreadAttachment<'main> {
         page_mode: TheapPageMode,
         generic_collect_policy: Option<&'static crate::os::VmPolicy>,
         thread: LiveThreadId,
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         tld: DynamicAttachedThreadLocalData,
     ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
         let destination = destination.as_ptr();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: construction owns the accepted inputs and initialized TLD
         // slot. The remaining field writer returns before metadata allocation.
         unsafe { Self::write_preparing_fields(destination, main_heap, metadata,
             config, page_mode, generic_collect_policy, thread) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         // SAFETY: every field is written exactly once before any attachment
         // reference is formed. These writes cannot invoke a fallible callback
         // or publish the destination's address.
@@ -785,7 +785,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
     /// current-thread TLD; all remaining fields are uninitialized. The accepted
     /// main Heap, metadata and policy inputs pass into those remaining fields
     /// exactly once, leaving sole custody in destination.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline(never)]
     unsafe fn write_preparing_fields(
         destination: *mut Self,
@@ -918,7 +918,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
     /// Borrows only the original local fields after fast-root removal and
     /// before deferred callback selection. This does not admit ordinary
     /// allocation or reopen a terminal/draining lifecycle.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) fn owner_local_collection_prefix_session(
         &mut self,
     ) -> Result<MainHeapThreadPageSession<'_, 'main>, MainHeapThreadPageSessionError> {
@@ -987,11 +987,11 @@ impl<'main> MainHeapThreadAttachment<'main> {
             self.tld.as_mut().ok_or(MainHeapThreadAttachmentError::Poisoned)?
                 .vanished_child_mut()
         }.map_err(MainHeapThreadAttachmentError::ThreadLocalData)?;
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         if !unsafe { tld.has_exact_theap_member(pointer.as_ptr()) } {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if unsafe { crate::types::ThreadLocalData::has_linked_theap_member_blocking(NonNull::from(tld), pointer.as_ptr()) } != Ok(true) {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
         }
@@ -1017,7 +1017,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         // source cache reference. For the existing non-x86 child path, the
         // vanished thread's copied TLS cache is unreachable; release that
         // reference after page drain and before Heap-list detach.
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         if unsafe { pointer.as_ref().refcount() } == 2 {
             // SAFETY: the copied Heap-list owner retains the fixed image;
             // this releases only the vanished thread's cache reference.
@@ -1025,7 +1025,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 return Err(MainHeapThreadAttachmentError::ListOwnership);
             }
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // Every auxiliary image has already drained and left both lists;
             // the actual foreign source cache was cleared under its pinned TLS
@@ -1785,7 +1785,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
     /// A source fast selector may name a younger same-TLD main-Heap Theap.
     fn fast_root_matches_local_owner(&self, owner: NonNull<Theap>) -> bool {
         let Some(fast) = fast_slot_peek().map(|slot| slot.cast::<Theap>()) else { return true };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // Both pointers name the same retained image. No callback can change
         // its fields between this root read and the source comparisons.
         if fast == owner { return true; }
@@ -2186,7 +2186,7 @@ pub(crate) struct MainHeapThreadPageSession<'attachment, 'main> {
 }
 
 impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn permits_source_owner_administration(&self) -> bool {
         if self.attachment.terminal_os_release.is_some() { return false; }
         let admitted = self.attachment.ensure_attached_current().is_ok() || {
@@ -2799,7 +2799,7 @@ impl theap_page_session_sealed::Sealed for MainHeapThreadPageDrainSession<'_, '_
 // `MainStaticHeapLease`, while the paired process PageMap lease serializes the
 // source-plain map entries outside this session.
 unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.local_theap_pointer() }
 
     #[inline]
@@ -2810,7 +2810,7 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
         Some(self.attachment.thread)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_generic_allocation_administration(
         &mut self,
     ) -> crate::bootstrap::GenericAllocationAdministrationStart {
@@ -2825,7 +2825,7 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_generic_allocation_administration(
         &mut self, request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
     ) -> Option<crate::types::GenericAllocationAdministration> {
@@ -2856,13 +2856,13 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
         self.theap().allows_page_abandon()
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
         if self.attachment.ensure_attached_current().is_ok() {
@@ -3014,7 +3014,7 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
             == Some(true)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -3034,7 +3034,7 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
         ) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         if !self.permits_source_owner_administration() { return false; }
         // SAFETY: the caller retains the original primary Page before client
@@ -3146,16 +3146,16 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
 unsafe impl TheapPageSession for MainHeapThreadPageDrainSession<'_, '_> {
     // This session retains the departing owner only for drain and release;
     // new Page publication would reopen allocation after source TLS teardown.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, _metadata: NonNull<Page>, _block_size: usize, _page_offset: usize,
         _reserved: u16, _slice_pcommitted: u16, _free_is_zero: bool, _memid: MemoryId,
     ) -> Option<NonNull<Page>> { None }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, _page: NonNull<Page>) -> bool { false }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.local_theap_pointer() }
 
     #[inline]

@@ -292,7 +292,7 @@ enum DynamicTheapStorage<'arena> {
 }
 
 impl DynamicTheapStorage<'_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> Option<NonNull<Theap>> {
         match self {
             Self::Malloc(allocation) => allocation.dynamic_theap_pointer(),
@@ -2684,7 +2684,7 @@ impl theap_page_session_sealed::Sealed for DynamicTheapPageDrainSession<'_, '_> 
 // That borrow retains the typed metadata, regular key/backing, cached ref,
 // and pinned Heap for every engine/producers' raw page lifetime.
 unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -2702,7 +2702,7 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
             page_offset, reserved, slice_pcommitted, free_is_zero, memid) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the original session retains the fresh Page and its exact
         // issuer. Registration callbacks have ended, and this session owns
@@ -2710,7 +2710,7 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
         unsafe { Page::initialize_fresh_page_keys_at(page, self.local_field_theap_pointer()) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.attachment.theap.as_ref().and_then(DynamicTheapStorage::local_field_theap_pointer).expect("live dynamic session retains its typed Theap") }
 
     #[inline]
@@ -2860,16 +2860,16 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
 unsafe impl TheapPageSession for DynamicTheapPageDrainSession<'_, '_> {
     // The drain retains the original owner only for collection and release.
     // Fresh publication would recreate allocations after source TLS teardown.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, _metadata: NonNull<Page>, _block_size: usize, _page_offset: usize,
         _reserved: u16, _slice_pcommitted: u16, _free_is_zero: bool, _memid: MemoryId,
     ) -> Option<NonNull<Page>> { None }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, _page: NonNull<Page>) -> bool { false }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.attachment.theap.as_ref().and_then(DynamicTheapStorage::local_field_theap_pointer).expect("draining session retains its typed Theap") }
 
     #[inline]
@@ -3816,7 +3816,7 @@ mod tests {
     /// Emits real dynamic arena-page ownership transitions. Each fixture keeps
     /// its attachment, metadata image, page map, and external backing alive
     /// until all client blocks and foreign atomic projections have quiesced.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     pub(crate) fn managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
         for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
             for blocked in [false, true] {
@@ -3979,12 +3979,12 @@ mod tests {
         cross_thread_managed_abandoned_lifecycle_trace(&mut emit);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn prepare_cross_thread_managed_abandoned_lifecycle() {
         prepare_cross_thread_managed_abandoned_lifecycle_with_reservation(0);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn prepare_cross_thread_managed_abandoned_lifecycle_with_reservation(arena_reserve_kib: usize) {
         assert!(arena_reserve_kib <= 1048576);
         unsafe extern "C" fn discard_output(_: *const core::ffi::c_char) {}
@@ -3995,7 +3995,7 @@ mod tests {
         crate::source_options_api::option_set(crate::config::SourceOption::PurgeDelay as i32, -1);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     struct CrossThreadAbandonedControl {
         origin_ready: std::sync::Barrier,
         origin_release: std::sync::Barrier,
@@ -4010,7 +4010,7 @@ mod tests {
         holder_ready_for_release: std::sync::atomic::AtomicBool,
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl CrossThreadAbandonedControl {
         fn new() -> Self {
             Self {
@@ -4031,24 +4031,24 @@ mod tests {
 
     // Rendezvous on both successful publication and worker panic, so the
     // coordinator can join a worker that never reached its release park.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     struct AbandonedWorkerReadiness<'a>(&'a std::sync::Barrier);
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl Drop for AbandonedWorkerReadiness<'_> {
         fn drop(&mut self) { self.0.wait(); }
     }
 
     // The helper's region can unwind before the outer scope ends. Its
     // parked origin must therefore be released and joined by this owner.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     struct ParkedOrigin<'scope, 'control> {
         control: &'control CrossThreadAbandonedControl,
         worker: Option<thread::ScopedJoinHandle<'scope, ()>>,
         ready_observed: bool,
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl ParkedOrigin<'_, '_> {
         fn wait_ready(&mut self) -> Option<(usize, usize, usize, usize)> {
             use core::sync::atomic::Ordering;
@@ -4071,7 +4071,7 @@ mod tests {
         fn finish(mut self) -> thread::Result<()> { self.release_and_join() }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl Drop for ParkedOrigin<'_, '_> {
         fn drop(&mut self) {
             if self.worker.is_some() { let _ = self.release_and_join(); }
@@ -4080,14 +4080,14 @@ mod tests {
 
     // Releasing the low-owner claimant alone is insufficient on panic:
     // join it before the target can unwind its live page references.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     struct HeldAbandonedWorker<'scope, 'control> {
         control: &'control CrossThreadAbandonedControl,
         worker: Option<thread::ScopedJoinHandle<'scope, ()>>,
         ready_observed: bool,
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl HeldAbandonedWorker<'_, '_> {
         fn wait_ready(&mut self) {
             if !self.ready_observed {
@@ -4107,14 +4107,14 @@ mod tests {
         fn finish(mut self) -> thread::Result<()> { self.release_and_join() }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl Drop for HeldAbandonedWorker<'_, '_> {
         fn drop(&mut self) {
             if self.worker.is_some() { let _ = self.release_and_join(); }
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn abandoned_fixture_unwind_joins_before_region_release() {
         use core::sync::atomic::{AtomicBool, Ordering};
@@ -4182,7 +4182,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn abandoned_fixture_finish_preserves_worker_error() {
         let control = CrossThreadAbandonedControl::new();
@@ -4198,7 +4198,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
         let control = CrossThreadAbandonedControl::new();
         thread::scope(|scope| {
@@ -4208,7 +4208,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn cross_thread_regular_arena_purge_trace<'scope, 'env>(
         scope: &'scope thread::Scope<'scope, 'env>,
         control: &'scope CrossThreadAbandonedControl,
@@ -4465,7 +4465,7 @@ mod tests {
         assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn cross_thread_managed_abandoned_lifecycle_observe<'scope, 'env>(
         scope: &'scope thread::Scope<'scope, 'env>,
         control: &'scope CrossThreadAbandonedControl,
@@ -4653,11 +4653,11 @@ mod tests {
 
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum RetentionRootCategory { OsPage, OsArena, ExternalArena, ExternalRaw, ProcessPageMap, ProcessMetadata }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl RetentionRootCategory {
         fn name(self) -> &'static str {
             match self {
@@ -4669,16 +4669,16 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[derive(Clone, Copy)]
     struct RetentionRoot { category: RetentionRootCategory, start: usize, end: usize }
 
     /// Numeric observations carry no mapping or release capability. The bound
     /// fails explicitly rather than omitting an otherwise live source root.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     struct RetentionRoots { entries: [Option<RetentionRoot>; 4096], len: usize, failed: bool }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     impl RetentionRoots {
         fn new() -> Self { Self { entries: [None; 4096], len: 0, failed: false } }
 
@@ -4769,7 +4769,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn retention_mapping(line: &[u8]) -> (usize, usize) {
         let prefix = line.split(|byte| byte.is_ascii_whitespace()).next().unwrap();
         let prefix = core::str::from_utf8(prefix).expect("mapping address prefix is ASCII");
@@ -4783,7 +4783,7 @@ mod tests {
     /// Streams each original mapping line without allocating an observer buffer.
     /// The explicit line bound fails rather than silently dropping a mapping;
     /// filenames remain opaque bytes because Unix paths need not be UTF-8.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn visit_retention_lines(mut reader: impl std::io::Read, mut visit: impl FnMut(&[u8])) {
         let mut chunk = [0u8; 4096];
         let mut line = [0u8; 8192];
@@ -4811,7 +4811,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn visit_retention_mappings(mut visit: impl FnMut(usize, usize)) {
         let maps = std::fs::File::open("/proc/self/maps").unwrap();
         let mut previous_end = 0usize;
@@ -4905,7 +4905,7 @@ mod tests {
         std::println!("m2.arena.ambient.groups.{cycle}={count}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn retention_observer_preserves_fragmented_mapping_lines_and_opaque_paths() {
         struct Fragmented<'a> { bytes: &'a [u8], interrupt: bool }
@@ -4932,7 +4932,7 @@ mod tests {
         assert_eq!(rows, [(0x1000, 0x2000), (0x3000, 0x4000)]);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     #[should_panic(expected = "mapping observation line exceeded its explicit bound")]
     fn retention_observer_rejects_overlong_mapping_instead_of_dropping_it() {
@@ -4940,7 +4940,7 @@ mod tests {
         visit_retention_lines(&bytes[..], |_| panic!("an incomplete line must not be reported"));
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn retention_attribution_cycle<'scope, 'env>(
         scope: &'scope thread::Scope<'scope, 'env>,
         control: &'scope CrossThreadAbandonedControl,
@@ -5030,7 +5030,7 @@ mod tests {
         std::println!("m2.arena.retention.{cycle}.bytes={bytes}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn x86_64_cross_thread_arena_retention_attribution_once() {
         crate::test_process::run_in_fresh_process(
@@ -5077,7 +5077,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_mapped_reclaim_trace_matches_pinned_c_protocol() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -5205,7 +5205,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_mapped_allocation_adoption_trace_matches_pinned_c_protocol() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -5413,7 +5413,7 @@ mod tests {
     /// after reclaim. It is not generic abandoned-page scanning,
     /// cross-thread adoption, remote-free routing, thread exit, public
     /// `mi_*` behavior, or an AArch64 claim.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_direct_small_allocation_adoption_trace_matches_pinned_c_protocol() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -5768,7 +5768,7 @@ mod tests {
     /// full arena singleton still has a client allocation. It tears down its
     /// TLS/TLD/Theap/key state first, returns only the sealed post-exit route,
     /// and a joined receiver consumes the exact final client free.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_arena_singleton_post_exit_route_moves_after_source_teardown() {
         fn assert_send<T: Send>() {}
@@ -6007,7 +6007,7 @@ mod tests {
     /// arena-singleton route. The emitted facts are deliberately limited to
     /// the shared source/page-map/arena terminal state; this test does not
     /// claim pthread destructor or general thread-exit equivalence.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_arena_singleton_post_exit_trace_matches_pinned_c() {
         std::println!("CRABC_MI_DYNAMIC_ARENA_SINGLETON_POST_EXIT_TRACE_BEGIN");
@@ -6876,7 +6876,7 @@ mod tests {
         run_dynamic_full_singleton_homogeneous_aggregate_trace(false);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_singleton_homogeneous_aggregate_trace_matches_pinned_c() {
         std::println!("CRABC_MI_DYNAMIC_FULL_SINGLETON_HOMOGENEOUS_AGGREGATE_TRACE_BEGIN");
@@ -11747,7 +11747,7 @@ mod tests {
     /// The comparison is limited to the recorded state transitions, not
     /// pthread/TLS-destructor ordering or a claim of general thread-exit
     /// equivalence.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_os_aligned_singleton_owner_exit_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -16031,7 +16031,7 @@ mod tests {
     /// large exit path. The large page keeps its 63 registered PageMap slices
     /// (and one arena slack slice) while unmapped through five normal frees,
     /// then the sixth reabandon maps it before the complete 64-slice release.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_large_unmapped_reabandon_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -17228,7 +17228,7 @@ mod tests {
     /// engine: one joined remote producer is consumed during
     /// the post-TLS drain, after which the joined consumer frees the mapped
     /// handoff sequentially through the dynamic bitmap/count and arena span.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_medium_one_remote_force_collect_to_mapped_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -17726,7 +17726,7 @@ mod tests {
     /// medium exit path. The page remains unmapped through its five
     /// mostly-used frees, then the sixth reabandon maps it before its mapped
     /// tail releases the complete eight-slice arena span.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_medium_unmapped_reabandon_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -18402,7 +18402,7 @@ mod tests {
     /// during owner exit. The pinned C fixture performs real
     /// `mi_thread_done`; this typed fixture proves the matching post-TLS
     /// boundary without retaining a raw old-Theap pointer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -19282,7 +19282,7 @@ mod tests {
     /// non-direct-small exit path. The page begins unmapped after typed TLS
     /// teardown, crosses the normal mostly-used reabandon threshold only on
     /// its seventh client free, then releases through the mapped tail.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_non_direct_small_unmapped_reabandon_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -20220,7 +20220,7 @@ mod tests {
     /// owner exit. The pinned C fixture performs real `mi_thread_done`; this
     /// typed fixture proves the same post-TLS boundary without retaining a
     /// raw old-Theap pointer after its dynamic regular slot is cleared.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_direct_small_one_remote_force_collect_to_mapped_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -21130,7 +21130,7 @@ mod tests {
     /// direct-small exit path. The direct partial collector retains its head,
     /// so the page stays unmapped through nine client frees and maps on the
     /// tenth before its mapped tail releases the sole arena slice.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_direct_small_unmapped_reabandon_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -24080,11 +24080,11 @@ mod tests {
             // Process metadata can retry smaller arena or OS requests before
             // rejecting an allocation. Refuse every mapping attempt so a
             // retry cannot turn this TLD refusal into a live attachment.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let (refusal, expected_error) = (fault::Plan::every(
                 fault::Point::Map, crabc_core::Errno::NOMEM,
             ), MetaError::AllocationUnavailable);
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let (refusal, expected_error) = (fault::Plan::at(
                 fault::Point::Map,
                 1,
@@ -24478,7 +24478,7 @@ mod tests {
     /// This exercises only the engine: the typed owner-exit drain
     /// publishes both mapped-abandoned bitmap/count entries, then sequential
     /// client frees release the second page followed by the first.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn run_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace(emit_trace: bool) {
         with_ordinary_dynamic_page_fixture(move |owner, arena, page_map| {
             let session = owner
@@ -24853,13 +24853,13 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn dynamic_thread_exit_nonfull_medium_pages_distinct_bins_route_releases_two_terminal_members() {
         run_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace(false);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace_matches_pinned_c() {
         std::println!("CRABC_MI_DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_TRACE_BEGIN");
@@ -24872,7 +24872,7 @@ mod tests {
     /// engine: one joined remote producer is consumed during
     /// the post-TLS drain, after which the joined consumer frees the mapped
     /// handoff sequentially through the dynamic bitmap/count and arena span.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_trace_matches_pinned_c() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -25361,5 +25361,5 @@ mod tests {
     }
 }
 
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 pub(crate) use tests::managed_abandoned_lifecycle_trace;

@@ -1574,19 +1574,19 @@ fn thread_free_create_address(
 // a producer or owner collection loop.
 #[derive(Clone, Copy)]
 struct PageLinks {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     page_address: usize,
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     keys: [usize; 2],
 }
 
 #[inline]
 fn producer_links(state: PageRemoteFreeProducerState) -> PageLinks {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     {
         PageLinks { page_address: state.page_address, keys: state.keys }
     }
-    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+    #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
     {
         let _ = state;
         PageLinks {}
@@ -1595,11 +1595,11 @@ fn producer_links(state: PageRemoteFreeProducerState) -> PageLinks {
 
 #[inline]
 fn owner_links(state: PageRemoteFreeOwnerState) -> PageLinks {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     {
         PageLinks { page_address: state.page_address, keys: state.keys }
     }
-    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+    #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
     {
         let _ = state;
         PageLinks {}
@@ -1608,7 +1608,7 @@ fn owner_links(state: PageRemoteFreeOwnerState) -> PageLinks {
 
 #[inline]
 unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut Block {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     {
         // SAFETY: a published source block has an initialized encoded first
         // word; the page key and null sentinel were copied before collection.
@@ -1619,7 +1619,7 @@ unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut B
         // the encoded null sentinel must still produce an actual null.
         if address == 0 { ptr::null_mut() } else { block.as_ptr().with_addr(address) }
     }
-    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+    #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
     {
         let _ = links;
         unsafe { block_next(block) }
@@ -1628,7 +1628,7 @@ unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut B
 
 #[inline]
 unsafe fn block_set_next_for_page(links: PageLinks, block: NonNull<Block>, next: *mut Block) {
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     {
         // SAFETY: the producer owns this current block until its release CAS;
         // the owner has exclusive access to detached list nodes afterward.
@@ -1636,7 +1636,7 @@ unsafe fn block_set_next_for_page(links: PageLinks, block: NonNull<Block>, next:
         let encoded = crate::free_list::encode_page_link(links.page_address, links.keys, address);
         unsafe { ptr::write(block.as_ptr().cast::<usize>(), encoded) };
     }
-    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+    #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
     {
         let _ = links;
         unsafe { block_set_next(block, next) }
@@ -2757,7 +2757,7 @@ mod tests {
     /// abandoned-page ownership, page retirement, or thread teardown.  The
     /// test page remains live and owner-associated until its worker joins and
     /// the sole owner has completed the collection.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_live_owner_remote_free_trace_matches_pinned_c_protocol() {
         const PRODUCER_COUNT: usize = 2;
@@ -3005,7 +3005,7 @@ mod tests {
         unsafe { drop_boxed_test_page(page) };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_m5_remote_collect_race_matches_pinned_c_protocol() {
         const PRODUCERS: usize = 3;
@@ -3056,7 +3056,7 @@ mod tests {
         unsafe { drop_boxed_test_page(page) };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_m5_remote_owner_collect_preserves_pending_and_collected_membership() {
         const PRODUCERS: usize = 3;
@@ -3133,7 +3133,7 @@ mod tests {
 #[path = "remote_free_loom.rs"]
 mod loom_tests;
 
-#[cfg(all(test, target_arch = "x86_64", feature = "native-runtime-test-audit", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), feature = "native-runtime-test-audit", feature = "mi-debug-3", not(miri)))]
 mod source_reclaim_tests {
     use core::ptr::NonNull;
     use crate::runtime_lifecycle as runtime;

@@ -110,7 +110,7 @@ fn source_malloc_fills_and_reuses_first_medium_page_without_prior_small_history(
     );
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 #[test]
 fn source_live_clients_validate_regular_huge_full_and_exact_heap_slots() {
     use core::ptr::NonNull;
@@ -190,7 +190,7 @@ fn source_live_clients_validate_regular_huge_full_and_exact_heap_slots() {
     );
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 #[test]
 fn source_malloc_live_validity_assertion_reenters_after_original_owner_projections_end() {
     use core::{ffi::{c_char, c_void, CStr}, ptr::NonNull};
@@ -504,7 +504,7 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
     }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 #[test]
 fn source_normal_collection_validates_full_pages_before_deferred_callback() {
     use core::{ffi::c_void, ptr::NonNull};
@@ -588,7 +588,7 @@ fn source_normal_collection_validates_full_pages_before_deferred_callback() {
     );
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3", not(miri)))]
 #[test]
 fn source_local_free_validates_full_unfull_and_retired_page_before_release() {
     use core::{ffi::c_void, ptr::NonNull};
@@ -659,7 +659,7 @@ fn source_local_free_validates_full_unfull_and_retired_page_before_release() {
     );
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 #[test]
 fn source_thread_done_collects_auxiliary_theaps_with_automatic_abandon_disabled() {
     use core::ptr::NonNull;

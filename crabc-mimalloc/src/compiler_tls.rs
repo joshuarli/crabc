@@ -190,7 +190,7 @@ static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
 
 // Bind visibility to the compiler-selected names without adding ABI exports
 // or changing TLS storage, initializers, or the crate's TLS access model.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 core::arch::global_asm!(
     ".hidden {dynamic}, {fast}, {default}, {cached}, {identity}",
     dynamic = sym DYNAMIC_BACKING_ROOT,
@@ -202,7 +202,7 @@ core::arch::global_asm!(
 
 /// The five source compiler-TLS roots remain attached across application TLS
 /// reset on a reused timer pthread; losing one would orphan its live Theap.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn native_timer_tls_spans() -> [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 5] {
     use crate::runtime_lifecycle::NativeAllocatorTlsSpan as Span;
     [
@@ -267,7 +267,7 @@ pub(crate) fn dynamic_backing_peek() -> Option<NonNull<DynamicThreadLocalBacking
 #[inline(always)]
 pub(crate) fn install_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking>) {
     // A root store may change the Theap the local fast paths would reach.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = backing.as_ptr() };
@@ -280,7 +280,7 @@ pub(crate) fn install_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking
 #[inline(always)]
 pub(crate) fn install_empty_dynamic_backing() {
     // A root store may change the Theap the local fast paths would reach.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = empty_dynamic_backing_ptr() };
@@ -303,7 +303,7 @@ pub(crate) fn reset_roots_after_destroyed_child() {
 #[inline(always)]
 pub(crate) fn clear_dynamic_backing() {
     // A root store may change the Theap the local fast paths would reach.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = core::ptr::null_mut() };
@@ -320,7 +320,7 @@ pub(crate) fn fast_slot_peek() -> Option<NonNull<()>> {
 #[inline(always)]
 pub(crate) fn set_fast_slot(value: Option<NonNull<()>>) {
     // A root store may change the Theap the local fast paths would reach.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { FAST_SLOT_ROOT = value.map_or(core::ptr::null_mut(), NonNull::as_ptr) };
@@ -342,7 +342,7 @@ pub(crate) fn default_theap() -> NonNull<Theap> {
 #[inline(always)]
 pub(crate) fn set_default_theap(theap: NonNull<Theap>) {
     // A root store may change the Theap the local fast paths would reach.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DEFAULT_THEAP_ROOT = theap.as_ptr() };
@@ -363,7 +363,7 @@ pub(crate) fn cached_theap() -> NonNull<Theap> {
 #[inline(always)]
 pub(crate) fn set_cached_theap(theap: NonNull<Theap>) {
     // A root store may change the Theap the local fast paths would reach.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { CACHED_THEAP_ROOT = theap.as_ptr() };
@@ -514,7 +514,7 @@ pub(crate) fn reset_for_thread_teardown() {
         clear_dynamic_backing();
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     // SAFETY: each calling thread alone writes all five source pointer roots,
     // including the otherwise-unused helper root. The immutable process image

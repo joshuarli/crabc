@@ -50,7 +50,7 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::diagnostic_output::HugePageWarningRoute;
 use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
 use crate::config::{
@@ -296,7 +296,7 @@ fn reset_with_advice(
 /// span. No reference or concurrent access may observe these bytes.
 #[inline]
 unsafe fn reset_eager_debug_pages(address: *mut u8, length: usize) {
-    if cfg!(target_arch = "x86_64")
+    if cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
         && crate::config::DEBUG_LEVEL > 1 && crate::config::SECURE_LEVEL == 0
     {
         // SAFETY: the caller supplies the complete writable span and excludes
@@ -603,7 +603,7 @@ pub(crate) struct VmPolicy {
     process_options: Option<&'static OutputOwner>,
     /// Explicit embedding authority, consulted only by guarded protection
     /// failure delivery. Ordinary VM paths never use this writer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_errno_store: Option<crate::process_init::SourceErrnoStore>,
     /// The fixed descriptor image is immutable after ordinary source startup.
     /// A rare `_mi_getenv` failure leaves individual slots lazy-uninitialized,
@@ -932,9 +932,9 @@ impl<'a> VmProcess<'a> {
         unsafe { self.decommit_arena_range_with_failure_hook(
             page_size, address, length, stat_size,
             |error| {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if let Some(writer) = self.policy.source_errno_store { writer.store(error); }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 let _ = error;
             },
         ) }
@@ -1153,7 +1153,7 @@ impl VmPolicy {
     /// descriptor owner for the policy lifetime. The optional errno writer
     /// satisfies its process-lifetime and current-thread calling obligations.
     /// All writes are infallible and invoke no callback.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn initialize_from_process_options_at(
         destination: NonNull<Self>,
         output: &'static OutputOwner,
@@ -1190,7 +1190,7 @@ impl VmPolicy {
 
     /// Retains the embedding's current-thread errno writer for guarded
     /// protection failures; ordinary VM operations leave it unused.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn with_source_errno_store(
         mut self, store: Option<crate::process_init::SourceErrnoStore>,
     ) -> Self {
@@ -1206,7 +1206,7 @@ impl VmPolicy {
         let options_resolved = options.all_resolved();
         Self {
             process_options: None,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             source_errno_store: None,
             options: UnsafeCell::new(options),
             options_resolved: AtomicBool::new(options_resolved),
@@ -1437,9 +1437,9 @@ impl VmPolicy {
     /// output route. An image policy (fixtures, the AArch64 process)
     /// has no route and drops it, as a source build with warnings disabled
     /// would.
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
-    #[cfg_attr(not(target_arch = "x86_64"), inline)]
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
+    #[cfg_attr(not(any(target_arch = "x86_64", target_arch = "aarch64")), inline)]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) fn source_warning(&self, message: SourceFormattedMessage) {
         if let Some(output) = self.process_options {
             // SAFETY: `from_process_options` accepted this owner's delivery
@@ -1453,7 +1453,7 @@ impl VmPolicy {
     /// The original body stays immutable throughout delivery; the finite
     /// selection stage stores scalar recipes and borrows instead of a second
     /// formatting buffer. The image policy has no route and drops the body.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline(never)]
     pub(crate) fn source_warning(&self, message: SourceFormattedMessage) {
         if let Some(output) = self.process_options {
@@ -1466,8 +1466,8 @@ impl VmPolicy {
 
     /// Formats an OS allocation warning at the caller's source read point.
     /// The caller still records its mmap attempt after output returns.
-    #[cfg_attr(target_arch = "x86_64", cold)]
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), cold)]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn report_os_alloc_failure(&self, error: Errno, address: usize, length: usize,
         alignment: usize, committed: bool, allow_large: bool) {
         self.source_warning(SourceFormattedMessage::os_alloc_failure(
@@ -1477,8 +1477,8 @@ impl VmPolicy {
 
     /// Formats the source warning before releasing an unaligned direct map
     /// or attempting its overmap. Mapping custody stays with the caller.
-    #[cfg_attr(target_arch = "x86_64", cold)]
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), cold)]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn report_aligned_direct_fallback(&self, length: usize, address: usize,
         alignment: usize, committed: bool) {
         self.source_warning(SourceFormattedMessage::aligned_direct_fallback(
@@ -1488,16 +1488,16 @@ impl VmPolicy {
 
     /// Reports a failed source free before its unconditional accounting edge.
     /// Scalar facts carry no release right or live Mapping projection.
-    #[cfg_attr(target_arch = "x86_64", cold)]
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), cold)]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn report_os_free_failure(&self, error: Errno, length: usize, address: usize) {
         self.source_warning(SourceFormattedMessage::os_free_failure(error, length, address));
     }
 
     /// Reports the already counted failed commit without charging any bytes.
     /// The caller supplies the same normalized range used by its primitive.
-    #[cfg_attr(target_arch = "x86_64", cold)]
-    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), cold)]
+    #[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), inline(never))]
     fn report_os_commit_failure(&self, error: Errno, address: usize, length: usize) {
         self.source_warning(SourceFormattedMessage::os_commit_failure(error, address, length));
     }
@@ -1509,7 +1509,7 @@ impl VmPolicy {
     ///
     /// The returned disposition describes the source branch, independently
     /// of optional writer presence or whether that writer changed errno.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) fn source_error(
         &self,
         report: crate::diagnostic_output::SourceErrorReport,
@@ -1522,7 +1522,7 @@ impl VmPolicy {
         } else {
             crate::diagnostic_output::source_default_error_disposition(report.error())
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(error) = disposition {
             if let Some(writer) = self.source_errno_store { let _ = writer.store_default(error); }
         }
@@ -1531,7 +1531,7 @@ impl VmPolicy {
 
     /// Formats one original error body, then borrows it through gated output
     /// and the handler. Default errno storage still follows their disposition.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn source_error(
         &self,
         report: crate::diagnostic_output::SourceErrorReport,
@@ -1548,7 +1548,7 @@ impl VmPolicy {
         } else {
             crate::diagnostic_output::source_default_error_disposition(report.error())
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(error) = disposition {
             if let Some(writer) = self.source_errno_store { let _ = writer.store_default(error); }
         }
@@ -2267,7 +2267,7 @@ pub(crate) enum DecommitOutcome {
 /// protection for native x86. This flag survives advisory and protection failures.
 #[inline]
 pub(crate) const fn decommit_needs_recommit() -> bool {
-    cfg!(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))
+    cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-secure-3")))
 }
 
 /// Applies the Linux advisory followed by its source profile protection.
@@ -2460,7 +2460,7 @@ pub(crate) unsafe fn decommit_arena_range(
 /// live base page. The caller retains its original release claim and excludes
 /// byte references and allocator projections throughout syscalls and callbacks.
 /// `process`, if present, owns the mapping's VM accounting.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn secure_guard_page_transition(
     process: Option<VmProcess<'_>>, page_size: PageSize, address: *mut u8, commit: bool,
 ) -> Result<bool> {
@@ -2676,7 +2676,7 @@ impl Mapping {
             None,
             default_random,
             thp,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             None,
         )
     }
@@ -2864,7 +2864,7 @@ impl Mapping {
     /// high-address hint. There is no regular mmap fallback on this path.
     fn map_huge_page_at(
         policy: &VmPolicy, config: MemoryConfig, hint: usize,
-        #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning: Option<HugePageWarningRoute<'_>>,
     ) -> Result<Self> {
         fault_before(FaultPoint::HugeMap)?;
         #[cfg(test)]
@@ -2894,7 +2894,7 @@ impl Mapping {
             Some(hint),
             None,
             ThpAdvice::Source,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             warning,
         )
     }
@@ -2923,7 +2923,7 @@ impl Mapping {
     /// # Safety
     /// The source startup dispatch and callback lifetimes accepted by the
     /// warning route stay admitted throughout synchronous delivery.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[cold]
     #[inline(never)]
     unsafe fn report_huge_one_gib_retry(warning: HugePageWarningRoute<'_>, error: Errno) {
@@ -2944,7 +2944,7 @@ impl Mapping {
         explicit_hint: Option<usize>,
         default_random: OsRandom<'_>,
         thp: ThpAdvice,
-        #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning: Option<HugePageWarningRoute<'_>>,
     ) -> Result<Self> {
         fault_before(FaultPoint::Map)?;
         let mut flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -2983,7 +2983,7 @@ impl Mapping {
                     Ok(address) => return Ok(Self::policy_mapping(address, length, config, access, true)),
                     Err(first_error) if one_gib => {
                         policy.huge_one_gib_unavailable.store(true, Ordering::Relaxed);
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         if large_only {
                             if let Some(warning) = warning {
                                 // SAFETY: the source emits this warning after
@@ -3422,7 +3422,7 @@ impl Mapping {
     /// A source arena can be managed only under the same frozen page-size
     /// observation as its process page map. This value is immutable after
     /// creation and exposes no mapping ownership or raw memory access.
-    #[cfg(any(test, feature = "test-adapter", feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "test-adapter", feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     #[inline]
     pub(crate) const fn page_size(&self) -> PageSize {
         self.page_size
@@ -4062,7 +4062,7 @@ unsafe fn protect_live_range_with_failure_hook(
 /// # Safety
 /// The complete live-span and ended-projection obligations of
 /// `protect_live_range` apply; `process` is the same owning VM pair.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn protect_guarded_live_range(
     address: *mut u8, length: usize, protect: bool, process: VmProcess<'_>,
 ) -> Result<bool> {
@@ -4330,7 +4330,7 @@ impl<'a> HugeOsAllocation<'a> {
         )
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     /// The source-startup huge primitive with its already-retained diagnostic
     /// route. Warnings run at the pinned one-GiB retry, placement,
     /// failed primitive, noncontiguous cleanup, and timeout positions; none
@@ -4360,7 +4360,7 @@ impl<'a> HugeOsAllocation<'a> {
 
     /// Legacy caller spelling retained for the existing arena reservation
     /// owner. It now carries every source huge-page warning in that attempt.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn allocate_for_process_with_mbind_warning(
         process: VmProcess<'a>, config: MemoryConfig, pages: usize,
         numa_node: i32, max_milliseconds: i64, default_random: OsRandom<'_>,
@@ -4507,7 +4507,7 @@ fn allocate_huge_pages_with<'a>(
     allocate_huge_pages_with_warnings(
         process, pages, max_milliseconds, default_random, map_page,
         clock_start, clock_end,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         None,
     )
 }
@@ -4520,7 +4520,7 @@ fn allocate_huge_pages_with_warnings<'a>(
     mut map_page: impl FnMut(usize) -> Result<Mapping>,
     mut clock_start: impl FnMut() -> i64,
     mut clock_end: impl FnMut(i64) -> i64,
-    #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning: Option<HugePageWarningRoute<'_>>,
 ) -> HugeOsAllocationOutcome<'a> {
     let Some((start, claimed_size)) = process.policy.claim_huge_pages(pages, default_random) else {
         return HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::ClaimOverflow);
@@ -4547,7 +4547,7 @@ fn allocate_huge_pages_with_warnings<'a>(
         let mut mapping = match map_page(address) {
             Ok(mapping) => mapping,
             Err(error) => {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if let Some(warning) = warning {
                     // SAFETY: source emits before returning the partial
                     // prefix; the process startup output owner stays live.
@@ -4562,7 +4562,7 @@ fn allocate_huge_pages_with_warnings<'a>(
         all_zero &= mapping.initially_zero();
         if mapping.base().ok() != Some(expected) {
             stop = HugeOsAllocationStop::NoncontiguousPrimitive;
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(warning) = warning {
                 // SAFETY: the rejected map is still held locally and the
                 // source warning precedes its adjustment free.
@@ -4602,7 +4602,7 @@ fn allocate_huge_pages_with_warnings<'a>(
                 elapsed = max_milliseconds.saturating_add(1);
             }
             if elapsed > max_milliseconds {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if let Some(warning) = warning {
                     // SAFETY: the completed prefix remains owned during
                     // this source warning before loop termination.
@@ -4643,14 +4643,14 @@ fn map_huge_page_for_process(
 ) -> Result<Mapping> {
     let mapping = Mapping::map_huge_page_at(
         process.policy, config, hint,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         None,
     )?;
     apply_huge_page_numa_preference(mapping.base()?, numa_node);
     Ok(mapping)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn map_huge_page_for_process_with_mbind_warning(
     process: VmProcess<'_>,
     config: MemoryConfig,
@@ -4680,7 +4680,7 @@ fn apply_huge_page_numa_preference(address: *mut u8, numa_node: i32) {
 /// its warning, and preserves the complete mapping either way. Node 63 on
 /// 64-bit Linux remains an invalid source input: it neither calls nor emits.
 #[inline]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn apply_huge_page_numa_preference_with_mbind_warning(
     address: *mut u8,
     numa_node: i32,
@@ -4934,7 +4934,7 @@ pub(crate) struct NormalOsBaseAllocation {
 impl NormalOsBaseAllocation {
     /// Borrows the exact regular mapping while the base-only handoff remains
     /// unconsumed.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     #[inline]
     pub(crate) const fn mapping(&self) -> &Mapping { &self.mapping }
 
@@ -5211,7 +5211,7 @@ impl NormalOsAllocation {
         allow_large: bool,
         default_random: OsRandom<'_>,
     ) -> core::result::Result<Mapping, NormalOsAllocationFailure> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let mapping = Self::allocate_aligned_mapping_for_process(
                 process, config, size, alignment, access, allow_large,
@@ -5220,7 +5220,7 @@ impl NormalOsAllocation {
             let allocation = Self::from_mapping(mapping, 0)?;
             Ok(Self::into_base_allocation(allocation)?.into_mapping_and_memory().0)
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             Ok(Self::allocate_aligned_base_for_process(
                 process, config, size, alignment, access, allow_large, default_random,
@@ -7301,7 +7301,7 @@ fn fault_before(point: FaultPoint) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn numeric_mmap_hint_never_replaces_returned_mapping_provenance() {
         let length = 4096;
@@ -7323,15 +7323,15 @@ mod tests {
     use super::*;
     use crabc_core::Errno;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     use crate::diagnostic_output::{
         HugePageWarningRoute, OutputCallback, OutputOwner, RuntimeStderrOutput,
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     use core::cell::UnsafeCell;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     use core::ffi::{c_char, c_void, CStr};
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     use core::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicUsize};
 
     struct MemoryDetectionProbe {
@@ -7542,14 +7542,14 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct MbindDiagnosticCapture {
         count: AtomicUsize,
         expected_body: AtomicBool,
         _no_alias: UnsafeCell<()>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct NumaVerboseOutputCapture {
         messages: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>>,
         policy: core::sync::atomic::AtomicPtr<VmPolicy>,
@@ -7558,7 +7558,7 @@ mod tests {
         cache_at_output: AtomicUsize,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_numa_verbose_output(message: *const c_char, argument: *mut c_void) {
         if message.is_null() || argument.is_null() { return; }
         // SAFETY: the process test retains this capture through each synchronous
@@ -7583,7 +7583,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ControlledProcessNumaVerboseTrace {
         count: usize,
         cached_count: usize,
@@ -7600,7 +7600,7 @@ mod tests {
         body_matches: bool,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn controlled_process_numa_verbose_trace() -> ControlledProcessNumaVerboseTrace {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
             .lock()
@@ -7698,10 +7698,10 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe impl Sync for MbindDiagnosticCapture {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_mbind_diagnostic(message: *const c_char, argument: *mut c_void) {
         // SAFETY: the source test registers one live capture and serializes
         // this receiver call with the route under test.
@@ -7713,22 +7713,22 @@ mod tests {
         capture.count.fetch_add(1, Ordering::AcqRel);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn unexpected_default_diagnostic_output(_: *const c_char) {
         unreachable!("the actual mbind receiver test registers its custom route before emission")
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct FaultDiagnosticRelationCapture {
         count: AtomicUsize,
         lengths: UnsafeCell<[usize; 4]>,
         fragments: UnsafeCell<[[u8; 192]; 4]>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe impl Sync for FaultDiagnosticRelationCapture {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     impl FaultDiagnosticRelationCapture {
         const fn new() -> Self {
             Self {
@@ -7756,7 +7756,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_fault_diagnostic_relation(
         message: *const c_char, argument: *mut c_void,
     ) {
@@ -7779,7 +7779,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct NormalReceiverWarnings {
         bodies: AtomicUsize,
         fragments: AtomicUsize,
@@ -7793,7 +7793,7 @@ mod tests {
         final_free_before_decrease: AtomicBool,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     impl NormalReceiverWarnings {
         const fn new() -> Self {
             Self { bodies: AtomicUsize::new(0), fragments: AtomicUsize::new(0),
@@ -7828,7 +7828,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_normal_receiver_warning(message: *const c_char, argument: *mut c_void) {
         if message.is_null() || argument.is_null() { return; }
         // SAFETY: the test keeps this capture alive and serializes every delivery.
@@ -7858,13 +7858,13 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct OsPageClaimWarningCapture {
         subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
         deliveries: std::sync::Mutex<std::vec::Vec<(std::vec::Vec<u8>, i64, i64)>>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     impl OsPageClaimWarningCapture {
         fn new() -> Self {
             Self {
@@ -7879,7 +7879,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_os_page_claim_warning(message: *const c_char, argument: *mut c_void) {
         if message.is_null() || argument.is_null() { return; }
         // SAFETY: the process and address-stable capture outlive every selected
@@ -7894,7 +7894,7 @@ mod tests {
         ));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" {
         fn fputs(message: *const c_char, stream: *mut c_void) -> i32;
         static mut stderr: *mut c_void;
@@ -7904,7 +7904,7 @@ mod tests {
     /// It intentionally ignores `fputs`'s result, as pinned
     /// `_mi_prim_out_stderr` does. It is not an ambient production lookup or
     /// a FILE transport qualification claim.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn m2_fault_diagnostic_musl_stderr(message: *const c_char) {
         // SAFETY: the x86 native test binary links the pinned musl `stderr`
         // object and `fputs`; `RuntimeStderrOutput` guarantees a non-null
@@ -7920,7 +7920,7 @@ mod tests {
         StartupInput::new(page_size)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn failed_valid_mbind_uses_the_actual_receiver_and_invalid_node_does_not_attempt_or_emit() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
@@ -7994,7 +7994,7 @@ mod tests {
     /// source-owned mapping. The selected fault seam supplies the syscall
     /// failure; this helper preserves the mapping and statistic observations
     /// around that exact call instead of synthesizing a warning directly.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn m2_fault_diagnostic_relation_mapping(
         output: &OutputOwner,
         numa_node: i32,
@@ -8127,7 +8127,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_thp_prctl_set_failure_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -8234,7 +8234,7 @@ mod tests {
         std::println!("CRABC_M2_THP_PRCTL_RUST_TRACE_END");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_thp_prctl_get_failure_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -8338,7 +8338,7 @@ mod tests {
         std::println!("CRABC_M2_THP_PRCTL_RUST_TRACE_END");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn selected_mapping_has_vm_flag(address: *mut u8, selected_flag: &str) -> bool {
         let smaps = std::fs::read_to_string("/proc/self/smaps")
             .expect("the selected Linux process exposes mapping flags");
@@ -8364,7 +8364,7 @@ mod tests {
         false
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_commit_failure_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -8530,7 +8530,7 @@ mod tests {
         assert_eq!(WARNING_CALLS.load(Ordering::Acquire), 1);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_commit_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -8629,7 +8629,7 @@ mod tests {
         assert_eq!(after.committed_total - before.committed_total, page as i64);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_no_advice_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -8789,7 +8789,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_reset_retry_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -8948,7 +8948,7 @@ mod tests {
         assert_eq!(WARNING_CALLS.load(Ordering::Acquire), 0);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_reset_fallback_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -9111,7 +9111,7 @@ mod tests {
         assert_eq!(WARNING_CALLS.load(Ordering::Acquire), 0);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_reset_policy_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -9303,7 +9303,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_external_os_purge_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -9483,7 +9483,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_thp_madvise_success_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -9605,7 +9605,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_large_page_fallback_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -9760,7 +9760,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_thp_enable_existing_disable_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -9902,7 +9902,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_thp_madvise_failure_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -10034,7 +10034,7 @@ mod tests {
         std::println!("{END}");
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_thp_disabled_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
@@ -10440,7 +10440,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn in_place_process_policy_keeps_live_descriptors_and_current_thread_errno() {
         unsafe extern "C" { fn __errno_location() -> *mut core::ffi::c_int; }
@@ -10556,7 +10556,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_numa_cache_emits_source_verbose_region_line_once() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
@@ -11632,9 +11632,9 @@ mod tests {
             && (fault.observed(), fault.secondary_observed(), fault.third_observed())
                 == (3, 2, 1);
         drop(fault);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let warning_order = failed_huge_attempt_warning_relation();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let warning_order = true;
 
         [
@@ -11651,7 +11651,7 @@ mod tests {
         assert_eq!(large_only_one_gib_failure_terminal_matrix(), [true; 4]);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     fn failed_huge_attempt_warning_relation() -> bool {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
         let _environment_reset = VmPolicySourceEnvironmentReset;
@@ -11698,7 +11698,7 @@ mod tests {
         true
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_huge_reservation_progress_c_rust_trace() {
         struct ProgressWarnings {
@@ -11867,7 +11867,7 @@ mod tests {
         assert_eq!(fallback_attempts, 1);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn failed_huge_attempt_warns_before_retry_and_before_unavailable_result() {
         assert!(failed_huge_attempt_warning_relation());
@@ -12170,7 +12170,7 @@ mod tests {
         assert!(write_linux_numa_node_path(256, &mut path).is_none());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_startup_page_size_accepts_only_the_four_kib_profile() {
         assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);
@@ -12375,14 +12375,14 @@ mod tests {
         // SAFETY: explicit recommit restored access to the retained page.
         assert_eq!(unsafe { base.read_volatile() }, 0x44);
         assert_eq!(mapping.decommit(1, page - 1), Ok(None));
-        let protected = cfg!(all(target_arch = "x86_64",
+        let protected = cfg!(all(any(target_arch = "x86_64", target_arch = "aarch64"),
             any(feature = "mi-debug-1", feature = "mi-secure-3")));
         assert_eq!(mapping.decommit(0, page), Ok(Some(if protected {
             DecommitOutcome::NeedsRecommit
         } else {
             DecommitOutcome::DoesNotNeedRecommit
         })));
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         assert_eq!(decommit_mapping_permissions(base), if protected { "---p" } else { "rw-p" });
         assert_eq!(mapping.commit(0, page), Ok(Some(CommitOutcome::NotKnownZero)));
         // SAFETY: the live mapping is writable after its explicit recommit.
@@ -12461,7 +12461,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_reset_eager_debug_zeroing_precedes_failed_advice_and_stays_contained() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12611,7 +12611,7 @@ mod tests {
         fault.set(fault::Plan::disabled());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn decommit_mapping_permissions(address: *mut u8) -> std::string::String {
         let maps = std::fs::read_to_string("/proc/self/maps").expect("read native mapping protections");
         for line in maps.lines() {
@@ -12627,7 +12627,7 @@ mod tests {
         panic!("the retained mapping must remain physically present");
     }
 
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
     #[test]
     fn protected_decommit_protects_contained_pages_until_exact_recommit() {
         let _fault = fault::install(fault::Plan::disabled());
@@ -12661,7 +12661,7 @@ mod tests {
         mapping.unmap().expect("release the full protected decommit owner once");
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     #[test]
     fn secure_page_guard_unaccounted_tail_and_pinned_reset_keep_mapping_ownership() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12705,7 +12705,7 @@ mod tests {
         allocation.release().unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5", feature = "mi-stat-1"))]
     #[test]
     fn secure_page_guard_reset_of_partial_commit_charges_only_the_successful_tail() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12762,7 +12762,7 @@ mod tests {
         assert_eq!(after.reserved_current, before.reserved_current);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5", feature = "mi-stat-1"))]
     #[test]
     fn secure_page_guard_tail_preserves_client_bytes_and_vm_accounting_through_reuse() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12813,7 +12813,7 @@ mod tests {
         assert_eq!(terminal.reserved_current, initial.reserved_current);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5", feature = "mi-stat-1"))]
     #[test]
     fn secure_page_guard_decommit_and_protection_failures_retain_the_original_owner() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12851,7 +12851,7 @@ mod tests {
         allocation.release_for_process(process, true).unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
     #[test]
     fn protected_decommit_failure_protects_without_charging_and_recommit_retries() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12903,7 +12903,7 @@ mod tests {
         mapping.unmap_for_process(process, 3 * page, false).unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
     #[test]
     fn protected_decommit_protection_failure_is_best_effort_and_keeps_source_accounting() {
         let fault = fault::install(fault::Plan::disabled());
@@ -13462,7 +13462,7 @@ mod tests {
     /// same node list.  Existing source-policy, registry, and cleanup
     /// evidence remains separate; this bounded witness is only the missing
     /// hardware-success and physical-placement observation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn hardware_huge_page_numa_qualification_workload() {
         const ENVIRONMENT: &str = "CRABC_MIMALLOC_HUGE_NUMA_NODES";
@@ -13774,7 +13774,7 @@ mod tests {
                 == noncontiguous_before.committed_current - HUGE_PAGE_SIZE as i64;
         drop(noncontiguous_fault);
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let fault_diagnostic_relation = {
             let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
                 .lock()
@@ -13946,7 +13946,7 @@ mod tests {
                 && custom_mapping_survives && invalid_no_mbind && invalid_no_output
                 && invalid_mapping_survives
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let fault_diagnostic_relation = true;
         assert!(
             fault_diagnostic_relation,
@@ -14843,7 +14843,7 @@ mod tests {
             .expect("fixture teardown of the leaked candidate");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn m2_normal_receiver_process_fixture() -> (MemoryConfig, VmProcess<'static>, &'static NormalReceiverWarnings) {
         let show_errors = b"mimalloc_show_errors=1\0";
         let max_warnings = b"mimalloc_max_warnings=100\0";
@@ -14870,7 +14870,7 @@ mod tests {
         (config, VmProcess::new(policy, crate::subproc::MainSubprocess::test_static_owner()), warnings)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn m2_normal_receiver_case(config: MemoryConfig, process: VmProcess<'_>,
         warnings: &NormalReceiverWarnings, ordinal: usize) -> bool {
         let length = 2 * config.page_size().bytes();
@@ -14928,7 +14928,7 @@ mod tests {
         true
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn normal_os_receiver_keeps_memid_and_raw_retry_after_failed_trim() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
@@ -14942,7 +14942,7 @@ mod tests {
     /// A processless OS page claim keeps the aligned middle even when the
     /// last best-effort trim fails. Its terminal release retains one raw
     /// retry owner; the escaped suffix has no owner and needs fixture cleanup.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_legacy_os_page_suffix_trim_trace() {
         use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner};
@@ -15033,7 +15033,7 @@ mod tests {
 
     /// A process-owned fresh OS page retains the failed suffix as an escaped
     /// range and accounts the returned middle exactly once before raw retry.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_process_os_page_suffix_trim_trace() {
         use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner};
@@ -15368,7 +15368,7 @@ mod tests {
         for (key, case, access) in rows {
             std::println!("{key}={}", u8::from(m2_aligned_overmap_case(case, access)));
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
             let _environment_reset = VmPolicySourceEnvironmentReset;
@@ -15386,7 +15386,7 @@ mod tests {
     /// Main subprocess VM statistics after process initialization (the page
     /// map is published), after the first allocation (the first arena is
     /// reserved), and after its free.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn emit_m2_startup_statistics_c_rust_trace() {
         unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
@@ -16707,7 +16707,7 @@ mod tests {
         std::println!("CRABC_MI_M2_VM_TRACE_END");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ProcessOwnedDecommitWarning {
         expected_error: usize,
         warning_errno_replacement: Option<i32>,
@@ -16726,7 +16726,7 @@ mod tests {
         fault: AtomicPtr<fault::Guard>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_process_owned_decommit_warning(
         message: *const c_char, argument: *mut c_void,
     ) {
@@ -16780,13 +16780,13 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_process_owned_decommit_fault_c_rust_trace() {
         process_owned_decommit_fault_receiver(false, DecommitErrnoControl::NoWriter);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn external_arena_decommit_retains_mapping_warning_and_source_accounting() {
         crate::test_process::run_in_fresh_process(
@@ -16795,7 +16795,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn external_arena_decommit_publishes_owned_errno_before_warning_and_handler() {
         crate::test_process::run_in_fresh_process(
@@ -16807,7 +16807,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn external_arena_guard_error_applies_default_only_to_zero_owned_errno() {
         crate::test_process::run_in_fresh_process(
@@ -16820,11 +16820,11 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[derive(Clone, Copy)]
     enum DecommitErrnoControl { NoWriter, Handler, DefaultZero, DefaultNonzero, NoDefaultWriter }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn process_owned_decommit_fault_receiver(external: bool, errno_control: DecommitErrnoControl) {
         let publish_errno = !matches!(errno_control, DecommitErrnoControl::NoWriter);
         let default_case = matches!(errno_control, DecommitErrnoControl::DefaultZero
@@ -16973,7 +16973,7 @@ mod tests {
             unsafe { output.register_error(None, core::ptr::null_mut()) };
         }
         if decommit_needs_recommit() {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert_eq!(decommit_mapping_permissions(base.wrapping_add(page)), "---p");
             mapping.commit_for_process(process, page, page, page).unwrap();
         }
@@ -16988,7 +16988,7 @@ mod tests {
                 DecommitOutcome::NeedsRecommit
             } else { DecommitOutcome::DoesNotNeedRecommit }));
         if decommit_needs_recommit() {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert_eq!(decommit_mapping_permissions(base.wrapping_add(page)), "---p");
             mapping.commit_for_process(process, request_offset, decommit_size, 0).unwrap();
         }
@@ -17070,7 +17070,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ProcessOwnedMapWarning {
         count: AtomicUsize,
         errno: AtomicBool,
@@ -17084,7 +17084,7 @@ mod tests {
         fault: AtomicPtr<fault::Guard>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_process_owned_map_warning(
         message: *const c_char, argument: *mut c_void,
     ) {
@@ -17116,7 +17116,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_process_owned_map_fault_c_rust_trace() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
@@ -17246,7 +17246,7 @@ mod tests {
         assert!(retry_succeeded && full_owner && writable && terminal_unmapped);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ProcessOwnedCommitWarning {
         count: AtomicUsize,
         exact: AtomicBool,
@@ -17262,7 +17262,7 @@ mod tests {
         fault: AtomicPtr<fault::Guard>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_process_owned_commit_warning(
         message: *const c_char, argument: *mut c_void,
     ) {
@@ -17310,7 +17310,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_process_owned_commit_fault_c_rust_trace() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
@@ -17459,7 +17459,7 @@ mod tests {
         assert!(retry_succeeded && writable_after_retry && third_page_mapped && full_owner && terminal_unmapped);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct ProcessOwnedProtectWarning {
         count: AtomicUsize,
         order: AtomicUsize,
@@ -17478,7 +17478,7 @@ mod tests {
         fault: AtomicPtr<fault::Guard>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_process_owned_protect_warning(
         message: *const c_char, argument: *mut c_void,
     ) {
@@ -17537,7 +17537,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     std::thread_local! {
         static GUARDED_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(33) };
         static GUARDED_ERRNO_STORES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
@@ -17546,19 +17546,19 @@ mod tests {
         static GUARDED_SECOND_WARNING_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(-1) };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn store_guarded_fixture_errno(error: i32) {
         GUARDED_ERRNO.with(|slot| slot.set(error));
         GUARDED_ERRNO_STORES.with(|count| count.set(count.get() + 1));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn store_guarded_fixture_default_errno(error: i32) {
         GUARDED_DEFAULT_ERRNO_STORES.with(|count| count.set(count.get() + 1));
         GUARDED_ERRNO.with(|slot| { if slot.get() == 0 { slot.set(error); } });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_guarded_fixture_warning(message: *const c_char, _: *mut c_void) {
         // SAFETY: the synchronous source callback retains this formatted C string.
         let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
@@ -17575,7 +17575,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn guarded_protection_publishes_owned_errno_before_warnings_without_restoring_callbacks() {
         crate::test_process::run_in_fresh_process(
@@ -17673,7 +17673,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_process_owned_protect_fault_c_rust_trace() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
@@ -17822,7 +17822,7 @@ mod tests {
             "the failed process-owned protection must emit its source warning");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_process_owned_unprotect_fault_c_rust_trace() {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
@@ -17969,16 +17969,16 @@ mod tests {
             "the failed process-owned unprotect must emit one source warning");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static REGISTERED_TERMINAL_UNMAP_ENVIRONMENT: AtomicPtr<*const c_char> =
         AtomicPtr::new(core::ptr::null_mut());
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn registered_terminal_unmap_environment() -> *const *const c_char {
         REGISTERED_TERMINAL_UNMAP_ENVIRONMENT.load(Ordering::Acquire)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct RegisteredTerminalUnmapWarning {
         active: AtomicBool,
         calls: AtomicUsize,
@@ -17990,7 +17990,7 @@ mod tests {
         expected: std::sync::OnceLock<std::vec::Vec<u8>>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn registered_terminal_unmap_warning(
         message: *const c_char,
         argument: *mut c_void,
@@ -18017,7 +18017,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_registered_arena_terminal_unmap_fault_c_rust_trace() {
         use crate::arena::ArenaSearch;
@@ -18178,7 +18178,7 @@ mod tests {
         assert!(setup && claim_first && failed_live && other_gone && terminal_unmapped);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn registered_terminal_unmap_default_output(_: *const c_char) {}
 
     #[test]

@@ -412,7 +412,7 @@ impl ThreadLocalDataOwner {
     /// Option. The caller retains the ordinary later-main thread, subprocess,
     /// metadata and attachment obligations. Failure leaves the slot untouched;
     /// success writes one Some owner whose linear custody passes to the caller.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn begin_later_main_heap_attachment_with_metadata_into(
         destination: core::ptr::NonNull<Option<DynamicAttachedThreadLocalData>>,
         subprocess: &'static MainSubprocess,

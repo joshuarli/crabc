@@ -45,7 +45,7 @@
 
 use core::cell::Cell;
 use core::mem::size_of;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
@@ -517,7 +517,7 @@ impl OsAlignedPageReleaseFailure {
     /// statistics. The OS warning leaves the refused range mapped; later
     /// collection or allocation must not invent another release attempt.
     /// Private claims and failures before accounting retain their owner.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn forget_consumed_source_page(self) -> Result<(), Self> {
         match &self.owner {
             OsAlignedPageOwner::Published(page) if page.release_accounted => {
@@ -546,7 +546,7 @@ pub(crate) struct OsAlignedPageAllocationFailure {
 /// Ready and Retained leave one initialized image to take exactly once.
 /// Released grants no right to read the destination, including after a
 /// successful rollback left inactive representation bytes there.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use]
 pub(crate) enum OsAlignedPageClaimInitialization {
     Ready,
@@ -575,12 +575,12 @@ impl OsAlignedPageAllocationFailure {
 
     #[inline]
     pub(crate) fn into_owner(self) -> Option<OsAlignedPageOwner> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { match self.claim {
             Some(claim) => Some(OsAlignedPageOwner::Claim(claim)),
             None => None,
         } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.claim.map(OsAlignedPageOwner::Claim) }
     }
 }
@@ -759,7 +759,7 @@ impl OsAlignedPageClaim {
     /// The destination is aligned, writable, vacant and inaccessible to callbacks.
     /// Ready and Retained initialize one complete original claim which the caller
     /// must take exactly once. Released forbids reading or releasing the destination.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn initialize_processless_into(
         destination: NonNull<MaybeUninit<Self>>, config: MemoryConfig,
         block_size: usize, alignment: usize,
@@ -791,7 +791,7 @@ impl OsAlignedPageClaim {
     /// reclaimed or released. Ready and Retained require taking that complete
     /// original image once; Released forbids reading or releasing it. No
     /// destructor or implicit release acts on the destination.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn initialize_borrowed_into(
         destination: NonNull<MaybeUninit<Self>>, process: VmProcess<'_>,
         config: MemoryConfig, block_size: usize, alignment: usize,
@@ -884,7 +884,7 @@ impl OsAlignedPageClaim {
 
     /// Writes every field of one private image without an aggregate Claim.
     /// The destination is vacant and the mapping is the sole authentic owner.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn write_borrowed_claim_at(
         destination: NonNull<Self>, mapping: Mapping, layout: &OsAlignedPageLayout,
         process: VmProcess<'_>, commit: bool,
@@ -907,7 +907,7 @@ impl OsAlignedPageClaim {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn allocate_borrowed_value(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -934,7 +934,7 @@ impl OsAlignedPageClaim {
     /// context owner until this claim is either published and reclaimed or
     /// explicitly released. The returned token carries only its comparison
     /// identity, not the context lifetime.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn allocate_for_borrowed_process_with_random(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -952,7 +952,7 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// The process image/context and sole returned mapping owner remain live
     /// through every operation and terminal release.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn allocate_for_borrowed_process_with_random(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -963,12 +963,12 @@ impl OsAlignedPageClaim {
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
             return Err(failed(Errno::NOMEM));
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let layout = match OsAlignedPageLayout::for_fresh_page(config, block_size, alignment) {
             Some(layout) => layout,
             None => return Err(failed(Errno::INVAL)),
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
         let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
@@ -1011,13 +1011,13 @@ impl OsAlignedPageClaim {
             return match unsafe { claim.release_for_process(process) } {
                 Ok(()) => Err(OsAlignedPageAllocationFailure::released(OsAlignedPageError::new(stage, error))),
                 Err(failure) => {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let OsAlignedPageReleaseFailure { error: cleanup_error, owner } = failure;
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let cleanup = cleanup_error.operation();
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                     let cleanup = failure.error().operation();
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                     let owner = failure.into_owner();
                     let OsAlignedPageOwner::Claim(claim) = owner else {
                         unreachable!("unpublished claim cleanup retains that exact claim");
@@ -1039,7 +1039,7 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// Same external subprocess-image retention obligation as
     /// [`Self::allocate_for_borrowed_process_with_random`].
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn allocate_on_demand_for_borrowed_process_with_random(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -1057,7 +1057,7 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// The process image/context and sole returned mapping owner remain live
     /// through every operation and terminal release.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn allocate_on_demand_for_borrowed_process_with_random(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -1068,12 +1068,12 @@ impl OsAlignedPageClaim {
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
             return Err(failed(Errno::NOMEM));
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let layout = match OsAlignedPageLayout::for_fresh_page(config, block_size, alignment) {
             Some(layout) => layout,
             None => return Err(failed(Errno::INVAL)),
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
         let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
@@ -1108,13 +1108,13 @@ impl OsAlignedPageClaim {
                 Ok(()) => Err(OsAlignedPageAllocationFailure::released(
                     OsAlignedPageError::new(OsAlignedPageFailureStage::MetadataCommit, error))),
                 Err(failure) => {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let OsAlignedPageReleaseFailure { error: cleanup_error, owner } = failure;
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let cleanup = cleanup_error.operation();
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                     let cleanup = failure.error().operation();
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                     let owner = failure.into_owner();
                     let OsAlignedPageOwner::Claim(claim) = owner else {
                         unreachable!("unpublished claim cleanup retains that exact claim");
@@ -1426,7 +1426,7 @@ impl OsAlignedPageClaim {
         // From this publication onward, rollback frees from the returned
         // slice start and excludes the metadata prefix from its charge.
         self.page_publication_started.set(true);
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         for index in 1..self.layout.metadata_slot_count() {
             let Some(slot) = self.metadata_slot(index) else {
                 return false;
@@ -1452,7 +1452,7 @@ impl OsAlignedPageClaim {
         if self.metadata() != Some(primary) {
             return false;
         }
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         for index in (1..self.layout.metadata_slot_count()).rev() {
             let Some(slot) = self.metadata_slot(index) else {
                 return false;
@@ -1591,7 +1591,7 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// The caller retains the exact subprocess identity image captured by
     /// this claim, with the sole terminal release right, through this call.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn release_for_process(
         mut self,
         process: VmProcess<'_>,
@@ -1608,7 +1608,7 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// The caller retains the exact captured process image and this claim's
     /// sole terminal release right throughout the operation.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn release_for_process(
         mut self,
         process: VmProcess<'_>,
@@ -1652,7 +1652,7 @@ impl OsAlignedPageClaim {
     /// Its sole release right and original process image remain retained for
     /// this call. Success consumes that right and forbids another read or
     /// release; error leaves the complete original image and progress intact.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn release_borrowed_at(
         destination: NonNull<Self>, process: VmProcess<'_>,
     ) -> Result<(), OsAlignedPageError> {
@@ -1745,7 +1745,7 @@ unsafe fn published_os_page_geometry(
 ) -> Option<PublishedOsPageGeometry> {
     // SAFETY: forwarded from this helper's stable-page contract.
     let page = unsafe { primary.as_ref() };
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     if page.aligned_alias_owner() != primary.as_ptr() { return None; }
     if !process_backed && page.reserved() != 1 { return None; }
     let memory = page.memid();
@@ -2013,7 +2013,7 @@ impl PublishedOsAlignedPage {
     /// must be quiescent, and the primary page must remain live until this
     /// operation completes.
     pub(crate) unsafe fn clear_secondary_metadata(&self) -> bool {
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         for index in (1..self.layout.metadata_slot_count()).rev() {
             let offset = match self.layout.metadata_offset().checked_add(
                 match index.checked_mul(size_of::<Page>()) {
@@ -2065,7 +2065,7 @@ impl PublishedOsAlignedPage {
         } else {
             // Processless publications have no statistics edge, but their
             // first terminal release attempt still consumes source ownership.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             { self.release_accounted = true; }
             unsafe { Mapping::reclaim_published(self.base.as_ptr(), self.layout.mapping_length()) }
         };
@@ -2401,11 +2401,11 @@ mod tests {
         for (destination, borrowed, on_demand, commit_call) in [
             (false, false, false, 1), (false, false, false, 2),
             (false, true, false, 1), (false, true, false, 2), (false, true, true, 1),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             (true, true, false, 1),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             (true, true, false, 2),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             (true, true, true, 1),
         ] {
             let process = process(false);
@@ -2413,7 +2413,7 @@ mod tests {
             fault.set(fault::Plan::at_pair(fault::Point::Commit, commit_call,
                 fault::Point::Unmap, 1, Errno::NOMEM));
             let allocation = if destination {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 {
                     let mut storage = MaybeUninit::uninit();
                     // SAFETY: the private vacant destination and original
@@ -2432,7 +2432,7 @@ mod tests {
                         _ => panic!("refused commit and cleanup retain the original destination"),
                     }
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 { unreachable!("destination cases are native only") }
             } else if borrowed {
                 // SAFETY: this fixture retains the exact process image until
@@ -2619,7 +2619,7 @@ mod tests {
         assert_eq!(values, [131072, 0, -131072, 1, 2, 1, 1, 1, 1, 1, 1]);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_fresh_os_area_block_commit_cleanup_failure_trace() {
         let values = fresh_os_area_commit_failure_relations(2, true);
@@ -2633,7 +2633,7 @@ mod tests {
         assert_eq!(values, [131072, 0, -131072, 2, 4, 1, 1, 1, 1, 1, 1]);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     #[test]
     fn full_security_os_initial_prefix_rejects_tail_extent_before_commit() {
         let fault = fault::install(fault::Plan::disabled());
@@ -2653,7 +2653,7 @@ mod tests {
         claim.release().unwrap_or_else(|_| panic!("exact original claim release"));
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     #[test]
     fn on_demand_os_claim_rollback_accounts_the_actual_tail_reset_once() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
@@ -2711,7 +2711,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     #[test]
     fn on_demand_os_release_debits_only_the_actual_terminal_tail_reset() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
@@ -2848,7 +2848,7 @@ mod tests {
             1, crate::arena::ArenaId::none()).err().expect("source disallow OS refusal");
         assert!(failure.into_owner().is_none());
         assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let mut storage = MaybeUninit::uninit();
             // SAFETY: policy refusal leaves this private vacant destination
@@ -3792,7 +3792,7 @@ mod tests {
 
     #[test]
     fn secure_singleton_extent_uses_its_actual_os_page_size() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let page_sizes = [4096];
         #[cfg(target_arch = "aarch64")]
         let page_sizes = [4096, 16384, 65536];
@@ -3826,7 +3826,7 @@ mod tests {
 
     /// A terminally retained OS map does not block the same process from
     /// publishing and releasing a later independent page.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_os_page_terminal_unmap_fault_c_rust_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
@@ -4050,7 +4050,7 @@ mod tests {
 
     /// A failed private metadata commit rolls back only its own mapping while
     /// an earlier failed terminal release remains available for raw cleanup.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_os_page_escaped_map_fault_c_rust_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
@@ -4340,7 +4340,7 @@ mod tests {
             (16 * KIB, 16 * KIB),
             (64 * KIB, 64 * KIB),
         ];
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let cases = [
             (4 * KIB, 4 * KIB),
             (4 * KIB, 16 * KIB),
@@ -4414,7 +4414,7 @@ mod tests {
         assert!(over_large.mapping_length() > over_large.page_map_size());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn processless_destination_fixture(
         config: MemoryConfig, block_size: usize, alignment: usize,
     ) -> Result<OsAlignedPageClaim, OsAlignedPageAllocationFailure> {
@@ -4433,19 +4433,19 @@ mod tests {
 
     #[test]
     fn live_claim_commits_only_the_derived_ranges_and_releases_explicitly() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destinations = [false, true];
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let destinations = [false];
         for _direct in destinations {
             let claim = match {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if _direct {
                     processless_destination_fixture(config(4 * KIB), 4 * KIB, 128 * KIB)
                 } else {
                     OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
             } {
                 Ok(claim) => claim,
@@ -4525,9 +4525,9 @@ mod tests {
 
     #[test]
     fn commit_failure_with_failed_cleanup_transfers_the_live_claim_owner() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destinations = [false, true];
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let destinations = [false];
         for _direct in destinations {
             let fault = fault::install(fault::Plan::at_pair(
@@ -4538,13 +4538,13 @@ mod tests {
                 Errno::NOMEM,
             ));
             let failure = match {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if _direct {
                     processless_destination_fixture(config(4 * KIB), 4 * KIB, 128 * KIB)
                 } else {
                     OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
             } {
                 Ok(claim) => {
@@ -4567,9 +4567,9 @@ mod tests {
 
     #[test]
     fn block_commit_failure_with_failed_cleanup_retains_the_live_claim_owner() {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destinations = [false, true];
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let destinations = [false];
         for _direct in destinations {
             let fault = fault::install(fault::Plan::at_pair(
@@ -4580,13 +4580,13 @@ mod tests {
                 Errno::NOMEM,
             ));
             let failure = match {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if _direct {
                     processless_destination_fixture(config(4 * KIB), 4 * KIB, 128 * KIB)
                 } else {
                     OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
             } {
                 Ok(claim) => {

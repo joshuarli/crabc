@@ -315,7 +315,7 @@ impl ExclusiveTheapBootstrap {
     /// That owner exclusively claimed its untouched slot and retains both
     /// the slot and canonical foundation through all initialization phases.
     /// Every short field projection ends before this method returns.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_source_metadata_at(
         pointer: NonNull<Self>, heap: crate::main_theap::MainStaticMetadataHeapLease,
     ) -> Result<crate::types::PreparedTheapInitialization, BootstrapError> {
@@ -346,7 +346,7 @@ impl ExclusiveTheapBootstrap {
     /// The actual pinned bootstrap owner retains this exact allocation and
     /// its prepared fields through every use. The pointers grant no image
     /// lifetime, mutation, allocation, or release authority on their own.
-    #[cfg(all(test, target_arch = "x86_64"))]
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn test_source_metadata_pointers_at(
         pointer: NonNull<Self>,
     ) -> (NonNull<Theap>, NonNull<ThreadLocalData>) {
@@ -364,7 +364,7 @@ impl ExclusiveTheapBootstrap {
     /// # Safety
     /// The same exclusive storage owner completed both source list and Heap
     /// publication for this exact prefix; no session has yet been issued.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn complete_source_metadata_at(
         pointer: NonNull<Self>, theap: NonNull<Theap>,
     ) -> Result<(), BootstrapError> {
@@ -512,7 +512,7 @@ pub(crate) mod theap_page_session_sealed {
 
 /// The selected session's generic threshold boundary. A denied owner must
 /// not mutate counters or be mistaken for a request below the threshold.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) enum GenericAllocationAdministrationStart {
     Denied,
     NotDue,
@@ -543,7 +543,7 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// scalar projections. Implementations must use their exclusive owner
     /// capability, never derive write authority from `theap()`'s shared view.
     /// The engine separately checks operation and fast-path eligibility.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap>;
 
     fn thread_id(&self) -> Option<LiveThreadId>;
@@ -572,7 +572,7 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     }
     /// Ends the source counter prefix before any lazy frequency getter.
     /// Only actual ordinary owners may request this caller-stack phase.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_generic_allocation_administration(&mut self) -> GenericAllocationAdministrationStart {
         GenericAllocationAdministrationStart::Denied
     }
@@ -585,7 +585,7 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// Neither image may be retired, replaced, or rebound during callbacks.
     /// A foreign issuer is refused; an address match alone does not prove
     /// that the originating allocation lifetime is still retained.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_generic_allocation_administration(
         &mut self,
         _request: crate::types::GenericAllocationFrequencyRequest,
@@ -679,7 +679,7 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// The actual source session retains the original fresh metadata and
     /// initialized committed backing with exact geometry. No alias, map,
     /// free-list or client publication overlaps this owned primary write.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -692,7 +692,7 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// The original fresh owner retains the Page, selected Theap and backing;
     /// all registration callbacks and projections have ended. Keys have not
     /// been initialized and no zero observation, list or client is published.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool;
 
     unsafe fn publish_fresh_page(
@@ -1034,7 +1034,7 @@ impl ExclusiveTheapSession<'_> {
 impl theap_page_session_sealed::Sealed for ExclusiveTheapSession<'_> {}
 
 unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
@@ -1047,14 +1047,14 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
             theap, heap, self.owner, block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the caller ends registrations and retains the original
         // fresh Page and this exclusive issuer through the short key draw.
         unsafe { Page::initialize_fresh_page_keys_at(page, self.theap_pointer()) }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap_pointer() }
 
     #[inline]
@@ -1072,7 +1072,7 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
         // default option read inspects no Theap state.
         unsafe { Theap::advance_generic_allocation_administration_at(self.theap_pointer(), || 10_000) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_generic_allocation_administration(&mut self) -> GenericAllocationAdministrationStart {
         // SAFETY: this session retains the original exclusive counter owner.
         match unsafe { Theap::begin_generic_allocation_administration_at(self.theap_pointer()) } {
@@ -1080,7 +1080,7 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
             None => GenericAllocationAdministrationStart::NotDue,
         }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_generic_allocation_administration(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
@@ -1206,7 +1206,7 @@ mod tests {
         assert_eq!(LiveThreadId::new(16).map(LiveThreadId::get), Some(16));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generic_frequency_completion_rejects_foreign_owner_and_unclamped_values() {
         let mut first = core::pin::pin!(ExclusiveTheapBootstrap::new());
@@ -1270,7 +1270,7 @@ mod tests {
         assert_eq!(EMPTY_PAGE_QUEUES.len(), BIN_COUNT);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn live_bootstrap_initializes_source_random_before_allocation() {
         for non_abandoning in [false, true] {

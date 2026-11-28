@@ -24,7 +24,7 @@ pub(crate) unsafe fn set_source_page_guard(
     config: MemoryConfig, process: Option<VmProcess<'_>>, memory: MemoryId,
     slice_start: *mut u8, size: usize,
 ) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if crate::config::SECURE_LEVEL >= 5 && memory.initially_committed() {
         let Some(offset) = crate::page::page_noguard_size(size, config.page_size()) else { return; };
         // The source guard transition is best effort: an unsuccessful
@@ -33,7 +33,7 @@ pub(crate) unsafe fn set_source_page_guard(
             process, config.page_size(), slice_start.wrapping_add(offset), memory,
         ) };
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let _ = (config, process, memory, slice_start, size);
 }
 
@@ -51,7 +51,7 @@ pub(crate) unsafe fn reset_source_page_guard(
     config: MemoryConfig, process: Option<VmProcess<'_>>, memory: MemoryId,
     slice_start: *mut u8, size: usize,
 ) -> usize {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if crate::config::SECURE_LEVEL >= 5 && !memory.is_pinned() {
         let Some(offset) = crate::page::page_noguard_size(size, config.page_size()) else { return 0; };
         // Backing release remains best effort, but an actual successful tail
@@ -63,7 +63,7 @@ pub(crate) unsafe fn reset_source_page_guard(
             Ok(false) | Err(_) => 0,
         };
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let _ = (config, process, memory, slice_start, size);
     0
 }
@@ -85,7 +85,7 @@ impl PageArenaSearchPurpose {
 
 /// Copies immutable owner identity without retaining a reference to the
 /// mutable Heap across arena reservation callbacks.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn owner_arena_search(process: VmProcess<'_>, heap: core::ptr::NonNull<crate::types::Heap>,
     requested: ArenaId, thread_sequence: usize, numa_node: i32,
     purpose: PageArenaSearchPurpose) -> Option<ArenaSearch>
@@ -132,7 +132,7 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
     /// every returned view, excluding requesting Heap retirement and
     /// subprocess destruction. The backing
     /// must belong to that exact subprocess.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn reclaim_arenas_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
         requested: ArenaId, thread_sequence: usize) -> PageArenaSearch<'arena>
     {
@@ -154,7 +154,7 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
     /// The session retains `heap`, its subprocess and Theap allocation facts
     /// throughout this call. Heap retirement and subprocess destruction are
     /// excluded; the backing must belong to that exact subprocess.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn claim_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
         config: MemoryConfig, requested: ArenaId, slices: usize, commit: bool,
         thread_sequence: usize, numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
@@ -230,13 +230,13 @@ impl<'arena> PageBacking<'arena> for ArenaView<'arena> {
 /// takes its existing direct-OS fallback. It must not turn that refusal into
 /// a second, private sidecar arena.
 pub(crate) enum RuntimeFirstRegularPageBacking {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     SelectedSidecar(ArenaView<'static>),
     SourceRegistry { process: VmProcess<'static>, numa_node: i32 },
 }
 
 impl RuntimeFirstRegularPageBacking {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     #[inline]
     pub(crate) fn selected_sidecar(arena: ArenaView<'static>) -> Self {
         Self::SelectedSidecar(arena)
@@ -248,7 +248,7 @@ impl RuntimeFirstRegularPageBacking {
         Self::SourceRegistry { process, numa_node }
     }
 
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     #[inline]
     fn selected_matches_memory(&self, memory: MemoryId) -> Option<ArenaView<'static>> {
         let pointer = memory.arena_memory()?.arena;
@@ -300,7 +300,7 @@ impl sealed::Sealed for RuntimeFirstRegularPageBacking {}
 impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
     fn selected_arena(&self) -> Option<&ArenaView<'static>> {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(arena) => Some(arena),
             Self::SourceRegistry { .. } => None,
         }
@@ -308,7 +308,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     fn reclaim_arenas(&self, requested: ArenaId, thread_sequence: usize) -> PageArenaSearch<'static> {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(arena) => PageArenaSearch::Selected(unsafe {
                 ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut())
             }),
@@ -329,7 +329,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     unsafe fn arena_for_memory(&self, memory: MemoryId) -> Option<ArenaView<'static>> {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(_) => self.selected_matches_memory(memory),
             // SAFETY: the PageBacking caller supplies a current arena MemoryId
             // from this process-owned claim or page; the helper validates its
@@ -342,7 +342,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     fn process(&self) -> Option<VmProcess<'static>> {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(_) => None,
             Self::SourceRegistry { process, .. } => Some(*process),
         }
@@ -376,7 +376,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         -> Option<ArenaSliceClaim<'static>>
     {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(arena) => {
                 arena.try_claim_suitable_slices(requested, slices, commit, thread_sequence)
             }
@@ -414,7 +414,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn claim_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
         config: MemoryConfig, requested: ArenaId, slices: usize, commit: bool,
         thread_sequence: usize, allocation_numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
@@ -442,7 +442,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     unsafe fn release(&self, memory: MemoryId) -> bool {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(_) => {
                 self.selected_matches_memory(memory).is_some()
                     && unsafe { crate::arena::release_arena_slices(memory) }
@@ -458,7 +458,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     unsafe fn account_page_commit_before_release(&self, memory: MemoryId, committed: usize) -> bool {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(_) => true,
             Self::SourceRegistry { process, .. } => {
                 // SAFETY: `memory` belongs to the current live source page;
@@ -476,7 +476,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
 
     fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool {
         match self {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             Self::SelectedSidecar(arena) => {
                 arena.collect_scheduled_purge(config.page_size(), force)
             }
@@ -565,7 +565,7 @@ impl<'child> PageBacking<'child> for ChildMetadataArenaBacking<'child> {
         self.claim_child_arena_slices_with_numa_node(config, requested, slices, commit,
             thread_sequence, allocation_numa_node, random)
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn claim_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
         config: MemoryConfig, requested: ArenaId, slices: usize, commit: bool,
         thread_sequence: usize, numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
@@ -771,7 +771,7 @@ mod tests {
             ARENA_MIN_OBJ_SIZE / ARENA_SLICE_SIZE);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_explicit_heap_fresh_page_uses_its_source_arena_fraction() {
         crate::test_process::run_in_fresh_process(
@@ -816,7 +816,7 @@ mod tests {
             });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_fresh_page_policy_skips_pinned_arenas_at_secure_five() {
         crate::test_process::run_in_fresh_process(
@@ -876,7 +876,7 @@ mod tests {
             });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_live_heap_population_is_reloaded_only_at_numa_pass_boundary() {
         crate::test_process::run_in_fresh_process(

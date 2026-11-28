@@ -132,7 +132,7 @@ use core::marker::PhantomData;
 use crate::page_backing::PageBacking;
 use crate::process_arena::{ProcessPageBackingLease, ProcessPageBackingError};
 use core::mem::ManuallyDrop;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use core::mem::MaybeUninit;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -173,7 +173,7 @@ use crate::config::{
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::os_page::OsAlignedPageClaimInitialization;
 use crate::os_page::{
     OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage,
@@ -186,7 +186,7 @@ use crate::process_page_map::{
     MappedAbandonedClaimOutcome, MappedAbandonedClaimRetainedRange,
     ProcessPageMapMutationLease,
 };
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError};
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
@@ -415,7 +415,7 @@ enum PageCommitError {
     MissingTestLease,
     InvalidPageArea,
     InvalidPlan,
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Mapping(ProcessPageArenaLeaseError),
     ProcessMapping(crabc_core::Errno),
     PrefixState,
@@ -436,11 +436,11 @@ enum PageCommitError {
 /// that original task; generic Result propagation carries no claim custody.
 #[derive(Debug)]
 enum GenericPathError {
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     FreshInitialization(PendingFreshOsPageInitialization),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     FreshInitialization,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     LiveValidity,
     Collection(PageCollectError),
     Local(FreeListError),
@@ -566,7 +566,7 @@ pub(crate) enum FreshOsPageInitializationFailure {
     ExtensionCountMismatch { expected: usize, actual: usize },
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FreshTaskRetirementMarker {
     Unmarked,
@@ -580,7 +580,7 @@ pub(crate) struct PendingFreshOsPageInitialization {
     theap: *mut Theap,
     metadata_stage: FreshOsMetadataStage,
     failure: FreshOsPageInitializationFailure,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     retirement_marker: FreshTaskRetirementMarker,
 }
 
@@ -617,7 +617,7 @@ impl PendingFreshOsPageInitialization {
     /// They have not retired, detached, rebound or been reused. All conflicting
     /// source list projections have ended; one persistent task slot belongs to
     /// this owner. A returned error does not release the task or its issuer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn ensure_retirement_refusal(
         &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>,
     ) -> Result<(), crate::types::HeapTheapListError> {
@@ -636,7 +636,7 @@ impl PendingFreshOsPageInitialization {
     // This consumes the actual producer's completed transition separately
     // from its unlock acknowledgement. Neither branch reads a source bool or
     // infers which task owns a previously published marker.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn complete_retirement_refusal_mark(
         &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>,
         outcome: crate::types::RetainedFreshTaskMarkerOutcome,
@@ -653,7 +653,7 @@ impl PendingFreshOsPageInitialization {
 
     /// Observes only this task's completed marker stage. It grants no owner
     /// lifetime or callback admission and does not inspect the source bool.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn has_retirement_refusal_marker(&self) -> bool {
         matches!(self.retirement_marker, FreshTaskRetirementMarker::Marked { .. })
     }
@@ -668,7 +668,7 @@ impl PendingFreshOsPageInitialization {
     /// ended. Output registration and callback arguments remain valid and
     /// serialized through delivery; no nested operation may reuse this claim.
     /// Address equality is only a refusal guard and does not prove admission.
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     pub(crate) unsafe fn dispatch(
         self,
         owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
@@ -701,7 +701,7 @@ impl PendingFreshOsPageInitialization {
     /// allocator projections and locks have ended; output registration and
     /// callback argument lifetime remain serialized. Nested allocation cannot
     /// reuse this registered candidate or observe an initialized free list.
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     pub(crate) unsafe fn dispatch_source_initialization(
         self, owner: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>,
     ) -> Result<core::convert::Infallible, Self> {
@@ -738,7 +738,7 @@ impl PendingFreshOsPageInitialization {
     /// excluded. All allocator projections and locks have ended. Output
     /// registration and callback arguments remain valid and serialized;
     /// nested operations cannot reuse this registered unfinished candidate.
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     pub(crate) unsafe fn dispatch_source_attached(
         self, owner: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
     ) -> Result<core::convert::Infallible, Self> {
@@ -795,7 +795,7 @@ pub(crate) struct PendingLivePageValidity {
     heap: NonNull<Heap>,
     subprocess: NonNull<crate::subproc::SubprocessIdentity>,
     assertion: crate::page_validity::LivePageValidityAssertion,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     retirement_marker: FreshTaskRetirementMarker,
 }
 
@@ -808,7 +808,7 @@ impl PendingLivePageValidity {
     /// retained independently for the complete operation. The caller owns
     /// local queue/Page fields and stops source mutation after this failure;
     /// every projection ends before the original output owner dispatches it.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn from_collection_failure(
         theap: NonNull<Theap>, failure: crate::page_validity::CollectionSourceFailure,
     ) -> Result<Self, crate::page_validity::CollectionSourceFailure> {
@@ -831,7 +831,7 @@ impl PendingLivePageValidity {
     /// The actual original issuer and admission remain pinned through this
     /// marker publication and later task settlement. All metadata projections
     /// and locks have ended; identities only reject a foreign admission.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn ensure_retirement_refusal(&mut self, theap: NonNull<Theap>, heap: NonNull<Heap>)
         -> Result<(), crate::types::HeapTheapListError>
     {
@@ -857,7 +857,7 @@ impl PendingLivePageValidity {
     /// actual issuer and Heap through this protected failure publication.
     /// The exact task and marker progress must survive unlock/refusal; output
     /// runs only after every source lock and metadata projection has ended.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn ensure_retirement_refusal_while_tld_locked(
         &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>,
     ) -> Result<(), crate::types::HeapTheapListError> {
@@ -873,7 +873,7 @@ impl PendingLivePageValidity {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn has_retirement_refusal_marker(&self) -> bool {
         matches!(self.retirement_marker, FreshTaskRetirementMarker::Marked { .. })
     }
@@ -883,7 +883,7 @@ impl PendingLivePageValidity {
     /// issuer, PageMap, backing and output binding remain continuously live;
     /// all projections and allocator locks have ended. The retained Page is
     /// unselectable and output callback arguments remain valid and serialized.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn dispatch(self, owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>)
         -> Result<core::convert::Infallible, Self>
     {
@@ -898,7 +898,7 @@ impl PendingLivePageValidity {
     /// This is the original winning startup and ordinary attachment captured
     /// before observation. The exact issuer and detached Page backing remain
     /// live; every projection and lock ends before callback delivery.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn dispatch_source_attached(self,
         owner: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>)
         -> Result<core::convert::Infallible, Self>
@@ -919,7 +919,7 @@ impl PendingLivePageValidity {
     /// The original metadata startup scope predates observation and retains
     /// the exact issuer, PageMap, VM and detached Page until terminal delivery
     /// or refusal. Every metadata projection and lock has ended.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) unsafe fn dispatch_source_initialization(self,
         owner: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>)
         -> Result<core::convert::Infallible, Self>
@@ -943,12 +943,12 @@ impl PendingLivePageValidity {
 /// one permitted retry and cannot manufacture a second force attempt.
 #[must_use = "a deferred generic allocation phase must be resumed after its callback"]
 pub(crate) enum DeferredFreeAllocationPhase {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     FreshInitialization(PendingFreshOsPageInitialization),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     LiveValidity(PendingLivePageValidity),
     Complete(Option<NonNull<u8>>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     GenericFrequency {
         request: crate::types::GenericAllocationFrequencyRequest,
         continuation: DeferredFreeAllocationContinuation,
@@ -3651,7 +3651,7 @@ unsafe fn release_claimed_non_arena_page_with_list_removal_and_statistics(
                 Err(failure) => {
                     // This is the same consumed source Page free after list,
                     // PageMap, alias, primary, and statistics retirement.
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let Err(failure) = failure.forget_consumed_source_page() else {
                         return ClaimedProcessNonArenaPageRelease::Released;
                     };
@@ -4738,7 +4738,7 @@ pub(super) enum StaticMainMappedRegularSelectedMapOutcome<R> {
 }
 
 impl<'main> StaticMainMappedRegularClaimSelector<'main> {
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     #[inline]
     pub(crate) const fn new(
         pair: ProcessPageArenaLease,
@@ -4778,7 +4778,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
     /// facts; it never borrows a PageMap entry, claims a bitmap bit, or opens
     /// a new arena-selection route.
     #[inline]
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) fn matches_pair(&self, candidate: ProcessPageArenaLease) -> bool {
         let ProcessPageBackingLease::LegacyPair(pair) = self.backing else { return false; };
         let (Ok(current_root), Ok(candidate_root)) =
@@ -4816,7 +4816,7 @@ impl<'main> StaticMainMappedRegularClaimSelector<'main> {
     pub(crate) fn matches_process(&self, candidate: crate::process_init::ProcessMainBackingBinding) -> bool {
         let current = match self.backing {
             ProcessPageBackingLease::Process(current) => current,
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             ProcessPageBackingLease::LegacyPair(_) => return false,
         };
         current.is_allocation_ready() && candidate.is_allocation_ready()
@@ -5032,7 +5032,7 @@ impl StaticMainMappedRegularClaimSource<'_> {
         // validation inside the paired closure and consumes every completion
         // before this synchronous callback returns.
         let outcome = match self.selector.backing {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             ProcessPageBackingLease::LegacyPair(pair) => unsafe { pair.try_with_mapped_abandoned_claim(operation) },
             ProcessPageBackingLease::Process(binding) if binding.is_allocation_ready() => unsafe {
                 binding.page_map().try_with_owned_mapped_abandoned_claim(operation)
@@ -5272,7 +5272,7 @@ impl SourceRetainedTheapSession {
         unsafe { self.theap.as_ref() }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[inline]
     fn theap_mut(&mut self) -> &mut Theap {
         // SAFETY: the constructor's retained-source exclusion gives this
@@ -5293,16 +5293,16 @@ impl theap_page_session_sealed::Sealed for SourceRetainedTheapSession {}
 unsafe impl TheapPageSession for SourceRetainedTheapSession {
     // This captured owner admits only the original local free. It cannot
     // publish a new Page or consume another allocation's key draws.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn publish_fresh_primary_page(
         &mut self, _metadata: NonNull<Page>, _block_size: usize, _page_offset: usize,
         _reserved: u16, _slice_pcommitted: u16, _free_is_zero: bool, _memid: MemoryId,
     ) -> Option<NonNull<Page>> { None }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn initialize_fresh_page_keys(&mut self, _page: NonNull<Page>) -> bool { false }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 
     #[inline]
@@ -5319,61 +5319,61 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
 
     #[inline]
     fn queue(&self, bin: usize) -> Option<&crate::types::PageQueue> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::local_queue_at(self.theap, bin) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap().queue(bin) }
     }
 
     #[inline]
     fn queue_mut(&mut self, bin: usize) -> Option<&mut crate::types::PageQueue> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::local_queue_mut_at(self.theap, bin) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap_mut().queue_mut(bin) }
     }
 
     #[inline]
     fn direct_page(&self, index: usize) -> Option<*mut Page> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::local_direct_page_at(self.theap, index) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap().direct_page(index) }
     }
 
     #[inline]
     fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::set_local_direct_page_at(self.theap, index, page) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap_mut().set_direct_page(index, page) }
     }
 
     #[inline]
     fn note_page_added(&mut self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::note_local_page_added_at(self.theap) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap_mut().note_page_added() }
     }
 
     #[inline]
     fn note_page_removed(&mut self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::note_local_page_removed_at(self.theap) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap_mut().note_page_removed() }
     }
 
@@ -5419,31 +5419,31 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
 
     #[inline]
     fn retired_bounds(&self) -> (usize, usize) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::local_retired_bounds_at(self.theap) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap().retired_bounds() }
     }
 
     #[inline]
     fn note_retired_bin(&mut self, bin: usize) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::note_local_retired_bin_at(self.theap, bin) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap_mut().note_retired_bin(bin) }
     }
 
     #[inline]
     fn reset_retired_bounds(&mut self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this retained session owns the named local fields; its
         // lifetime does not grant exclusive access to Heap-list subobjects.
         { unsafe { Theap::reset_local_retired_bounds_at(self.theap) } }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.theap_mut().reset_retired_bounds() }
     }
 
@@ -5693,7 +5693,7 @@ impl theap_page_session_sealed::Sealed for OwnerLocalMainHeapPageSession {}
 // list identity. The continuously stored engine owns all page state, and the
 // guard clears the erased pointer before the attachment borrow ends.
 unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.active().local_field_theap_pointer() }
 
     fn permits_terminal_process_retirement(&self) -> bool {
@@ -5706,11 +5706,11 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
     #[inline]
     fn thread_id(&self) -> Option<LiveThreadId> { self.active().thread_id() }
     #[inline]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_generic_allocation_administration(&mut self) -> crate::bootstrap::GenericAllocationAdministrationStart {
         TheapPageSession::begin_generic_allocation_administration(self.active_mut())
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn finish_generic_allocation_administration(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
@@ -5720,17 +5720,17 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
         // across capture; the bound adapter still names that same session.
         unsafe { TheapPageSession::finish_generic_allocation_administration(self.active_mut(), request, frequency) }
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn advance_generic_allocation_administration(&mut self) -> GenericAllocationAdministration {
         TheapPageSession::advance_generic_allocation_administration(self.active_mut())
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn selects_selected_main_arena_source_full_abandonment(&self) -> bool {
         self.active()
             .selects_selected_main_arena_source_full_abandonment()
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
         self.active()
@@ -5776,7 +5776,7 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
     fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
         self.active_mut().clear_arena_page(arena, memory)
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
@@ -5786,7 +5786,7 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
         unsafe { self.active_mut().publish_fresh_primary_page(metadata, block_size,
             page_offset, reserved, slice_pcommitted, free_is_zero, memid) }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
         // SAFETY: the original active source session owns this fresh Page.
@@ -7125,7 +7125,7 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptOutcome {
     /// but `_mi_page_abandon` restored this exact page to the paired
     /// mapped-abandoned bitmap/count state. The caller retains its long
     /// target owner and may retry only this same candidate.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     Reabandoned(ProcessPageArenaLeaseError),
 }
 
@@ -11490,7 +11490,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Own
         // Offer this engine to the native local fast paths only when the
         // operation left every engine and attachment gate open; the unbind
         // guard's `Borrowed -> Idle` transition publishes it.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         crate::main_heap_thread::stage_owner_local_fast_owner(
             self.local_fast_owner().filter(|_| self.session.local_fast_path_theap().is_some()),
         );
@@ -21727,9 +21727,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         // the selected page's low owner bit.
         let expected_page = NonNull::new(unsafe { target.page_map.checked_lookup(client.as_ptr()) })
             .ok_or(ThreadExitMappedRegularPagesPostExitAdoptError::Unmapped)?;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = target.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let target_theap = NonNull::from(target.session.theap());
         let Some(target_thread) = target.session.thread_id() else {
             return Err(ThreadExitMappedRegularPagesPostExitAdoptError::MissingTargetThread);
@@ -22448,7 +22448,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// allowed to execute the source direct page-area commit. After a
     /// successful low-owner claim, source bitmap/count/association state can
     /// no longer be retried through a second route.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     pub(crate) unsafe fn adopt_into_later_main<'attachment, 'map>(
         &self,
         target: &mut PageAllocatorEngine<
@@ -22492,9 +22492,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         {
             return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidSpan);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = target.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let target_theap = NonNull::from(target.session.theap());
         let Some(target_thread) = target.session.thread_id() else {
             return Err(ThreadExitMappedRegularPostExitAdoptError::MissingTargetThread);
@@ -22716,7 +22716,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                 // has a successfully accessible planned next block span.
                 let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                     .map_err(ThreadExitMappedRegularPostExitAdoptError::Extension)?;
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let extension = free_list.extend_count_with_random(plan.extend, || {
                     // SAFETY: this active engine owns the selected Theap's
                     // random field; no whole-Theap view crosses the draw.
@@ -22724,7 +22724,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                         target.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 let extension = free_list.extend_count(plan.extend);
                 match extension {
                     Ok(0) => {
@@ -38007,9 +38007,9 @@ impl<'attach, 'heap, 'arena, 'map>
                 None => return Err(reject(self, DynamicMappedRemoteFreeError::InvalidBlock)),
             }
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.engine.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let target_theap = NonNull::from(self.engine.session.theap());
         let result = {
             let Some(map) = self.engine.session.mapped_abandoned_page(
@@ -38083,9 +38083,9 @@ impl<'attach, 'heap, 'arena, 'map>
         if self.terminal {
             return Err(DynamicMappedAdoptFailure::Terminal(self));
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.engine.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let target_theap = NonNull::from(self.engine.session.theap());
         let Some(target_thread) = self.engine.session.thread_id() else {
             self.terminal = true;
@@ -38167,7 +38167,7 @@ impl<'attach, 'heap, 'arena, 'map>
         unsafe { page_queue_push_at_end_metadata(queue, self.page.as_ptr()) };
         self.engine.session.note_page_added();
         self.engine.update_direct_cache(self.bin);
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if !self.engine.retain_live_page_transition_failure(self.page) { return false; }
         true
     }
@@ -38458,7 +38458,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
         self.session.note_page_added();
         self.update_direct_cache(bin);
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if !self.retain_live_page_transition_failure(page) {
             return Failed(AbandonError::LivePageValidityRetained);
         }
@@ -38469,17 +38469,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `_mi_arena_memid_is_suitable(page->memid,
     /// _mi_theap_heap(theap)->exclusive_arena)` for this engine's Theap.
     fn page_memory_is_suitable_for_theap(&self, memory: crate::types::MemoryId) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let Some(heap) = NonNull::new(unsafe { Theap::heap_at(self.allocation_theap()) }) else { return false; };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let Some(heap) = NonNull::new(self.session.theap().heap()) else { return false; };
         // SAFETY: the initialized Theap retains its Heap and the published
         // exclusive arena identity is immutable for that Heap's lifetime.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let requested = unsafe {
             crate::arena::ArenaId::from_arena(Heap::source_snapshot_at(heap).exclusive_arena)
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let requested = unsafe { heap.as_ref() }.exclusive_arena_id();
         let Some(requested) = requested else { return false; };
         // SAFETY: the page's arena and the Heap's arena are live published
@@ -38591,7 +38591,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
             return false;
         }
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if !self.retain_collection_prefix_failure() { return false; }
         // SAFETY: forwarded ownership of the live Theap.
         let heap = match NonNull::new(unsafe { Theap::heap_at(theap) }) {
@@ -38759,16 +38759,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// abandoned page's origin pointer.
     #[inline]
     pub(crate) fn theap_identity(&self) -> *mut Theap {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { self.session.local_field_theap_pointer().as_ptr() }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { self.session.theap() as *const Theap as *mut Theap }
     }
 
     /// Returns the original source session pointer for preallocation owner
     /// admission. No shared image projection or compiler-TLS lookup creates
     /// this capability; its use remains bounded by the retained session.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) fn allocation_theap(&self) -> NonNull<Theap> {
         self.session.local_field_theap_pointer()
     }
@@ -39190,7 +39190,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     fn begin_checked_collection_phase(&mut self, collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation) -> GuardedCanonicalAllocationPhase {
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if collection != GenericAllocationCollection::Mini {
             match self.observe_collection_prefix() {
                 Ok(()) => {},
@@ -39232,7 +39232,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             GenericAllocationCollection::Force => self.collect_all_pages_for_allocation_retry(),
         };
         if !collected {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             if let Some(task) = self.take_pending_live_page_validity() {
                 return Ok(DeferredFreeAllocationPhase::LiveValidity(task));
             }
@@ -39258,9 +39258,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // result is final and must not schedule another force callback.
             GenericAllocationCollection::Force => match self.attempt_deferred_free_allocation(continuation) {
                 Ok(block) => Ok(DeferredFreeAllocationPhase::Complete(block)),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 Err(GenericPathError::FreshInitialization) => self.take_generic_error_phase(GenericPathError::FreshInitialization),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 Err(GenericPathError::LiveValidity) => self.take_generic_error_phase(GenericPathError::LiveValidity),
                 Err(_) => Err(GuardedCanonicalAllocationRefusal),
             },
@@ -39413,7 +39413,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         continuation: DeferredFreeAllocationContinuation,
         search_first: bool,
     ) -> GuardedCanonicalAllocationPhase {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             match self.session.begin_generic_allocation_administration() {
                 crate::bootstrap::GenericAllocationAdministrationStart::Denied => Err(GuardedCanonicalAllocationRefusal),
@@ -39421,9 +39421,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     if search_first {
                         match self.attempt_deferred_free_allocation(continuation) {
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
-                            #[cfg(target_arch = "x86_64")]
+                            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                             Err(GenericPathError::FreshInitialization) => return self.take_generic_error_phase(GenericPathError::FreshInitialization),
-                            #[cfg(target_arch = "x86_64")]
+                            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                             Err(GenericPathError::LiveValidity) => return self.take_generic_error_phase(GenericPathError::LiveValidity),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
@@ -39436,16 +39436,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 }
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             match self.session.advance_generic_allocation_administration() {
                 GenericAllocationAdministration::None => {
                     if search_first {
                         match self.attempt_deferred_free_allocation(continuation) {
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
-                            #[cfg(target_arch = "x86_64")]
+                            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                             Err(GenericPathError::FreshInitialization) => return self.take_generic_error_phase(GenericPathError::FreshInitialization),
-                            #[cfg(target_arch = "x86_64")]
+                            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                             Err(GenericPathError::LiveValidity) => return self.take_generic_error_phase(GenericPathError::LiveValidity),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
@@ -39477,7 +39477,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// All engine/source projections and locks accessible to callbacks ended
     /// before capture. `frequency` is the actual source-clamped option value
     /// in `1..=1_000_000`. Pointer identity alone proves none of that custody.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn resume_generic_allocation_frequency(
         &mut self, request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize, continuation: DeferredFreeAllocationContinuation,
@@ -39497,7 +39497,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// or address reuse. No engine/source projection or callback-accessible lock
     /// crosses the getter. `frequency` is its actual source-clamped option in
     /// `1..=1_000_000`; pointer equality alone cannot establish retained custody.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn resume_guarded_canonical_frequency_checked(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
@@ -39530,9 +39530,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     ) -> GuardedCanonicalAllocationPhase {
         match self.attempt_deferred_free_allocation(continuation) {
             Ok(Some(block)) => Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Err(GenericPathError::FreshInitialization) => self.take_generic_error_phase(GenericPathError::FreshInitialization),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Err(GenericPathError::LiveValidity) => self.take_generic_error_phase(GenericPathError::LiveValidity),
             Err(_) => Err(GuardedCanonicalAllocationRefusal),
             Ok(None) => self.begin_checked_collection_phase(GenericAllocationCollection::Force, continuation),
@@ -39832,7 +39832,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // The selected Page has completed initialization and joined its
         // source queue. Only now can the full validity predicate inspect
         // exact membership; a fresh unqueued Page used only init validity.
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         self.observe_live_page_validity(page, true)?;
         // Both source routes pop from their newly selected or reused page.
         // An absent immediate block is an invariant failure, never an OOM retry.
@@ -39892,7 +39892,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if let Some(first) = NonNull::new(first) {
                 match self.page_quick_collect(first) {
                     Ok(true) => {
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         if crate::config::SECURE_LEVEL >= 2
                             && unsafe { Page::capacity_at(first) < Page::reserved_at(first) }
                         {
@@ -39907,9 +39907,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                                 let extension = self.extend_page_before_allocation(first);
                                 // A retained assertion owns this Page and cannot
                                 // be discarded as a recoverable commitment miss.
-                                #[cfg(target_arch = "x86_64")]
+                                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                                 let retained_assertion = matches!(&extension, Err(GenericPathError::LiveValidity));
-                                #[cfg(not(target_arch = "x86_64"))]
+                                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                                 let retained_assertion = false;
                                 if self.page_commit_poison || retained_assertion {
                                     extension?;
@@ -40159,17 +40159,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(target_thread) = self.session.thread_id() else {
             return Err(GenericPathError::Lifecycle);
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let target_theap = NonNull::from(self.session.theap());
         let page_map = self.page_map;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the source session retains this exact target Heap and its
         // subprocess throughout the reclaim cursor and excludes retirement.
         let candidates = unsafe { self.arena.reclaim_arenas_for_heap(heap,
             self.requested_arena, self.thread_sequence) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
         let Some((page, map)) = claim_child_mapped_regular_from_arenas(
             candidates,
@@ -40264,9 +40264,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             source.retain_root();
             return Err(GenericPathError::Lifecycle);
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let target_theap = NonNull::from(self.session.theap());
         let Some(target_heap) = NonNull::new(self.session.theap().heap()) else {
             source.retain_root();
@@ -40274,12 +40274,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // Copy the search facts into a value before any mutable engine
         // continuation. The cursor references only the process registry.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the source session retains this exact target Heap and its
         // subprocess throughout the reclaim cursor and excludes retirement.
         let candidates = unsafe { self.arena.reclaim_arenas_for_heap(target_heap,
             self.requested_arena, self.thread_sequence) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
         for selected in candidates {
             let arena = NonNull::from(selected.arena());
@@ -40413,7 +40413,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     return Err(GenericPathError::Lifecycle);
                 }
             },
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             MappedAbandonedClaimOutcome::PairMismatch => {
                 source.retain_root();
                 return Err(GenericPathError::Lifecycle);
@@ -40485,7 +40485,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn direct_page_commit_mapping_miss(error: &GenericPathError) -> bool {
         match error {
             GenericPathError::PageCommit(PageCommitError::ProcessMapping(_)) => true,
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             GenericPathError::PageCommit(PageCommitError::Mapping(
                 ProcessPageArenaLeaseError::Arena(ProcessSharedArenaError::Mapping(_)),
             )) => true,
@@ -40632,7 +40632,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Observes the source live-page predicate without carrying a metadata
     /// projection into output. Failure detaches the exact queue member while
     /// keeping its PageMap and backing publication retained.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn observe_live_page_validity(&mut self, page: NonNull<Page>, queued: bool) -> Result<(), GenericPathError> {
         // SAFETY: this engine owns ordinary Page and local-list fields.
         // Remote producers keep published links immutable; no collector,
@@ -40666,7 +40666,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.retain_live_page_observation_failure(page, invariant)
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn retain_live_page_observation_failure(
         &mut self, page: NonNull<Page>, invariant: crate::page_validity::SourcePageInvariant,
     ) -> Result<(), GenericPathError> {
@@ -40719,7 +40719,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Header/queue failures close this original engine without attempting
     /// queue repair. Page failures retain the same exact unselectable Page
     /// used by other source leaf assertions.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn observe_collection_prefix(&mut self) -> Result<(), GenericPathError> {
         let theap = self.allocation_theap();
         // SAFETY: the original session retains the actual source owner and
@@ -40743,7 +40743,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     /// Retains a prefix failure on the existing original engine when its
     /// lifecycle caller must complete fast-slot removal before exporting it.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     pub(crate) fn retain_collection_prefix_failure(&mut self) -> bool {
         match self.observe_collection_prefix() {
             Ok(()) => true,
@@ -40755,7 +40755,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Preserves a source transition's exact assertion before its bool
     /// lifecycle adapter returns. The slot retains the original Page and
     /// issuer; the caller must carry its task out before diagnostic delivery.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn retain_live_page_transition_failure(&mut self, page: NonNull<Page>) -> bool {
         match self.observe_live_page_validity(page, true) {
             Ok(()) => true,
@@ -40777,7 +40777,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &mut self,
         page: NonNull<Page>,
     ) -> Result<(), GenericPathError> {
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         self.observe_live_page_validity(page, false)?;
         #[cfg(feature = "mi-stat-1")]
         self.session.theap().record_page_extension_attempted();
@@ -40789,14 +40789,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // queue state while it extends the source local free list.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let extension = free_list.extend_with_random(|| {
                 // SAFETY: the selected session retains exclusive random-field ownership.
                 unsafe { Theap::next_os_reservation_random_at(
                     self.session.local_field_theap_pointer(),
                 ) }.map(|word| word as usize)
             });
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let extension = free_list.extend();
             let extended = extension.map_err(GenericPathError::Local)?;
             drop(free_list);
@@ -40810,13 +40810,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let block_size = unsafe { Page::block_size_at(page) };
                 self.session.theap().record_page_extension_published(extended as usize, block_size);
             }
-            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
             self.observe_live_page_validity(page, false)?;
             return Ok(());
         }
 
         self.extend_on_demand_page_before_allocation(page)?;
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         self.observe_live_page_validity(page, false)?;
         Ok(())
     }
@@ -40965,7 +40965,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             .map_err(PageCommitError::Extension)
             .map_err(GenericPathError::PageCommit)
             .and_then(|mut free_list| {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let extension = free_list.extend_count_with_random(plan.extend, || {
                     // SAFETY: this active engine owns the selected Theap's
                     // random field; no whole-Theap view crosses the draw.
@@ -40973,7 +40973,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         self.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 let extension = free_list.extend_count(plan.extend);
                 extension.map_err(PageCommitError::Extension)
                     .map_err(GenericPathError::PageCommit)
@@ -41619,9 +41619,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 .checked_sub(self.page_map.memory_config().page_size().bytes())?
                 .checked_sub(adjustment);
         }
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         let canonical_usable = unsafe { Page::block_size_at(page) };
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         let canonical_usable = {
             let page_pointer = page;
             // SAFETY: the exact live local block retains its page and key.
@@ -41845,7 +41845,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[cfg(feature = "mi-stat-1")]
     fn record_client_free_statistics(&self, block_size: usize) {
         let session = NonNull::from(self.session.theap());
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if !self.session.theap().is_detached() {
             let current = crate::compiler_tls::default_theap();
             // SAFETY: compiler TLS retains this caller's current default root
@@ -42259,7 +42259,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let next = unsafe { (*page).next() };
                 // Source `mi_theap_page_collect` validates the still-queued
                 // Page before collecting either remote or local frees.
-                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                 if self.retain_live_page_transition_failure(current) { return false; }
                 if let Err(error) = self.page_free_collect_false(current) {
                     self.retain_page_collect_poison(current, error, None);
@@ -42314,7 +42314,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let next = unsafe { (*page).next() };
                 // Source `mi_theap_page_collect` validates the still-queued
                 // Page before collecting either remote or local frees.
-                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                 if self.retain_live_page_transition_failure(current) { return false; }
                 if let Err(error) = self.page_free_collect_force(current) {
                     self.retain_page_collect_poison(current, error, None);
@@ -42583,7 +42583,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// refusal, and no pending OS release. Only a permanently bound session
     /// (the initial owner's static main session) may be asked between
     /// operations; owner-local engines stage theirs while bound.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
         if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
@@ -42697,11 +42697,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         error: GenericPathError,
     ) -> GenericPathError {
         let retained_error = match &error {
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             GenericPathError::FreshInitialization(_) => return error,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             GenericPathError::FreshInitialization => return error,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             GenericPathError::LiveValidity => return error,
             GenericPathError::Collection(error) => *error,
             GenericPathError::Local(error) => PageCollectError::Local(*error),
@@ -42983,7 +42983,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         request: usize,
         zero: bool,
     ) -> Result<(), FreeListError> {
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         {
             // SAFETY: the free-list projection has ended. This owner retains
             // the selected page and the popped block exclusively until return.
@@ -43003,7 +43003,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 block, block_size, request, page.as_ptr().addr(), key, zero, huge, policy,
             ) }.ok_or(FreeListError::InvalidBlock)?;
         }
-        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        #[cfg(not(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3"))))]
         let _ = (page, block, request, zero);
         Ok(())
     }
@@ -43051,7 +43051,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn allocate_fresh_os_page_checked(
         &mut self, block_size: usize, alignment: usize,
         enqueue_singleton: bool, commit: bool,
@@ -43065,11 +43065,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let config = self.page_map.memory_config();
         let arena = &self.arena;
         let requested = self.requested_arena;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut storage = MaybeUninit::<OsAlignedPageClaim>::uninit();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destination = NonNull::from(&mut storage);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let allocation = self.session.with_os_random_source(|random| {
             if let Some(process) = arena.process() {
                 // SAFETY: the exact backing retains its process owner. This
@@ -43105,7 +43105,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// excludes independent access to the claim, and has already admitted its
     /// vacant pending slots. Completion preserves custody of any refused owner
     /// in this same session until its explicit cleanup or publication.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline(never)]
     unsafe fn complete_fresh_os_page_initialization(
         &mut self, storage: &mut MaybeUninit<OsAlignedPageClaim>,
@@ -43184,7 +43184,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Ok(None);
         };
         let page = match unsafe {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let page = self.session.publish_fresh_primary_page(
                 metadata,
                 layout.block_size(),
@@ -43194,7 +43194,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 memory.initially_zero(),
                 memory,
             );
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let page = self.session.publish_fresh_page(
                 metadata,
                 layout.block_size(),
@@ -43242,7 +43242,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: actual PageMap and matched statistics publication completed;
         // the original session retains this Page before zero or list writes.
         if !unsafe { self.session.initialize_fresh_page_keys(page) } {
@@ -43256,7 +43256,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         // SAFETY: the exact original claim retains its entire readable
         // committed area; no free-list link or client has been published.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Err(failure) = unsafe { self.observe_fresh_os_initialization(&claim, page) } {
             return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
                 claim, page, theap: self.theap_identity(),
@@ -43264,7 +43264,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 retirement_marker: FreshTaskRetirementMarker::Unmarked,
             }));
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let claim = unsafe { self.observe_fresh_os_initialization(claim, page, statistics_bin) }
             .map_err(GenericPathError::FreshInitialization)?;
 
@@ -43277,7 +43277,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             #[cfg(feature = "mi-stat-1")]
             self.session.theap().record_page_extension_attempted();
             if slice_pcommitted == 0 {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let extension = free_list.extend_with_random(|| {
                     // SAFETY: this active engine owns the selected Theap's
                     // random field; no whole-Theap view crosses the draw.
@@ -43285,7 +43285,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         self.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 let extension = free_list.extend();
                 let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
                 if extended == 0 {
@@ -43309,14 +43309,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if plan.commit_size != 0 {
                 return Err(FreshOsPageInitializationFailure::InitialPrefixNeedsCommit(plan.commit_size));
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let extension = free_list.extend_count_with_random(plan.extend, || {
                 // SAFETY: the selected session retains exclusive random-field ownership.
                 unsafe { Theap::next_os_reservation_random_at(
                     self.session.local_field_theap_pointer(),
                 ) }.map(|word| word as usize)
             });
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let extension = free_list.extend_count(plan.extend);
             let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
             if extended != plan.extend {
@@ -43329,13 +43329,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Ok(())
         })();
         if let Err(failure) = initialized {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
                 claim, page, theap: self.theap_identity(),
                 metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
                 retirement_marker: FreshTaskRetirementMarker::Unmarked,
             }));
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 let _ = failure;
                 self.rollback_fresh_os_aligned(claim, page, true, true);
@@ -43358,7 +43358,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Ok(Some(page))
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn allocate_fresh_os_page_checked(
         &mut self,
         block_size: usize,
@@ -43375,11 +43375,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let config = self.page_map.memory_config();
         let arena = &self.arena;
         let requested = self.requested_arena;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut storage = MaybeUninit::<OsAlignedPageClaim>::uninit();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destination = NonNull::from(&mut storage);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let allocation = self.session.with_os_random_source(|random| {
             if let Some(process) = arena.process() {
                 // SAFETY: the exact backing retains its process owner. This
@@ -43395,7 +43395,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     destination, config, block_size, alignment) }
             }
         });
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let mut claim = match allocation {
             // SAFETY: only these two outcomes initialized a complete original
             // image. Each branch consumes that destination once; Released never
@@ -43407,7 +43407,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             OsAlignedPageClaimInitialization::Released(_) => return Ok(None),
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let mut claim = {
             let allocation = self.session.with_os_random_source(|random| {
                 if let Some(process) = arena.process() {
@@ -43499,7 +43499,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Ok(None);
         };
         let page = match unsafe {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let page = self.session.publish_fresh_primary_page(
                 metadata,
                 layout.block_size(),
@@ -43509,7 +43509,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 memory.initially_zero(),
                 memory,
             );
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let page = self.session.publish_fresh_page(
                 metadata,
                 layout.block_size(),
@@ -43557,7 +43557,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: actual PageMap and matched statistics publication completed;
         // the original session retains this Page before zero or list writes.
         if !unsafe { self.session.initialize_fresh_page_keys(page) } {
@@ -43571,7 +43571,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         // SAFETY: the exact original claim retains its entire readable
         // committed area; no free-list link or client has been published.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Err(failure) = unsafe { self.observe_fresh_os_initialization(&claim, page) } {
             return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
                 claim, page, theap: self.theap_identity(),
@@ -43579,7 +43579,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 retirement_marker: FreshTaskRetirementMarker::Unmarked,
             }));
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let claim = unsafe { self.observe_fresh_os_initialization(claim, page, statistics_bin) }
             .map_err(GenericPathError::FreshInitialization)?;
 
@@ -43592,7 +43592,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             #[cfg(feature = "mi-stat-1")]
             self.session.theap().record_page_extension_attempted();
             if slice_pcommitted == 0 {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let extension = free_list.extend_with_random(|| {
                     // SAFETY: this active engine owns the selected Theap's
                     // random field; no whole-Theap view crosses the draw.
@@ -43600,7 +43600,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         self.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 let extension = free_list.extend();
                 let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
                 if extended == 0 {
@@ -43624,14 +43624,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if plan.commit_size != 0 {
                 return Err(FreshOsPageInitializationFailure::InitialPrefixNeedsCommit(plan.commit_size));
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let extension = free_list.extend_count_with_random(plan.extend, || {
                 // SAFETY: the selected session retains exclusive random-field ownership.
                 unsafe { Theap::next_os_reservation_random_at(
                     self.session.local_field_theap_pointer(),
                 ) }.map(|word| word as usize)
             });
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let extension = free_list.extend_count(plan.extend);
             let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
             if extended != plan.extend {
@@ -43644,13 +43644,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Ok(())
         })();
         if let Err(failure) = initialized {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
                 claim, page, theap: self.theap_identity(),
                 metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
                 retirement_marker: FreshTaskRetirementMarker::Unmarked,
             }));
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 let _ = failure;
                 self.rollback_fresh_os_aligned(claim, page, true, true);
@@ -43683,16 +43683,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// by this session. The entire source committed observation
     /// region is initialized and readable, with no concurrent writes, free-list
     /// publication, client access or protection change.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn observe_fresh_os_initialization(
         &self, _claim: &OsAlignedPageClaim, page: NonNull<Page>,
     ) -> Result<(), FreshOsPageInitializationFailure> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if crate::config::DEBUG_LEVEL > 2 {
             // SAFETY: the caller retains the original committed mapping and
             // excludes writes and protection changes through this observation.
             let state = unsafe { Page::validity_snapshot_at(page) };
-            #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+            #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
             if state.initially_zero {
                 // SAFETY: the observer is test-only and cannot allocate,
                 // output or reenter; the original claim exclusively retains
@@ -43709,16 +43709,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Ok(())
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe fn observe_fresh_os_initialization(
         &self, claim: OsAlignedPageClaim, page: NonNull<Page>, statistics_bin: usize,
     ) -> Result<OsAlignedPageClaim, PendingFreshOsPageInitialization> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if crate::config::DEBUG_LEVEL > 2 {
             // SAFETY: the caller retains the original committed mapping and
             // excludes writes and protection changes through this observation.
             let state = unsafe { Page::validity_snapshot_at(page) };
-            #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+            #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
             if state.initially_zero {
                 // SAFETY: the observer is test-only and cannot allocate,
                 // output or reenter; the original claim exclusively retains
@@ -43743,7 +43743,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     // Terminal decisions travel through the generic success path without
     // copying the original claim or live task into every Result temporary.
     // The same issuing engine keeps custody until a phase boundary takes it.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn retain_generic_fresh_error(&mut self, pending: PendingFreshOsPageInitialization) -> GenericPathError {
         match self.retain_fresh_os_initialization(pending) {
             Ok(()) => GenericPathError::FreshInitialization,
@@ -43756,7 +43756,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn retain_generic_live_error(&mut self, pending: PendingLivePageValidity) -> GenericPathError {
         match self.retain_live_page_validity(pending) {
             Ok(()) => GenericPathError::LiveValidity,
@@ -43769,7 +43769,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn take_generic_error_phase(&mut self, error: GenericPathError) -> GuardedCanonicalAllocationPhase {
         match error {
             GenericPathError::FreshInitialization => self.take_fresh_initialization_phase(),
@@ -43783,7 +43783,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     // Each task has a different owned payload. Transfer the selected original
     // directly into its checked phase without staging the other task's image.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn take_fresh_initialization_phase(&mut self) -> GuardedCanonicalAllocationPhase {
         match self.take_pending_fresh_initialization() {
             Some(task) => Ok(DeferredFreeAllocationPhase::FreshInitialization(task)),
@@ -43794,7 +43794,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn take_live_validity_phase(&mut self) -> GuardedCanonicalAllocationPhase {
         match self.take_pending_live_page_validity() {
             Some(task) => Ok(DeferredFreeAllocationPhase::LiveValidity(task)),
@@ -43863,7 +43863,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     pub(crate) unsafe fn cleanup_fresh_os_initialization(
         &mut self, mut pending: PendingFreshOsPageInitialization,
     ) -> Result<(), PendingFreshOsPageInitialization> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if pending.has_retirement_refusal_marker() {
             // A persistent failure already transferred this exact task into
             // terminal issuer retention. No callback-phase cleanup may erase
@@ -43920,7 +43920,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn cleanup_unphased_initialization_error(&mut self, error: GenericPathError) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let pending = match error {
             // The producer already retained the detached original live task.
             GenericPathError::LiveValidity => return,
@@ -43931,7 +43931,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             _ => None,
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let pending = match error {
             GenericPathError::FreshInitialization(pending) => Some(pending),
             _ => None,
@@ -44033,7 +44033,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// ordinary, non-aligned request. `kind` is derived from the selected
     /// block size before this function is entered, so all source span and
     /// reserved-count transitions stay together with the claim provenance.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn allocate_fresh_page(
         &mut self,
         block_size: usize,
@@ -44071,18 +44071,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the owned session retains its Theap, Heap and TLD, and
         // source affinity setters cannot overlap an allocation read.
         let numa_node = unsafe { self.session.theap().page_allocation_numa_node() };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the owned session retains its Theap and Heap; only the
         // immutable owner pointer is copied before backing callbacks.
         let owner_heap = NonNull::new(unsafe { Theap::heap_at(self.session.local_field_theap_pointer()) })
             .ok_or(GenericPathError::Lifecycle)?;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the source session retains the exact owner and subprocess
         // through this claim and excludes retirement during callbacks.
         let claim = unsafe { self.arena.claim_for_heap(owner_heap,
             self.page_map.memory_config(), self.requested_arena, slice_count, commit,
             self.thread_sequence, numa_node, Some(&mut random)) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let claim = self.arena.claim_with_numa_node(
             self.page_map.memory_config(),
             self.requested_arena,
@@ -44106,7 +44106,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// prefix commit, guard, bitmap, PageMap, statistics and list publication.
     /// Every refused phase keeps its existing explicit release or rollback;
     /// no alternate claim or implicit destructor can return these slices.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline(never)]
     fn complete_fresh_arena_page(
         &mut self, claim: crate::arena::ArenaSliceClaim<'arena>,
@@ -44206,7 +44206,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // only mutable theap/heap image. Publication writes a fresh Page value
         // before any map or queue observer can reach it.
         let page = unsafe {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let page = self.session.publish_fresh_primary_page(
                 metadata,
                 block_size,
@@ -44216,7 +44216,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 memory.initially_zero(),
                 memory,
             );
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let page = self.session.publish_fresh_page(
                 metadata,
                 block_size,
@@ -44246,7 +44246,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         } else {
             slice_count
         };
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
         for index in 1..metadata_count {
             // SAFETY: the fresh claim exclusively owns these slices and
             // page_metadata committed their separate initialized metadata
@@ -44305,7 +44305,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this original fresh arena Page has completed source
         // registration; no list, client or prior key draw has been published.
         if !unsafe { self.session.initialize_fresh_page_keys(page) } {
@@ -44315,7 +44315,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         match self.extend_page_before_allocation(page) {
             Ok(()) => {}
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Err(error @ GenericPathError::LiveValidity) => return Err(error),
             Err(_) => {
                 self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
@@ -44325,7 +44325,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Ok(Some(page))
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn allocate_fresh_page(
         &mut self,
         block_size: usize,
@@ -44363,18 +44363,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the owned session retains its Theap, Heap and TLD, and
         // source affinity setters cannot overlap an allocation read.
         let numa_node = unsafe { self.session.theap().page_allocation_numa_node() };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the owned session retains its Theap and Heap; only the
         // immutable owner pointer is copied before backing callbacks.
         let owner_heap = NonNull::new(unsafe { Theap::heap_at(self.session.local_field_theap_pointer()) })
             .ok_or(GenericPathError::Lifecycle)?;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the source session retains the exact owner and subprocess
         // through this claim and excludes retirement during callbacks.
         let claim = unsafe { self.arena.claim_for_heap(owner_heap,
             self.page_map.memory_config(), self.requested_arena, slice_count, commit,
             self.thread_sequence, numa_node, Some(&mut random)) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let claim = self.arena.claim_with_numa_node(
             self.page_map.memory_config(),
             self.requested_arena,
@@ -44483,7 +44483,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // only mutable theap/heap image. Publication writes a fresh Page value
         // before any map or queue observer can reach it.
         let page = unsafe {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let page = self.session.publish_fresh_primary_page(
                 metadata,
                 block_size,
@@ -44493,7 +44493,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 memory.initially_zero(),
                 memory,
             );
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let page = self.session.publish_fresh_page(
                 metadata,
                 block_size,
@@ -44556,7 +44556,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: this original fresh arena Page has completed source
         // registration; no list, client or prior key draw has been published.
         if !unsafe { self.session.initialize_fresh_page_keys(page) } {
@@ -44566,7 +44566,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         match self.extend_page_before_allocation(page) {
             Ok(()) => {}
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Err(error @ GenericPathError::LiveValidity) => return Err(error),
             Err(_) => {
                 self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
@@ -45431,7 +45431,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn move_full_to_regular(&mut self, bin: usize, page: *mut Page) -> bool {
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         {
             let Some(page) = NonNull::new(page) else { return false; };
             if !self.retain_live_page_transition_failure(page) { return false; }
@@ -45455,7 +45455,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(page) = NonNull::new(page) else {
             return false;
         };
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if !self.retain_live_page_transition_failure(page) { return false; }
         // SAFETY: this short immutable check precedes every owner mutation.
         // Source `used == 0` is the concrete proof that no valid live client
@@ -45495,7 +45495,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(page_pointer) = NonNull::new(page) else {
             return false;
         };
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         if !self.retain_live_page_transition_failure(page_pointer) { return false; }
         let statistics_bin = unsafe { source_page_statistics_bin_at(page_pointer) };
         // SAFETY: the caller retains initialized queue-linked metadata. This
@@ -45661,12 +45661,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         // a refused OS release leaks the range after warning.
                         // Preserve ownership only if that release edge did
                         // not complete, rather than retrying a consumed free.
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         if let Err(failure) = failure.forget_consumed_source_page() {
                             self.park_pending_os_release(failure.into_owner());
                             return false;
                         }
-                        #[cfg(not(target_arch = "x86_64"))]
+                        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                         self.park_pending_os_release(failure.into_owner());
                         true
                     }
@@ -45838,12 +45838,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         match reclaimed {
             Ok(()) => true,
             Err(failure) => {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if let Err(failure) = failure.forget_consumed_source_page() {
                     self.park_pending_os_release(failure.into_owner());
                     return false;
                 }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 self.park_pending_os_release(failure.into_owner());
                 true
             }
@@ -46131,13 +46131,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 /// # Safety
 /// The initialized Heap remains live and its immutable identities are published.
 unsafe fn source_heap_is_subprocess_main_at(heap: NonNull<Heap>) -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let state = unsafe { Heap::source_snapshot_at(heap) };
         state.theap_slot == crate::thread_local::TLS_FAST_KEY_RAW as usize
             && !state.subprocess.is_null()
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     { unsafe { heap.as_ref() }.is_subprocess_main() }
 }
 
@@ -46148,7 +46148,7 @@ unsafe fn source_heap_is_subprocess_main_at(heap: NonNull<Heap>) -> bool {
 /// ordinary queue, direct-cache, and page-count fields without a concurrent
 /// writer. Source Heap-list links may change independently.
 unsafe fn source_theap_local_queues_empty_at(theap: NonNull<Theap>) -> bool {
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     // SAFETY: the retained non-native source session excludes whole-image
     // mutation while observing its original queue and direct-cache image.
     return unsafe {
@@ -46157,7 +46157,7 @@ unsafe fn source_theap_local_queues_empty_at(theap: NonNull<Theap>) -> bool {
             && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
             && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     // SAFETY: only the retained owner's local fields are projected; none of
     // these references covers the Theap's independently managed list links.
     unsafe {
@@ -46343,7 +46343,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     /// Checks the queued source Page before a terminal owner-exit transition.
     /// A failure detaches selection while retaining the exact map/backing and
     /// original issuer in this drain's existing terminal task slot.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn observe_live_page_validity(
         &mut self, theap: &mut TheapCollectAbandonFieldAccess, page: NonNull<Page>,
     ) -> Result<(), ProductionOwnerExitError> {
@@ -46487,7 +46487,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
                         let bin = size_class::bin(page_state.block_size)
                             .filter(|bin| *bin < BIN_FULL)
                             .ok_or(ProductionOwnerExitError::Retired)?;
-                        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
                         self.observe_live_page_validity(theap, page)?;
                         let regular = theap.queue_mut(bin)
                             .ok_or(ProductionOwnerExitError::Retired)? as *mut _;
@@ -46522,7 +46522,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         bin: usize,
         page: NonNull<Page>,
     ) -> Result<(), ProductionOwnerExitError> {
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         self.observe_live_page_validity(theap, page)?;
         let queue = {
             let queue = theap
@@ -46862,7 +46862,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         match reclaimed {
             Ok(()) => true,
             Err(failure) => {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let Err(failure) = failure.forget_consumed_source_page() else {
                     return true;
                 };
@@ -46933,7 +46933,7 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         current: TheapCollectAbandonCurrentPage<'_>,
     ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
         let page = current.page();
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         {
             // Source validates each ordinary visitor Page before force
             // collection, including live Pages later handed to abandonment.
@@ -46948,7 +46948,7 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         // SAFETY: raw owner-field read after force collection; a live client
         // may still retain only a disjoint atomic producer projection.
         if unsafe { Self::used_at(page) } == 0 {
-            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
             {
                 // SAFETY: the callback is the coordinator's sole current-page
                 // operation; no queue projection survives callback entry.
@@ -46964,7 +46964,7 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         // SAFETY: as above, do not materialize `&Page` while a producer may
         // race only through the atomic remote-free subobject.
         Ok(if unsafe { Self::used_at(page) } == 0 {
-            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
             {
                 // SAFETY: the same current-page callback still owns the
                 // ordinary queue fields after its false-force collection.
@@ -47374,7 +47374,7 @@ mod tests {
         true
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn local_fast_owner_retirement_preserves_session_write_authority() {
         with_local_fast_owner_allocator(|allocator| {
@@ -47386,7 +47386,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", not(any(
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(any(
         feature = "mi-debug-1", feature = "mi-secure-1", feature = "mi-guarded",
     ))))]
     mod local_fast_refusal_tests {
@@ -47912,7 +47912,7 @@ mod tests {
         unsafe { page_map.destroy() }.unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     #[test]
     fn secure_page_tail_protection_resets_before_reusing_arena_span() {
         let fault = fault::install(fault::Plan::disabled());
@@ -47945,7 +47945,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5", not(feature = "mi-debug-1")))]
     #[test]
     fn secure_fresh_page_excludes_tail_and_initializes_checked_padding() {
         with_allocator(|allocator| {
@@ -47979,7 +47979,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     #[test]
     fn secure_record_only_allocation_preserves_client_bytes_and_logical_usable_size() {
         with_allocator(|allocator| {
@@ -48003,7 +48003,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-2"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-2"))]
     #[test]
     fn secure_extension_prepends_capacity_on_an_available_owner_page() {
         with_allocator(|allocator| {
@@ -48024,7 +48024,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-2"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-2"))]
     #[test]
     fn secure_available_queue_head_draws_from_its_selected_theap() {
         with_allocator(|allocator| {
@@ -48049,7 +48049,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_canonical_frequency_resume_refuses_a_collector_poison_without_source_null() {
         with_allocator(|allocator| {
@@ -48083,7 +48083,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_canonical_checked_null_and_poisoned_owner_refusal_remain_distinct() {
         // This source-valid extent exceeds the isolated caller-owned arena;
@@ -48119,7 +48119,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_tagged_client_usable_extent_excludes_the_protected_tail() {
         with_allocator(|allocator| {
@@ -48136,20 +48136,20 @@ mod tests {
                 let mut phase = allocator.begin_deferred_free_guarded_canonical(source_size);
                 let base = loop {
                     match phase {
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                             // SAFETY: this fixture retains the original source engine and
                             // backing continuously through the unfinished attempt.
                             unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
                             panic!("fresh initialization unexpectedly refused");
                         }
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         DeferredFreeAllocationPhase::LiveValidity(pending) => {
                             assert!(allocator.retain_live_page_validity(pending).is_ok());
                             panic!("live Page validity unexpectedly refused");
                         }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                             // SAFETY: this fixture retains its original engine, session
                             // and backing throughout the source-default frequency phase.
@@ -48185,7 +48185,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_aligned_admission_parks_only_the_plain_allocation_fallback() {
         with_allocator(|allocator| {
@@ -48198,20 +48198,20 @@ mod tests {
             let mut phase = allocator.begin_deferred_free_aligned_plain(plain);
             let first = loop {
                 match phase {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                             // SAFETY: this fixture retains the original source engine and
                             // backing continuously through the unfinished attempt.
                             unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
                             panic!("fresh initialization unexpectedly refused");
                         }
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         DeferredFreeAllocationPhase::LiveValidity(pending) => {
                             assert!(allocator.retain_live_page_validity(pending).is_ok());
                             panic!("live Page validity unexpectedly refused");
                         }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                         // SAFETY: this fixture retains its original engine, session
                         // and backing throughout the source-default frequency phase.
@@ -48234,20 +48234,20 @@ mod tests {
             let mut phase = allocator.begin_deferred_free_aligned_plain(plain);
             let adjusted = loop {
                 match phase {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                             // SAFETY: this fixture retains the original source engine and
                             // backing continuously through the unfinished attempt.
                             unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
                             panic!("fresh initialization unexpectedly refused");
                         }
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         DeferredFreeAllocationPhase::LiveValidity(pending) => {
                             assert!(allocator.retain_live_page_validity(pending).is_ok());
                             panic!("live Page validity unexpectedly refused");
                         }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                         // SAFETY: this fixture retains its original engine, session
                         // and backing throughout the source-default frequency phase.
@@ -48272,7 +48272,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_ordinary_word_aligned_clients_publish_the_tag_after_initialization() {
         with_allocator(|allocator| {
@@ -48301,7 +48301,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_ordinary_aligned_interior_pointer_clears_the_guard_tag() {
         with_allocator(|allocator| {
@@ -48362,7 +48362,7 @@ mod tests {
         unsafe { page_map.destroy() }.unwrap();
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_retained_session_direct_cache_updates_preserve_queue_projection() {
         with_allocator(|allocator| {
@@ -48449,7 +48449,7 @@ mod tests {
         unsafe { page_map.destroy() }.unwrap();
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-5"))]
     unsafe extern "C" fn secure_mapping_commit(
         commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, _argument: *mut c_void,
     ) -> bool {
@@ -48628,7 +48628,7 @@ mod tests {
         .expect("the page-owned source tail fixture stays on its source current thread");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn regular_os_full_page_abandonment_preserves_clients_and_releases_exact_mapping() {
         with_owned_process_page_fixture(|_config, page_map, pair, main_heap, session| {
@@ -49392,7 +49392,7 @@ mod tests {
                         declined_reclaim_on_free,
                     )
                 },
-                Ok(if cfg!(target_arch = "x86_64") {
+                Ok(if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
                     ProcessPostOwnerExitPointerFreeDisposition::Released
                 } else {
                     ProcessPostOwnerExitPointerFreeDisposition::Retained
@@ -49402,8 +49402,8 @@ mod tests {
             assert_eq!(
                 marker.test_audit_snapshot(),
                 ProcessPostOwnerExitTerminalAuditSnapshot {
-                    terminalizations: if cfg!(target_arch = "x86_64") { 0 } else { 1 },
-                    categories: if cfg!(target_arch = "x86_64") { 0 } else {
+                    terminalizations: if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) { 0 } else { 1 },
+                    categories: if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) { 0 } else {
                         ProcessPostOwnerExitTerminalAuditCategory::NonArenaSingleton.bit()
                     },
                 },
@@ -49440,7 +49440,7 @@ mod tests {
                 "the source OS-list member detached before its failed mapping reclaim"
             );
 
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 for offset in (0..span.size).step_by(4096) {
                     let mut residency = 0;
@@ -49454,7 +49454,7 @@ mod tests {
                 // consumed source free; this is fixture-only leak cleanup.
                 unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
             }
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             fault.set(fault::Plan::disabled());
         });
     }
@@ -50175,7 +50175,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_regular_small_retire_quick_collect_reuse_and_force_release_trace_matches_pinned_c() {
         with_allocator(|allocator| {
@@ -50393,7 +50393,7 @@ mod tests {
     /// `mi_malloc_generic_fallback` only moves pages above `SMALL_MAX_OBJ_SIZE`
     /// to `BIN_FULL`; this fixture stops after filling the direct page, so a
     /// `SMALL_SIZE_MAX` page supplies the precise no-BIN_FULL boundary here.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_direct_small_full_regular_retire_force_release_trace_matches_pinned_c() {
         with_allocator(|allocator| {
@@ -50627,7 +50627,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_medium_full_unfull_retire_force_release_trace_matches_pinned_c() {
         with_allocator(|allocator| {
@@ -51156,7 +51156,7 @@ mod tests {
     /// Rust stages its linear producers through separate scoped workers; this
     /// proves only that every scoped producer joins before owner collection,
     /// not C pthread-count or worker-lifecycle parity.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_live_owner_full_medium_remote_release_trace_matches_pinned_c() {
         thread::spawn(|| {
@@ -51607,7 +51607,7 @@ mod tests {
     /// This exercises only the allocator engine: it does not cover
     /// C pthread/TLS ABI parity, teardown or abandonment behavior, broad
     /// routing/concurrency, or public x86/runtime support.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_live_owner_full_medium_one_remote_unfull_reuse_trace_matches_pinned_c() {
         thread::spawn(|| {
@@ -52043,7 +52043,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn generic_forced_collection_stops_at_one_pending_os_release() {
         let fault = fault::install(fault::Plan::disabled());
@@ -52123,7 +52123,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generic_forced_collection_consumes_each_source_page_release_once() {
         let fault = fault::install(fault::Plan::disabled());
@@ -52229,7 +52229,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn captured_local_free_lifecycle_failure_discharges_the_consumed_client() {
         let fault = fault::install(fault::Plan::disabled());
@@ -52266,7 +52266,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn captured_local_free_lifecycle_failure_discharges_the_consumed_client() {
         let fault = fault::install(fault::Plan::disabled());
@@ -52659,7 +52659,7 @@ mod tests {
     /// does not establish general remote-free routing, concurrent collection,
     /// abandonment, thread teardown, public `mi_*` behavior, or x86 runtime
     /// support.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_small_direct_remote_trace_matches_pinned_c_protocol() {
         const PRODUCER_COUNT: usize = 1;
@@ -53375,7 +53375,7 @@ mod tests {
                 assert_eq!(page.reserved(), 1);
                 assert_eq!(page.slice_pcommitted(), 0);
                 assert!(page.memid().is_os());
-                #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+                #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
                 assert_eq!(page.aligned_alias_owner(), primary.as_ptr());
                 assert_eq!(unsafe { page.start() }, block.as_ptr());
                 let enters_full_queue = expected_block_size > SMALL_MAX_OBJ_SIZE;
@@ -53426,7 +53426,7 @@ mod tests {
                     // source alias until terminal release clears it before
                     // reclaiming the containing OS mapping.
                     let alias = unsafe { &*base.wrapping_add(alias_offset).cast::<Page>() };
-                    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+                    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
                     assert_eq!(alias.aligned_alias_owner(), primary.as_ptr());
                 }
 
@@ -53459,7 +53459,7 @@ mod tests {
         });
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     #[test]
     fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry() {
         let fault = fault::install(fault::Plan::disabled());
@@ -53510,7 +53510,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn os_aligned_source_page_free_consumes_refused_release_once() {
         let fault = fault::install(fault::Plan::disabled());
@@ -53562,7 +53562,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generic_fresh_error_slot_transfers_original_claim_or_cleans_unphased() {
         for phased in [true, false] {
@@ -53631,7 +53631,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn fresh_os_task_changed_marker_acknowledgement_retains_original_child_custody() {
         unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
@@ -53714,7 +53714,7 @@ mod tests {
             });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     #[test]
     fn fresh_os_initialization_retains_original_claim_on_foreign_refusal_then_retries_release() {
         // The owner is allocated before every arena, bitmap, Theap session
@@ -53837,7 +53837,7 @@ mod tests {
                 let OsAlignedPageOwner::Claim(claim) = allocator.pending_os_release.as_ref().unwrap()
                     else { panic!("unpublished fresh cleanup retains its original claim") };
                 for index in 0..layout.metadata_slot_count() {
-                    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+                    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
                     assert!(unsafe { claim.metadata_slot(index).unwrap().as_ref().aligned_alias_owner() }.is_null());
                 }
                 fault.set(fault::Plan::disabled());
@@ -53847,7 +53847,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     fn with_foreign_fresh_initialization_cleanup(
         pending: PendingFreshOsPageInitialization,
     ) -> PendingFreshOsPageInitialization {
@@ -53896,7 +53896,7 @@ mod tests {
                 else { panic!("fresh rollback retains its unpublished claim") };
             for index in 0..layout.metadata_slot_count() {
                 let slot = claim.metadata_slot(index).unwrap();
-                #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+                #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
                 assert!(unsafe { slot.as_ref().aligned_alias_owner() }.is_null());
             }
             fault.set(fault::Plan::disabled());
@@ -53908,7 +53908,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-1")))]
     fn os_claim_rollback_alias_refusal_retains_the_mapping_owner() {
         let fault = fault::install(fault::Plan::disabled());
         with_allocator(|allocator| {
@@ -54209,7 +54209,7 @@ mod tests {
     /// private to the pinned allocator engine: it does not cover
     /// public x86 support, general aligned lifecycle coverage, or a portable
     /// allocation policy.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn x86_64_aligned_overalloc_realloc_trace_matches_pinned_c_protocol() {
         with_allocator(|allocator| {
@@ -54641,7 +54641,7 @@ mod tests {
             // native revalidation extends it. These private `expand` and
             // `recalloc` facts belong only to the native x86-64
             // profile.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
             let recalloc_original_size = 257usize;
             let recalloc_count = 3usize;
@@ -54856,12 +54856,12 @@ mod tests {
         let mut phase = allocator.begin_deferred_free_aligned_allocation(size, alignment, false);
         loop {
             match phase {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::LiveValidity(task) => {
                     core::mem::forget(task);
                     panic!("a legal phased fixture observed a live Page assertion");
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                             // SAFETY: this fixture retains the original source engine and
                             // backing continuously through the unfinished attempt.
@@ -54871,7 +54871,7 @@ mod tests {
                         DeferredFreeAllocationPhase::Complete(block) => {
                     return block.expect("the phased aligned allocation succeeds");
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     // SAFETY: this fixture retains its original engine, session
                     // and backing throughout the source-default frequency phase.

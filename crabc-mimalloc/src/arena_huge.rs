@@ -22,7 +22,7 @@ use crabc_core::Errno;
 use super::ProcessArenaBacking;
 use crate::arena::{ArenaId, ManageArenaError};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::diagnostic_output::MbindWarningRoute;
 use crate::os::{HugeOsAllocation, HugeOsAllocationOutcome, HugeOsAllocationStop,
     HugeOsRawReleaseRetry, HugeOsRejectedPrimitive, HugeOsReleaseFailure, MemoryConfig, VmProcess};
@@ -81,7 +81,7 @@ pub(crate) enum HugeArenaCleanupError {
 /// lifetime custody to that child's registry and teardown path.
 enum HugeReservationOwner {
     Main(Pin<&'static MetaAllocator>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     Child(crate::subproc::lifecycle::NativeChildArenaAdmission),
 }
 
@@ -95,13 +95,13 @@ struct HugeReleaseMetadata {
 
 enum HugeTrackerAllocation {
     Main(MetaAllocation<'static>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     Child(crate::subproc::lifecycle::NativeChildArenaMetadata),
 }
 
 enum HugeTrackerReleaseFailure {
     Main(MetaReleaseFailure),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     Child { tracker: crate::subproc::lifecycle::NativeChildArenaMetadata, error: MetaError },
 }
 
@@ -111,7 +111,7 @@ impl HugeTrackerReleaseFailure {
             Self::Main(MetaReleaseFailure::MallocRetryable { error, .. }
                 | MetaReleaseFailure::MallocTerminal { error, .. }) => HugeArenaCleanupError::Metadata(*error),
             Self::Main(MetaReleaseFailure::RegularOs { error, .. }) => HugeArenaCleanupError::Primitive(*error),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Self::Child { error, .. } => HugeArenaCleanupError::Metadata(*error),
         }
     }
@@ -121,10 +121,10 @@ impl HugeTrackerReleaseFailure {
             Self::Main(MetaReleaseFailure::MallocRetryable { allocation, .. }) =>
                 MetaRelease::Malloc(allocation).release().map_err(Self::Main),
             Self::Main(terminal) => Err(Self::Main(terminal)),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Self::Child { tracker, error } if !tracker.can_retry_free() =>
                 Err(Self::Child { tracker, error }),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             Self::Child { mut tracker, .. } => tracker.free()
                 .map_err(|error| Self::Child { tracker, error }),
         }
@@ -141,7 +141,7 @@ impl HugeReleaseMetadata {
                 let subprocess = process.main_subprocess().ok_or(MetaError::SubprocessMismatch)?;
                 HugeTrackerAllocation::Main(metadata.zalloc_for_main_subprocess(config, subprocess, bytes)?)
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             HugeReservationOwner::Child(admission) => HugeTrackerAllocation::Child(admission.allocate_tracker(bytes)?),
         };
         let tracker = Self { allocation, words };
@@ -152,7 +152,7 @@ impl HugeReleaseMetadata {
     fn pointer(&self) -> core::ptr::NonNull<u8> {
         match &self.allocation {
             HugeTrackerAllocation::Main(allocation) => allocation.pointer(),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             HugeTrackerAllocation::Child(allocation) => allocation.pointer(),
         }
     }
@@ -161,7 +161,7 @@ impl HugeReleaseMetadata {
         match self.allocation {
             HugeTrackerAllocation::Main(allocation) => MetaRelease::Malloc(allocation).release()
                 .map_err(HugeTrackerReleaseFailure::Main),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             HugeTrackerAllocation::Child(mut tracker) => tracker.free()
                 .map_err(|error| HugeTrackerReleaseFailure::Child { tracker, error }),
         }
@@ -310,7 +310,7 @@ impl ProcessArenaBacking {
         results
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     /// Selected source startup with a mandatory borrowed failed-`mbind`
     /// receiver. Its regular reservation and outcome ownership are identical
     /// to [`Self::reserve_startup_options`].
@@ -372,10 +372,10 @@ impl ProcessArenaBacking {
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
         unsafe { self.reserve_huge_at_reporting_errno(process, config, metadata, pages,
             numa_node, timeout_milliseconds, exclusive, random,
-            #[cfg(target_arch = "x86_64")] None).0 }
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] None).0 }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     /// Reserve huge pages with the process-owned failed-mbind warning route.
     pub(crate) unsafe fn reserve_huge_at_with_mbind_warning(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
@@ -398,11 +398,11 @@ impl ProcessArenaBacking {
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
         timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
-        #[cfg(target_arch = "x86_64")] warning: Option<MbindWarningRoute<'_>>,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning: Option<MbindWarningRoute<'_>>,
     ) -> (Result<Option<ArenaId>, HugeArenaReserveError>, crate::source_api::SourceErrno) {
         unsafe { self.reserve_huge_at_with_owner(process, config, HugeReservationOwner::Main(metadata),
             pages, numa_node, timeout_milliseconds, exclusive, random,
-            #[cfg(target_arch = "x86_64")] warning) }
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning) }
     }
 
     /// Reserve under the admitted current child's exact VM and metadata owner.
@@ -412,7 +412,7 @@ impl ProcessArenaBacking {
     /// # Safety
     /// Any random image belongs exclusively to the calling Theap, and the
     /// caller ends all process/backing views before publication returns.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn reserve_huge_at_for_child(
         admission: crate::subproc::lifecycle::NativeChildArenaAdmission,
         pages: usize, numa_node: i32, timeout_milliseconds: usize,
@@ -432,7 +432,7 @@ impl ProcessArenaBacking {
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         owner: HugeReservationOwner, pages: usize, numa_node: i32,
         timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
-        #[cfg(target_arch = "x86_64")] warning: Option<MbindWarningRoute<'_>>,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] warning: Option<MbindWarningRoute<'_>>,
     ) -> (Result<Option<ArenaId>, HugeArenaReserveError>, crate::source_api::SourceErrno) {
         use crate::source_api::SourceErrno;
         let mut errno = SourceErrno::Unchanged;
@@ -446,7 +446,7 @@ impl ProcessArenaBacking {
             let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
                 (numa_node as usize % process.policy().numa_node_count()) as i32
             } else { numa_node };
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let outcome = if let Some(warning) = warning {
                 HugeOsAllocation::allocate_for_process_with_mbind_warning(process, config,
                     pages, numa_node, timeout_milliseconds as i64, random, warning)
@@ -454,7 +454,7 @@ impl ProcessArenaBacking {
                 HugeOsAllocation::allocate_for_process(process, config, pages,
                     numa_node, timeout_milliseconds as i64, random)
             };
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let outcome = HugeOsAllocation::allocate_for_process(process, config, pages,
                 numa_node, timeout_milliseconds as i64, random);
             errno = match &outcome {
@@ -473,11 +473,11 @@ impl ProcessArenaBacking {
                 // The original child admission is still held across this
                 // synchronous warning; no child record lock spans callbacks.
                 let message = crate::diagnostic_output::SourceFormattedMessage::huge_reservation_failure(pages);
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if let Some(warning) = warning {
                     unsafe { warning.huge_warning(message) };
                 } else { process.policy().source_warning(message); }
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 process.policy().source_warning(message);
             }
             let result = unsafe { self.finish_prepared_huge_reservation(config, owner, numa_node, exclusive, outcome) };
@@ -550,7 +550,7 @@ impl ProcessArenaBacking {
             HugeOsAllocationOutcome::RejectedPrimitive(rejected) =>
                 (None, Some(rejected), Some(HugeOsAllocationStop::NoncontiguousPrimitive)),
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let retained_child = matches!(&owner, HugeReservationOwner::Child(_));
         let mut pending = PendingHugeCleanup { prefix: None, rejected, owner,
             error: HugeArenaCleanupError::Primitive(Errno::NOMEM) };
@@ -560,7 +560,7 @@ impl ProcessArenaBacking {
         let result = match allocation {
             None => Err(HugeArenaReserveError::Unavailable(unavailable.unwrap())),
             Some(allocation) => match {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let installed = if retained_child {
                     // SAFETY: the pending owner retains the original child
                     // admission through rejection; publication transfers only
@@ -569,7 +569,7 @@ impl ProcessArenaBacking {
                 } else {
                     unsafe { self.install_owned_huge_allocation(config, allocation, numa_node, exclusive) }
                 };
-                #[cfg(not(target_arch = "x86_64"))]
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                 let installed = unsafe { self.install_owned_huge_allocation(config, allocation, numa_node, exclusive) };
                 installed
             } {
@@ -661,7 +661,7 @@ impl ProcessArenaBacking {
             })
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     /// Same interleave policy as [`Self::reserve_huge_interleaved`] with the
     /// mandatory startup warning route carried to every selected node attempt.
     pub(crate) unsafe fn reserve_huge_interleaved_with_mbind_warning(
@@ -725,7 +725,7 @@ mod tests {
         (config, binding.process(), metadata)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn failed_startup_huge_reservation_reports_the_source_failure_warning() {
         unsafe fn empty_environment() -> *const *const c_char {
@@ -770,7 +770,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn process_option_startup_delivers_one_public_huge_failure_warning() {
         unsafe fn environment() -> *const *const c_char {
@@ -821,7 +821,7 @@ mod tests {
         backing.registry.count.store(count, Ordering::Relaxed);
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_huge_manage_rejection_retains_its_vm_and_metadata_until_raw_retry() {
         use crate::subproc::lifecycle::{NativeChildArenaAdmission, NativeChildThreadAdd,
@@ -1022,7 +1022,7 @@ mod tests {
         assert_eq!(backing.registry.count(), 1);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn huge_partial_reservation_publishes_claims_and_releases_the_source_arena() {
         let fault = fault::install(fault::Plan::at_pair(

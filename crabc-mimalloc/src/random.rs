@@ -28,7 +28,7 @@ const SIGMA: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 /// random context. The dependency's generator adds its fixed increment before
 /// applying the source finalizer, so subtract that increment from the seed to
 /// retain the source input exactly, including its zero-to-seventeen rule.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 pub(crate) fn shuffle(value: usize) -> usize {
     use rand_xoshiro::{SplitMix64, rand_core::{Rng, SeedableRng}};
@@ -42,7 +42,7 @@ pub(crate) fn shuffle(value: usize) -> usize {
 /// Facts retained after a weak-context retry releases its random projection.
 /// A failed retry still initializes a usable weak stream; its diagnostic may
 /// be delivered only after any enclosing allocator ownership lock is released.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RandomReinitialization {
     pub(crate) attempted: bool,
@@ -706,7 +706,7 @@ impl WeakObservations {
 mod tests {
     use super::*;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn page_shuffle_matches_pinned_c_for_zero_and_wrapping_seed_edges() {
         let vectors = [
@@ -1108,7 +1108,7 @@ mod tests {
         assert!(!weak.reinitialize_if_weak());
         assert_eq!(weak.m1_state_fingerprint(), strong_fingerprint);
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn prepared_entropy_refusal_warns_before_weak_observations_and_allows_reentry() {
         use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};

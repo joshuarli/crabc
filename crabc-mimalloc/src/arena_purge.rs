@@ -269,7 +269,7 @@ mod tests {
 
     /// A scheduled arena range waits through the last preceding millisecond,
     /// then its due visit clears the range while preserving its live neighbor.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_delayed_purge_expiry_c_rust_trace() {
         delayed_purge_expiry_trace(false);
@@ -277,13 +277,13 @@ mod tests {
 
     /// A failed decommit at expiry consumes the scheduled purge while the
     /// fully committed slice remains reusable beside a live neighbor.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_delayed_purge_fault_c_rust_trace() {
         delayed_purge_expiry_trace(true);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn delayed_purge_expiry_trace(fail_due_advice: bool) {
         use super::*;
         use crate::arena::{ArenaId, ArenaSearch, ArenaView};

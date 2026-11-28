@@ -48,7 +48,7 @@ use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::AtomicI32;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::compiler_tls::default_theap;
 use crate::compiler_tls::{current_thread_identity, set_cached_theap};
 use crate::bootstrap::empty_default_theap;
@@ -58,12 +58,12 @@ use crate::config::{
     LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, MEDIUM_PAGE_SIZE, SMALL_MAX_OBJ_SIZE,
     SMALL_PAGE_SIZE,
 };
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::config::VmOptions;
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::config::{ARENA_SLICE_SIZE, BIN_FULL, VmOption};
 use crate::main_heap_thread::{MainHeapThreadAttachment, MainHeapThreadAttachmentError};
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::main_heap_thread::MainHeapThreadAttachmentBeginError;
 #[cfg(test)]
 use crate::main_heap_thread::MainHeapThreadPageSessionError;
@@ -71,7 +71,7 @@ use crate::main_heap_page::{
     MainHeapThreadOwnerLocalAllocator, MainHeapThreadOwnerLocalPageEngine,
     MainHeapThreadOwnerLocalPageEngineBeginError,
 };
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::main_heap_page::{
     MainHeapThreadProcessPageAllocator,
     MainHeapThreadProcessPageAllocatorBeginError,
@@ -108,32 +108,32 @@ use crate::main_static_page::native_process_backing_first_arena_audit;
 use crate::main_theap::MainStaticHeapLease;
 #[cfg(test)]
 use crate::meta::MetaAllocation;
-#[cfg(any(test, feature = "native-runtime-test-audit", target_arch = "x86_64"))]
+#[cfg(any(test, feature = "native-runtime-test-audit", any(target_arch = "x86_64", target_arch = "aarch64")))]
 use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, StartupInput};
 #[cfg(any(test, target_arch = "aarch64"))]
 use crate::os::PageSize;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::os::{MapAccess, Mapping};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::diagnostic_output::{
     FinalProcessDiagnosticView, FinalProcessInfo, ProcessDiagnosticInputs,
 };
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 use crate::diagnostic_output::RuntimeStderrOutput;
 use crate::diagnostic_output::SourceErrorReport;
 use crate::process_init::{
     ProcessMainBackingBinding, ProcessMainInitializationStorage, ProcessMainInitError,
     ProcessMainThread,
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use crate::process_init::NativeProcessStartupFacts;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::process_init::{ProcessStartEntry, ProcessStartupFactsCell};
 use crate::process_arena::{ProcessPageBackingLease, ProcessSharedArenaStorage};
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::process_page_map::{
     LiveAllocationPageState, LiveAllocationPointer, ProcessPageMapError, ProcessPageMapRoot,
@@ -180,7 +180,7 @@ const PROCESS_ALLOCATABLE: u8 = 4;
 /// the process lives on without a page map, so every allocation fails with
 /// ENOMEM. This state is that process: startup succeeded, there is no owner,
 /// and no allocation, attachment, or page operation can reach an engine.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const PROCESS_PAGE_MAP_UNAVAILABLE: u8 = 5;
 /// Private selected-native process-finalizer state. This does not replace the
 /// source process owner state: it records only that libc has mapped pinned
@@ -526,7 +526,7 @@ pub enum NativePageFreeResult {
     Retained,
     /// Source padding rejected the free after reporting its error; the
     /// allocation remains owned and the caller may continue as in pinned C.
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     RejectedCorruption,
 }
 
@@ -538,7 +538,7 @@ impl NativePageFreeResult {
         match self {
             Self::Freed => true,
             Self::Unavailable | Self::InvalidPointer | Self::Retained => false,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             Self::RejectedCorruption => true,
         }
     }
@@ -2587,7 +2587,7 @@ struct RuntimeProcessStorage {
     /// policy observation, owner publication, and reservation callbacks.
     /// A distinct entry waits for ACTIVE or RETAINED; an initializing-thread
     /// callback can reenter without waiting on itself.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     process_once: AllocatorOnce,
     /// One-way logical mapping of pinned `mi_process_done_once`. The permanent
     /// process owner itself remains physically live so late frees and a
@@ -3397,7 +3397,7 @@ impl RuntimeProcessStorage {
     const fn new() -> Self {
         Self {
             state: AtomicU8::new(PROCESS_COLD),
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             process_once: AllocatorOnce::new(),
             logical_process_done: AtomicU8::new(PROCESS_DONE_OPEN),
             initial_thread_identity: AtomicUsize::new(0),
@@ -3599,9 +3599,9 @@ impl RuntimeProcessStorage {
     /// Whether startup completed without a page map.
     #[inline]
     fn page_map_unavailable(&self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         return self.state.load(Ordering::Acquire) == PROCESS_PAGE_MAP_UNAVAILABLE;
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         false
     }
 
@@ -3673,7 +3673,7 @@ impl RuntimeProcessStorage {
         // true` effect. Do this preflight before claiming the one-way logical
         // transition so a missing process backing cannot publish a partial
         // selected process-done state.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let Some((vm_process, diagnostics)) = (|| {
             // Capture only process-static scalar/identity facts before the
             // one-way CAS. The ready lease itself does not cross diagnostic
@@ -3688,7 +3688,7 @@ impl RuntimeProcessStorage {
         })() else {
             return SelectedProcessDoneResult::Retained;
         };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let Some(vm_process) = self.active_vm_process() else {
             return SelectedProcessDoneResult::Retained;
         };
@@ -3713,7 +3713,7 @@ impl RuntimeProcessStorage {
         // effect without claiming dynamic-cache teardown.
         set_cached_theap(core::ptr::NonNull::from(empty_default_theap()));
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some((output, subprocess_sequence, subprocess)) = diagnostics {
             // The pinned signed source gate is before all final source-stat
             // merges and sampling. Its invalid-option warning releases its
@@ -3796,7 +3796,7 @@ impl RuntimeProcessStorage {
     /// excludes concurrent Heap-list writes. No whole-Theap reference or
     /// reference across output is created. Empty or uninitialized images are
     /// skipped; a nonempty image bound to another Heap is a retained failure.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn merge_selected_default_process_done_statistics(
         &'static self,
         subprocess: &'static crate::subproc::MainSubprocess,
@@ -3898,7 +3898,7 @@ impl RuntimeProcessStorage {
 
     #[inline]
     fn prepare_quiescent_on_initial_thread_for_held_fork_gate(&self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.state.load(Ordering::Acquire) == PROCESS_ALLOCATABLE {
             return self.prepare_original_source_attached_initializer_for_held_fork_gate();
         }
@@ -3964,7 +3964,7 @@ impl RuntimeProcessStorage {
     /// admission; a TLS scope count or pointer alone cannot do so. The source
     /// thread identity and private once guard survive normal fork unchanged.
     /// No completed-process witness is constructed and no engine is moved.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn prepare_original_source_attached_initializer_for_held_fork_gate(&self) -> bool {
         if !self.is_on_initial_allocation_thread()
             || RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire)
@@ -4033,11 +4033,11 @@ impl RuntimeProcessStorage {
         // admits only its initial thread before completed startup. This takes
         // immutable PageMap facts, never the permanent page owner.
         let owner = unsafe { self.allocation_owner() }?;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             owner.allocation_page_map().ok()
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             owner.allocation().ok()?.page_map().ok()
         }
@@ -4145,7 +4145,7 @@ impl RuntimeProcessStorage {
             ),
             // Explicit-config fixtures and the AArch64 architecture retain
             // their historical constructor. Native x86 requires source VM policy.
-            #[cfg(any(not(target_arch = "x86_64"), test))]
+            #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
             Err(ProcessMainInitError::VmPolicyUnavailable) => {
                 let Ok(page_map) = allocation.page_map() else {
                     self.retain_page_owner();
@@ -4612,13 +4612,13 @@ impl RuntimeProcessStorage {
     /// also need to be inside the same blocking startup envelope. A failure
     /// to obtain a valid identity or private lock makes this boolean runtime
     /// entry unavailable; it never grants startup ownership.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn begin_initialization_once(&self) -> Option<AllocatorOnceCompletion<'_>> {
         let identity = OnceThreadId::new(current_thread_identity()?.get())?;
         self.process_once.enter(identity).ok().flatten()
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn initialize(&'static self, facts: NativeProcessStartupFacts, entry: ProcessStartEntry) -> bool {
         let default_stderr_output = facts.stderr_output().into_default_stderr_output();
         let Some(completion) = self.begin_initialization_once() else {
@@ -4673,7 +4673,7 @@ impl RuntimeProcessStorage {
         let diagnostic_inputs = unsafe {
             ProcessDiagnosticInputs::new(facts.environment_reader(), default_stderr_output)
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let diagnostic_inputs = if let Some(store) = facts.source_errno_store() {
             diagnostic_inputs.with_source_errno_store(store)
         } else {
@@ -4735,7 +4735,7 @@ impl RuntimeProcessStorage {
         true
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any())]
     fn initialize(&'static self, page_size_bytes: usize) -> bool {
         match self.state.compare_exchange(
             PROCESS_COLD,
@@ -6435,7 +6435,7 @@ static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRoute
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub unsafe fn native_runtime_metadata_page_map_test_audit() -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6592,7 +6592,7 @@ pub struct NativeRuntimeProcessOptionsAudit {
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_process_options_test_audit() -> Option<NativeRuntimeProcessOptionsAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6621,7 +6621,7 @@ pub fn native_runtime_process_options_test_audit() -> Option<NativeRuntimeProces
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6732,7 +6732,7 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_main_heap_os_abandoned_empty_test_audit() -> Option<bool> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6756,7 +6756,7 @@ pub fn native_runtime_main_heap_os_abandoned_empty_test_audit() -> Option<bool> 
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFirstArenaPolicyAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6834,7 +6834,7 @@ pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFir
 pub unsafe fn native_runtime_live_client_page_test_audit(
     client: core::ptr::NonNull<u8>,
 ) -> Option<NativeRuntimeLiveClientPageAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6884,7 +6884,7 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
 pub unsafe fn native_runtime_live_client_arena_span_test_audit(
     client: core::ptr::NonNull<u8>,
 ) -> Option<NativeRuntimeArenaSpanTestAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -6946,7 +6946,7 @@ pub unsafe fn native_runtime_live_client_arena_span_test_audit(
 pub unsafe fn native_runtime_arena_span_state_test_audit(
     span: NativeRuntimeArenaSpanTestAudit,
 ) -> Option<NativeRuntimeArenaSpanStateTestAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -7001,7 +7001,7 @@ pub unsafe fn native_runtime_arena_span_state_test_audit(
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub unsafe fn native_runtime_live_client_memory_kind_test_audit(client: core::ptr::NonNull<u8>) -> Option<u8> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -7031,7 +7031,7 @@ pub unsafe fn native_runtime_live_client_memory_kind_test_audit(client: core::pt
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub unsafe fn native_runtime_live_client_slice_pcommitted_test_audit(client: core::ptr::NonNull<u8>) -> Option<u16> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -7076,7 +7076,7 @@ pub struct NativeRuntimeLiveClientPageGeometryAudit {
 pub unsafe fn native_runtime_live_client_page_geometry_test_audit(
     client: core::ptr::NonNull<u8>,
 ) -> Option<NativeRuntimeLiveClientPageGeometryAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -7140,7 +7140,7 @@ pub unsafe fn native_runtime_live_client_page_geometry_test_audit(
 pub unsafe fn native_runtime_live_client_uses_startup_regular_arena_test_audit(
     client: core::ptr::NonNull<u8>,
 ) -> Option<bool> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -7188,7 +7188,7 @@ pub unsafe fn native_runtime_live_client_uses_startup_regular_arena_test_audit(
 pub unsafe fn native_runtime_live_client_page_map_span_test_audit(
     source: NativeRuntimeLiveClientPageAudit,
 ) -> Option<NativeRuntimeLiveClientPageMapSpanAudit> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -7247,7 +7247,7 @@ pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionA
 #[doc(hidden)]
 pub fn native_runtime_current_thread_attachment_test_audit(
 ) -> NativeRuntimeCurrentThreadAttachmentAudit {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return NativeRuntimeCurrentThreadAttachmentAudit { persistent_owner_installed: 0, page_engine_active: 0, owner_local_operation_count: NATIVE_OWNER_LOCAL_OPERATION_COUNT.load(Ordering::Acquire) };
     };
@@ -7299,7 +7299,7 @@ pub fn native_runtime_current_thread_attachment_test_audit(
 pub fn native_runtime_current_owner_theap_trace_test_audit(
     visit: &mut dyn FnMut(crate::theap_trace_audit::NativeTheapTraceFact),
 ) -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -7330,7 +7330,7 @@ pub fn native_runtime_current_owner_theap_trace_test_audit(
 #[doc(hidden)]
 pub fn native_runtime_process_done_terminal_purge_test_audit(
 ) -> Result<NativeRuntimeProcessDoneTerminalPurgeAudit, i32> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return Err(-127);
     };
@@ -7419,7 +7419,7 @@ pub fn native_runtime_process_done_terminal_purge_test_audit(
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 pub fn native_runtime_process_done_retained_worker_matches_current_thread_test_audit() -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -7449,7 +7449,7 @@ pub fn native_runtime_process_done_retained_worker_matches_current_thread_test_a
 pub unsafe fn native_runtime_process_done_retained_local_preflight_test_audit(
     block: core::ptr::NonNull<u8>,
 ) -> i32 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return -127;
     };
@@ -7567,7 +7567,7 @@ unsafe fn native_runtime_local_page_test_audit_for_owner(
 pub unsafe fn native_runtime_current_local_page_test_audit(
     live_sibling: core::ptr::NonNull<u8>,
 ) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return Err(-127);
     };
@@ -7598,7 +7598,7 @@ pub unsafe fn native_runtime_current_local_page_same_test_audit(
     first: core::ptr::NonNull<u8>,
     second: core::ptr::NonNull<u8>,
 ) -> Result<bool, i32> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return Err(-127);
     };
@@ -7648,7 +7648,7 @@ pub unsafe fn native_runtime_current_local_page_same_test_audit(
 pub unsafe fn native_runtime_process_done_retained_local_page_test_audit(
     live_sibling: core::ptr::NonNull<u8>,
 ) -> Result<NativeRuntimeProcessDoneRetainedLocalPageAudit, i32> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return Err(-127);
     };
@@ -7690,7 +7690,7 @@ pub unsafe fn native_runtime_process_done_retained_page_retired_test_audit(
     former_client: core::ptr::NonNull<u8>,
     expected_reserved: usize,
 ) -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -7787,7 +7787,7 @@ pub unsafe fn native_runtime_process_done_retained_live_page_test_audit(
     second: core::ptr::NonNull<u8>,
     remote_free_published: bool,
 ) -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -8026,7 +8026,7 @@ struct NativePersistentThreadOwner {
     // A source option getter may allocate through this owner after every
     // projection ended. Its original counted issuer cannot retire or move
     // to another lifecycle while any caller-stack capture remains pending.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     generic_frequency_captures: usize,
 }
 
@@ -8080,12 +8080,12 @@ enum NativePersistentThreadOwnerLocalAccessError {
 /// No variant retains an engine, attachment, session, TLD, or backing borrow.
 #[must_use = "a deferred-free native allocation phase must be invoked and resumed"]
 enum NativeDeferredFreeAllocationPhase {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     LiveValidity(crate::single_thread::PendingLivePageValidity),
     Complete(Option<core::ptr::NonNull<u8>>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     GenericFrequency {
         capture: NativeGenericFrequencyCapture,
         request: crate::types::GenericAllocationFrequencyRequest,
@@ -8103,7 +8103,7 @@ enum NativeDeferredFreeAllocationPhase {
 /// An unsuccessful resume leaves the original owner retained rather than
 /// reopening retirement for an incomplete source administration request.
 #[must_use = "resume the originating counted issuer or retain its owner"]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeGenericFrequencyCapture {
     process: crate::os::VmProcess<'static>,
 }
@@ -8113,13 +8113,13 @@ struct NativeGenericFrequencyCapture {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum NativeGenericAllocationPath {
     Ordinary,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     GuardedCanonical,
 }
 
 impl NativeGenericAllocationPath {
     fn is_guarded_canonical(self) -> bool {
-        #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
         if self == Self::GuardedCanonical { return true; }
         false
     }
@@ -8149,17 +8149,17 @@ impl NativePersistentThreadOwner {
     /// retained-graph continuation, after all copied outer locks are released.
     unsafe fn retire_vanished_child_owner(
         &mut self,
-        #[cfg(target_arch = "x86_64")] tls: crate::subproc::main_heaps::CopiedThreadHeapTls,
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] tls: crate::subproc::main_heaps::CopiedThreadHeapTls,
     ) -> Result<(), ()> {
         if !unsafe { self.permits_child_source_retirement() } { return Err(()); }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // This vanished pthread has no surviving getter stack in the
             // child. Its copied counter requests own no allocated clients;
             // child-exclusive retirement cancels those copied captures only.
             self.generic_frequency_captures = 0;
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let (fixed, thread, heap) = unsafe { self.attachment.vanished_child_source() }.map_err(|_| ())?;
             if !unsafe { tls.drain_vanished_auxiliary_theaps(fixed, thread, heap) } { return Err(()); }
@@ -8173,7 +8173,7 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => return Err(()),
         }
         self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let (fixed, _, _) = unsafe { self.attachment.vanished_child_source() }.map_err(|_| ())?;
             if !unsafe { tls.retire_vanished_auxiliary_theaps(fixed) } { return Err(()); }
@@ -8184,7 +8184,7 @@ impl NativePersistentThreadOwner {
     /// The terminal writer observes only this pinned owner's exact source
     /// capabilities. It never adopts originating-thread TLS identity.
     unsafe fn permits_terminal_transfer(&self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return false; }
         if !unsafe { self.attachment.permits_terminal_source_transfer() } { return false; }
         match &self.state {
@@ -8252,7 +8252,7 @@ impl NativePersistentThreadOwner {
         match self.with_local_allocator(|allocator| phase = Some(operation(allocator))) {
             Ok(()) => phase.expect("a completed short engine operation supplied its phase"),
             Err(error) => {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if matches!(&phase, Some(Ok(DeferredFreeAllocationPhase::FreshInitialization(_) | DeferredFreeAllocationPhase::LiveValidity(_)))) {
                     let _original_task_and_issuer = (phase, self);
                     crabc_core::process::exit_immediately(134);
@@ -8275,7 +8275,7 @@ impl NativePersistentThreadOwner {
         self.defer_after_generic_allocation_phase(phase)
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     fn begin_guarded_canonical_allocation(
         &mut self,
         selected: core::ptr::NonNull<crate::types::Theap>,
@@ -8357,7 +8357,7 @@ impl NativePersistentThreadOwner {
                 .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)?;
         }
         let phase = self.with_local_allocation_phase(|allocator| {
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             if path.is_guarded_canonical() {
                 return allocator.resume_deferred_free_guarded_canonical_checked(collection, continuation)
                     .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal);
@@ -8372,18 +8372,18 @@ impl NativePersistentThreadOwner {
         phase: DeferredFreeAllocationPhase,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
         match phase {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 Ok(NativeDeferredFreeAllocationPhase::FreshInitialization(task))
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::LiveValidity(task) => {
                 Ok(NativeDeferredFreeAllocationPhase::LiveValidity(task))
             }
             DeferredFreeAllocationPhase::Complete(block) => {
                 Ok(NativeDeferredFreeAllocationPhase::Complete(block))
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 let process = self.with_local_allocator(|allocator| allocator.allocation_process())?
                     .ok_or(NativePersistentThreadOwnerLocalAccessError::Terminal)?;
@@ -8412,7 +8412,7 @@ impl NativePersistentThreadOwner {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn resume_generic_allocation_frequency(
         &mut self,
         capture: NativeGenericFrequencyCapture,
@@ -8425,7 +8425,7 @@ impl NativePersistentThreadOwner {
         )
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn resume_generic_allocation_frequency_with_path(
         &mut self,
         _capture: NativeGenericFrequencyCapture,
@@ -8479,7 +8479,7 @@ impl NativePersistentThreadOwner {
             &mut MainHeapThreadAttachment<'static>,
         ) -> Result<crate::main_heap_thread::MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError>,
     ) -> Result<NativeOwnerExitDeferredFreePhase, ()> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return Err(()); }
         // `_mi_thread_done` invokes `_mi_theap_collect_abandon` even when the
         // attached source has not allocated a page. Materialize the existing
@@ -8589,7 +8589,7 @@ impl NativePersistentThreadOwner {
     /// root/list/TLD boundary. Returns `Ok(false)` without effect when a page
     /// engine exists; that owner keeps the ordinary collect-abandon path.
     fn finish_attachment_only_in_retained_process(&mut self) -> Result<bool, ()> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return Err(()); }
         if !matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly) {
             return Ok(false);
@@ -8599,7 +8599,7 @@ impl NativePersistentThreadOwner {
     }
 
     fn teardown_after_owner_exit_deferred_free_phase(&mut self) -> Result<(), ()> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return Err(()); }
         if matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly)
             && self.attachment.is_torn_down_after_owner_exit()
@@ -8616,7 +8616,7 @@ impl NativePersistentThreadOwner {
     /// retained engine is deliberately returned untouched, while an
     /// attachment-only continuation retries no allocator work.
     fn teardown(&mut self) -> Result<(), ()> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return Err(()); }
         let state = core::mem::replace(
             &mut self.state,
@@ -8683,7 +8683,7 @@ impl NativePersistentThreadOwner {
     /// TLD/Theap/PageMap state after the pinned process-done boundary deletes
     /// automatic thread cleanup. It neither drains nor drops the owner.
     fn permits_process_done_source_retention(&self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return false; }
         match &self.state {
             NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => {
@@ -8733,7 +8733,7 @@ impl NativePersistentThreadOwner {
             }
         }
         let engine = match pair {
-            #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+            #[cfg(any(test, feature = "native-runtime-test-audit", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
             ProcessPageBackingLease::LegacyPair(pair) => MainHeapThreadOwnerLocalPageEngine::begin(&mut self.attachment, pair),
             ProcessPageBackingLease::Process(binding) => MainHeapThreadOwnerLocalPageEngine::begin_for_process(&mut self.attachment, binding),
         }?;
@@ -8811,12 +8811,12 @@ impl NativeInitialDeferredFreeCall {
 /// owner borrow and may reenter normal initial allocation before phase C.
 #[must_use = "an initial deferred-free allocation phase must be resumed"]
 enum NativeInitialDeferredFreeAllocationPhase {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     LiveValidity(crate::single_thread::PendingLivePageValidity),
     Complete(Option<core::ptr::NonNull<u8>>),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     GenericFrequency {
         capture: NativeGenericFrequencyCapture,
         source: crate::deferred_free::DeferredFreeSource,
@@ -8836,7 +8836,7 @@ struct NativeInitialPersistentThreadOwner {
     allocator: MainStaticRuntimeFirstArenaPageAllocator,
     deferred_free_callback_generation: usize,
     deferred_free_callback_active: AtomicUsize,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     generic_frequency_captures: usize,
 }
 
@@ -8845,7 +8845,7 @@ impl NativeInitialPersistentThreadOwner {
     /// process-owned static attachment is detached separately afterward.
     unsafe fn retire_vanished_child_owner(&mut self) -> Result<(), ()> {
         if !unsafe { self.permits_child_source_retirement() } { return Err(()); }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             // Only a vanished owner enters here: no copied getter frame can
             // resume, and a counter request retains no allocation client.
@@ -8864,7 +8864,7 @@ impl NativeInitialPersistentThreadOwner {
     }
 
     fn permits_terminal_transfer(&self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return false; }
         self.deferred_free_callback_active.load(Ordering::Acquire) == 0
             && self.allocator.permits_terminal_process_retirement()
@@ -8942,7 +8942,7 @@ impl NativeInitialPersistentThreadOwner {
         self.defer_after_generic_allocation_phase(phase)
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     fn begin_guarded_canonical_allocation(
         &mut self,
         selected: core::ptr::NonNull<crate::types::Theap>,
@@ -8984,7 +8984,7 @@ impl NativeInitialPersistentThreadOwner {
             }
         }
         let phase = {
-            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
             if path.is_guarded_canonical() {
                 self.allocator.resume_deferred_free_guarded_canonical_current_initial_thread_local(
                     source, collection, continuation,
@@ -8992,7 +8992,7 @@ impl NativeInitialPersistentThreadOwner {
             } else {
                 self.allocator.resume_deferred_free_current_initial_thread_local(source, collection, continuation)?
             }
-            #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+            #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded")))]
             self.allocator.resume_deferred_free_current_initial_thread_local(source, collection, continuation)?
         };
         // The static allocator has just revalidated the original source
@@ -9012,18 +9012,18 @@ impl NativeInitialPersistentThreadOwner {
         phase: MainStaticDeferredFreeAllocationPhase,
     ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
         match phase {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             MainStaticDeferredFreeAllocationPhase::FreshInitialization(task) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task))
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             MainStaticDeferredFreeAllocationPhase::LiveValidity(task) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::LiveValidity(task))
             }
             MainStaticDeferredFreeAllocationPhase::Complete(block) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation } => {
                 let process = self.allocator.allocation_process()?;
                 self.generic_frequency_captures = self.generic_frequency_captures.checked_add(1)?;
@@ -9078,7 +9078,7 @@ impl NativeInitialPersistentThreadOwner {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn resume_generic_allocation_frequency(
         &mut self,
         _capture: NativeGenericFrequencyCapture,
@@ -9090,7 +9090,7 @@ impl NativeInitialPersistentThreadOwner {
         self.resume_generic_allocation_frequency_with_path(_capture, source, request, frequency, continuation, NativeGenericAllocationPath::Ordinary)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn resume_generic_allocation_frequency_with_path(
         &mut self,
         _capture: NativeGenericFrequencyCapture,
@@ -9181,7 +9181,7 @@ impl NativeInitialPersistentThreadOwner {
     /// of being parked or lent through the former static owner.
     #[inline]
     fn prepare_dormant_page_pair_for_later_thread(&mut self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return false; }
         self.allocator
             .prepare_dormant_page_pair_current_initial_thread_local()
@@ -9195,10 +9195,10 @@ impl NativeInitialPersistentThreadOwner {
     /// The static main Theap when the native local fast paths may use it
     /// after this operation: an active healthy engine with no selected
     /// deferred-free callback in flight.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 { return None; }
         if self.deferred_free_callback_active.load(Ordering::Acquire) != 0 {
             return None;
@@ -9215,7 +9215,7 @@ impl NativeInitialPersistentThreadOwner {
     /// home of its page engine, to collect/inspect the source state.
     #[inline]
     fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if self.generic_frequency_captures != 0 {
             // The pending getter retains this actual issuer in both fork
             // images. Inspect its source state without collecting or moving
@@ -9245,7 +9245,7 @@ struct ThreadLifecycleSlot {
     /// Exact originating source TLS addresses, published before this slot
     /// enters the pinned descriptor registry. Fork repair uses them only for
     /// a vanished worker under sole-child exclusion, never survivor TLS.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_heap_tls: Option<crate::subproc::main_heaps::CopiedThreadHeapTls>,
     state: ThreadLifecycleState,
     /// A successful admission remains claimed from child attach through the
@@ -9409,9 +9409,9 @@ unsafe fn retire_vanished_child_slot(
     let initial = unsafe { core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read() };
     let later = unsafe { core::ptr::addr_of!((*slot).native_persistent_owner_installed).read() };
     let has_attachment = unsafe { (&*core::ptr::addr_of!((*slot).attachment)).is_some() };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let source_tls = unsafe { core::ptr::addr_of!((*slot).source_heap_tls).read() };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if later || has_attachment {
         let Some(tls) = source_tls else { return false; };
         // Source regular TLS backing is released before statistics and all
@@ -9441,7 +9441,7 @@ unsafe fn retire_vanished_child_slot(
     } else if later {
         let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).native_persistent_owner)) };
         if unsafe { cell.retire_vanished_child_owner(|owner| owner.get_mut().retire_vanished_child_owner(
-            #[cfg(target_arch = "x86_64")] source_tls.unwrap(),
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] source_tls.unwrap(),
         )) }.is_err() {
             return false;
         }
@@ -9449,7 +9449,7 @@ unsafe fn retire_vanished_child_slot(
     } else {
         let attachment = unsafe { &mut *core::ptr::addr_of_mut!((*slot).attachment) };
         if let Some(owner) = attachment.as_mut() {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             {
                 let Ok((fixed, thread, heap)) = (unsafe { owner.vanished_child_source() }) else { return false; };
                 if unsafe { fixed.as_ref().page_count() } != 0 { return false; }
@@ -9474,7 +9474,7 @@ unsafe fn retire_vanished_child_slot(
 impl ThreadLifecycleSlot {
     const fn new() -> Self {
         Self {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             source_heap_tls: None,
             state: ThreadLifecycleState::Fresh,
             admission: None,
@@ -9692,9 +9692,9 @@ impl DetachedOwnerExit {
 #[thread_local]
 static THREAD_ATTACHMENT_ENTRY: NativeThreadEntryScopes = NativeThreadEntryScopes {
     attachment: Cell::new(false),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_attached_output: Cell::new(core::ptr::null()),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_attached_output_scopes: Cell::new(0),
 };
 
@@ -9705,20 +9705,20 @@ static THREAD_ATTACHMENT_ENTRY: NativeThreadEntryScopes = NativeThreadEntryScope
 // existing timer-reset span preserve every live native entry scope.
 struct NativeThreadEntryScopes {
     attachment: Cell<bool>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_attached_output: Cell<*const ()>,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_attached_output_scopes: Cell<usize>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct SourceAttachedRuntimeOutputScope {
     previous: *const (),
     previous_count: usize,
     _not_send_or_sync: core::marker::PhantomData<*mut ()>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl Drop for SourceAttachedRuntimeOutputScope {
     fn drop(&mut self) {
         THREAD_ATTACHMENT_ENTRY.source_attached_output.set(self.previous);
@@ -9730,7 +9730,7 @@ impl Drop for SourceAttachedRuntimeOutputScope {
 /// source-attached allocation callbacks. The winning factory keeps its
 /// completion, VM, PageMap and published initial owner live until return.
 /// Nested scopes restore the preceding donor in both ordinary fork images.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn with_source_attached_runtime_allocation_output<R>(
     witness: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
     operation: impl FnOnce() -> R,
@@ -9797,7 +9797,7 @@ impl NativeAllocatorTlsSpan {
 /// leave these exact bytes in place. This producer must name every live
 /// allocator TLS object exactly once; a resetter can validate the raw ranges'
 /// image membership and nonoverlap but cannot recover their object identities.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn current_native_allocator_timer_tls_spans() -> [NativeAllocatorTlsSpan; 14] {
     let [dynamic, fast, default, cached, helper] = crate::compiler_tls::native_timer_tls_spans();
     let [engine, staged] = crate::main_heap_thread::native_timer_tls_spans();
@@ -9821,7 +9821,7 @@ fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
     // identity between threads.
     unsafe {
         let pointer = core::ptr::NonNull::new_unchecked(THREAD_LIFECYCLE.get());
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let projection = core::ptr::addr_of_mut!((*pointer.as_ptr()).source_heap_tls);
             // Publish once while this thread owns its TLS, before the descriptor
@@ -9841,7 +9841,7 @@ fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
 /// # Safety
 /// `projection` names this thread's initialized, empty `source_heap_tls`
 /// field. No reference to that field spans this initialization.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[cold]
 #[inline(never)]
 unsafe fn initialize_current_thread_source_heap_tls(
@@ -9955,7 +9955,7 @@ fn current_thread_initial_persistent_owner_prepare_quiescent_for_held_fork_gate(
         FORK_GATE_HELD,
         "the pinned initial-owner fork preparation runs only under the held zero-admission gate"
     );
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     crate::local_fast_path::withdraw();
     current_thread_native_initial_persistent_owner_cell()
         .with_owner(|owner| owner.get_mut().prepare_quiescent_for_held_fork_gate())
@@ -9997,7 +9997,7 @@ fn with_pointer_associated_initial_persistent_owner<R>(
     match current_thread_native_initial_persistent_owner_cell().with_owner(|owner| {
         let owner = owner.get_mut();
         let result = operation(owner);
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         crate::local_fast_path::publish(owner.local_fast_owner());
         result
     }) {
@@ -10066,7 +10066,7 @@ fn begin_current_thread_native_initial_persistent_owner(
                 core::ptr::addr_of_mut!((*destination).deferred_free_callback_generation).write(0);
                 core::ptr::addr_of_mut!((*destination).deferred_free_callback_active)
                     .write(AtomicUsize::new(0));
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 core::ptr::addr_of_mut!((*destination).generic_frequency_captures).write(0);
             }) };
         match installed {
@@ -10186,7 +10186,7 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
 /// on the initial allocation thread, else an attached later owner), and the
 /// process-wide activity and process-done state. It is read-only and
 /// allocation-free.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
 fn native_local_fast_owner() -> Option<crate::local_fast_path::LocalFastOwner> {
     // The raw helper requires unencoded links, no trailing padding record,
@@ -10218,7 +10218,7 @@ fn native_local_fast_owner() -> Option<crate::local_fast_path::LocalFastOwner> {
 /// Audit-only: a completed local fast-path operation of a later owner is an
 /// owner-local operation on its retained engine, as the complete path's
 /// `NativePersistentThreadOwner::with_local_allocator` records it.
-#[cfg(all(target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "native-runtime-test-audit"))]
 #[inline]
 fn note_local_fast_operation() {
     if !current_thread_native_owner_presence().initial_installed {
@@ -10282,7 +10282,7 @@ fn current_native_process_page_backing() -> Option<ProcessPageBackingLease> {
     let allocation = owner.allocation().ok()?;
     match allocation.process_backing() {
         Ok(binding) => Some(binding.into()),
-        #[cfg(any(test, not(target_arch = "x86_64")))]
+        #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
         Err(ProcessMainInitError::VmPolicyUnavailable) => {
             // Explicit-config fixtures and the AArch64 architecture retain
             // their typed historical pair; native x86 has no such fallback.
@@ -10316,7 +10316,7 @@ fn current_native_process_backing_binding() -> Option<ProcessMainBackingBinding>
 /// follows pthread attach. The offered attachment is returned intact if this
 /// exact TLS cell was unexpectedly not vacant; the caller retains it and
 /// rejects the worker rather than dropping published source state.
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn install_native_attachment_only_owner(
     owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
     attachment: MainHeapThreadAttachment<'static>,
@@ -10345,7 +10345,7 @@ fn install_native_attachment_only_owner(
             core::ptr::addr_of_mut!((*destination).state),
             1,
         );
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         core::ptr::addr_of_mut!((*destination).generic_frequency_captures).write(0);
     }) };
     match installed {
@@ -10357,7 +10357,7 @@ fn install_native_attachment_only_owner(
 /// A source construction outcome at the accepted final compiler-TLS cell.
 /// A retained attachment is already fully represented in that cell; rejection
 /// leaves no payload, and cell refusal invokes no source constructor.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 enum NativeAttachmentOnlyOwnerInstallError {
     Cell(PersistentCompilerTlsOwnerError),
     Rejected(MainHeapThreadAttachmentError),
@@ -10368,7 +10368,7 @@ enum NativeAttachmentOnlyOwnerInstallError {
 /// The current-thread attachment entry and allocator operation must remain
 /// held across this call, preventing diagnostic reentry from accessing the
 /// initializing payload. No attachment is moved through the caller or result.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn install_native_attachment_only_owner(
     owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
     main_heap: MainStaticHeapLease<'static>,
@@ -10442,7 +10442,7 @@ fn begin_current_thread_native_persistent_owner(
     let owner = NativePersistentThreadOwner {
         attachment,
         state: NativePersistentThreadOwnerExitState::AttachmentOnly,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         generic_frequency_captures: 0,
     };
     let initialized = current_thread_native_persistent_owner_cell().initialize(
@@ -10650,7 +10650,7 @@ fn resume_current_thread_native_deferred_free_allocation_with_path(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn capture_current_thread_native_generic_allocation_frequency(
     capture: NativeGenericFrequencyCapture,
     request: crate::types::GenericAllocationFrequencyRequest,
@@ -10659,7 +10659,7 @@ fn capture_current_thread_native_generic_allocation_frequency(
     capture_current_thread_native_generic_allocation_frequency_with_path(capture, request, continuation, NativeGenericAllocationPath::Ordinary)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 
 fn capture_current_thread_native_generic_allocation_frequency_with_path(
     capture: NativeGenericFrequencyCapture,
@@ -10686,7 +10686,7 @@ fn capture_current_thread_native_generic_allocation_frequency_with_path(
 /// Selects the actual fixed worker issuer before any page candidate exists.
 /// Activation installs its original attachment in place; no default-cache
 /// pointer or allocation result can supply this admission.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn with_native_worker_fresh_allocation_owner<R>(
     operation: impl FnOnce(&NativeAllocationOwner<'_>) -> Result<R, NativePersistentThreadOwnerAccessError>,
 ) -> Result<R, NativePersistentThreadOwnerAccessError> {
@@ -10701,14 +10701,14 @@ fn with_native_worker_fresh_allocation_owner<R>(
 /// The original diagnostic admission acquired before an ordinary page
 /// candidate. A winning source-attached initializer remains distinct from
 /// an allocation admitted by the completed runtime.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy)]
 enum NativeFreshAllocationOwner<'owner, 'scope> {
     Ready(&'owner NativeAllocationOwner<'scope>),
     SourceAttached(&'owner crate::process_init::SourceAttachedRuntimeOutputWitness<'scope>),
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeFreshAllocationOwner<'_, '_> {
     fn selected_theap(self) -> core::ptr::NonNull<crate::types::Theap> {
         match self {
@@ -10728,7 +10728,7 @@ impl NativeFreshAllocationOwner<'_, '_> {
 /// Promotes the actual permanent initial issuer without creating a page.
 /// Startup callbacks retain the already-installed winning output scope;
 /// completed-runtime allocations acquire their own actual ready admission.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn with_native_initial_fresh_allocation_owner<R>(
     operation: impl FnOnce(NativeFreshAllocationOwner<'_, '_>) -> Result<R, NativeInitialPersistentThreadOwnerAccessError>,
 ) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
@@ -10758,7 +10758,7 @@ fn with_native_initial_fresh_allocation_owner<R>(
 /// before its candidate. Quiet preparation failure never becomes source OOM.
 /// Successful cleanup consumes that task; a refused cleanup moves its exact
 /// remaining stages to its real persistent issuer before this scope can end.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn settle_native_fresh_initialization(
     task: crate::single_thread::PendingFreshOsPageInitialization,
     original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
@@ -10861,7 +10861,7 @@ fn settle_native_fresh_initialization(
 /// Delivers a retained live Page assertion only after its original allocator
 /// projections ended. Refused output retains this exact task on its issuer;
 /// it never becomes ordinary out-of-memory or a fresh-page cleanup attempt.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn settle_native_live_page_validity(
     task: crate::single_thread::PendingLivePageValidity,
     original_owner: Option<NativeFreshAllocationOwner<'_, '_>>, initial: bool,
@@ -10925,12 +10925,12 @@ fn run_current_thread_native_deferred_free_allocation(
     request: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     return with_native_worker_fresh_allocation_owner(|owner| {
     let phase = begin_current_thread_native_deferred_free_allocation(request, zero)?;
     run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(NativeFreshAllocationOwner::Ready(owner)))
     });
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
     let phase = begin_current_thread_native_deferred_free_allocation(request, zero)?;
     run_current_thread_native_deferred_free_phase(phase)
@@ -10947,25 +10947,25 @@ fn run_current_thread_native_deferred_free_phase_with_path(
     phase: NativeDeferredFreeAllocationPhase,
     path: NativeGenericAllocationPath,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
-    run_current_thread_native_deferred_free_phase_with_owner(phase, path, #[cfg(target_arch = "x86_64")] None)
+    run_current_thread_native_deferred_free_phase_with_owner(phase, path, #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] None)
 }
 
 fn run_current_thread_native_deferred_free_phase_with_owner(
     mut phase: NativeDeferredFreeAllocationPhase,
     path: NativeGenericAllocationPath,
-    #[cfg(target_arch = "x86_64")] original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
     let mut forced = None;
     loop {
         phase = match phase {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             NativeDeferredFreeAllocationPhase::FreshInitialization(task) => {
                 {
                     settle_native_fresh_initialization(task, original_owner, false);
                     return Err(NativePersistentThreadOwnerAccessError::Retained);
                 }
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             NativeDeferredFreeAllocationPhase::LiveValidity(task) => {
                 {
                     settle_native_live_page_validity(task, original_owner, false);
@@ -10976,7 +10976,7 @@ fn run_current_thread_native_deferred_free_phase_with_owner(
                 if !path.is_guarded_canonical() { report_generic_allocation_failure(forced, block.is_none()); }
                 return Ok(block);
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
                 capture_current_thread_native_generic_allocation_frequency_with_path(capture, request, continuation, path)?
             }
@@ -11074,7 +11074,7 @@ fn run_current_thread_native_deferred_free_aligned_allocation(
     offset: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     return with_native_worker_fresh_allocation_owner(|owner| {
     let phase = begin_current_thread_native_deferred_free_aligned_allocation(
         request,
@@ -11084,7 +11084,7 @@ fn run_current_thread_native_deferred_free_aligned_allocation(
     )?;
     run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(NativeFreshAllocationOwner::Ready(owner)))
     });
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
     let phase = begin_current_thread_native_deferred_free_aligned_allocation(
         request,
@@ -11132,12 +11132,12 @@ fn native_initial_deferred_free_phase_result(
     >,
 ) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
     match projection {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         Ok((Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task)), true)) => {
             let _original_task = task;
             crabc_core::process::exit_immediately(134);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         Ok((Some(NativeInitialDeferredFreeAllocationPhase::LiveValidity(task)), true)) => {
             let _original_task = task;
             crabc_core::process::exit_immediately(134);
@@ -11180,12 +11180,12 @@ fn resume_current_thread_native_initial_deferred_free_allocation_with_path(
             owner.is_retained(),
         )
     }) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         Ok((Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task)), true)) => {
             let _original_task = task;
             crabc_core::process::exit_immediately(134);
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         Ok((Some(NativeInitialDeferredFreeAllocationPhase::LiveValidity(task)), true)) => {
             let _original_task = task;
             crabc_core::process::exit_immediately(134);
@@ -11206,7 +11206,7 @@ fn run_current_thread_native_initial_deferred_free_aligned_allocation(
     offset: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     return with_native_initial_fresh_allocation_owner(|owner| {
     let phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
         request,
@@ -11216,7 +11216,7 @@ fn run_current_thread_native_initial_deferred_free_aligned_allocation(
     )?;
     run_current_thread_native_initial_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(owner))
     });
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
     let phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
         request,
@@ -11233,19 +11233,19 @@ fn run_current_thread_native_initial_deferred_free_allocation(
     request: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     return with_native_initial_fresh_allocation_owner(|owner| {
     let phase = begin_current_thread_native_initial_deferred_free_allocation(request, zero)?;
     run_current_thread_native_initial_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(owner))
     });
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
     let phase = begin_current_thread_native_initial_deferred_free_allocation(request, zero)?;
     run_current_thread_native_initial_deferred_free_phase(phase)
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn capture_current_thread_native_initial_generic_allocation_frequency(
     capture: NativeGenericFrequencyCapture,
     source: crate::deferred_free::DeferredFreeSource,
@@ -11255,7 +11255,7 @@ fn capture_current_thread_native_initial_generic_allocation_frequency(
     capture_current_thread_native_initial_generic_allocation_frequency_with_path(capture, source, request, continuation, NativeGenericAllocationPath::Ordinary)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 
 fn capture_current_thread_native_initial_generic_allocation_frequency_with_path(
     capture: NativeGenericFrequencyCapture,
@@ -11286,25 +11286,25 @@ fn run_current_thread_native_initial_deferred_free_phase_with_path(
     phase: NativeInitialDeferredFreeAllocationPhase,
     path: NativeGenericAllocationPath,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
-    run_current_thread_native_initial_deferred_free_phase_with_owner(phase, path, #[cfg(target_arch = "x86_64")] None)
+    run_current_thread_native_initial_deferred_free_phase_with_owner(phase, path, #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] None)
 }
 
 fn run_current_thread_native_initial_deferred_free_phase_with_owner(
     mut phase: NativeInitialDeferredFreeAllocationPhase,
     path: NativeGenericAllocationPath,
-    #[cfg(target_arch = "x86_64")] original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
     let mut forced = None;
     loop {
         phase = match phase {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task) => {
                 {
                     settle_native_fresh_initialization(task, original_owner, true);
                     return Err(NativeInitialPersistentThreadOwnerAccessError::Retained);
                 }
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             NativeInitialDeferredFreeAllocationPhase::LiveValidity(task) => {
                 {
                     settle_native_live_page_validity(task, original_owner, true);
@@ -11315,7 +11315,7 @@ fn run_current_thread_native_initial_deferred_free_phase_with_owner(
                 if !path.is_guarded_canonical() { report_generic_allocation_failure(forced, block.is_none()); }
                 return Ok(block);
             }
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             NativeInitialDeferredFreeAllocationPhase::GenericFrequency { capture, source, request, continuation } => {
                 capture_current_thread_native_initial_generic_allocation_frequency_with_path(capture, source, request, continuation, path)?
             }
@@ -11419,7 +11419,7 @@ fn with_current_thread_native_persistent_pointer<R>(
 /// startup may already have observed.
 #[doc(hidden)]
 #[inline]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn publish_native_process_startup_facts(facts: NativeProcessStartupFacts) -> bool {
     ProcessStartupFactsCell::global().publish(facts)
 }
@@ -11438,14 +11438,14 @@ pub fn publish_native_process_startup_facts(facts: NativeProcessStartupFacts) ->
 /// that C backend.
 #[doc(hidden)]
 #[inline]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn initialize_process() -> bool {
     start_process(ProcessStartEntry::RuntimeStartup)
 }
 
 /// Enters the one source process start from either pinned entry. Neither
 /// allocates or registers anything before the published facts are visible.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn start_process(entry: ProcessStartEntry) -> bool {
     let Some(facts) = ProcessStartupFactsCell::global().published() else { return false; };
     if !admission::register_initial_descriptor() { return false; }
@@ -11457,7 +11457,7 @@ fn start_process(entry: ProcessStartEntry) -> bool {
 ///
 /// The fixture process's own C `environ` stands in for the embedding
 /// runtime's environment owner; the production engine never names it.
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi::c_char {
     unsafe extern "C" {
         static mut environ: *mut *mut core::ffi::c_char;
@@ -11470,14 +11470,14 @@ pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi:
 /// Borrows an immutable retained image of the isolated interpreter's current
 /// environment. The source startup and lazy option readers use the same C
 /// vector contract while native fixtures continue to read their live environ.
-#[cfg(all(test, target_arch = "x86_64", miri))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), miri))]
 pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi::c_char {
     crate::test_process::miri_process_environment()
 }
 
 /// Publishes host-process startup facts and performs explicit startup, the
 /// fixture equivalent of the selected libc bridge.
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub(crate) fn test_initialize_process_from_host_environment(
     page_size_bytes: usize,
     stderr_output: RuntimeStderrOutput,
@@ -11509,7 +11509,7 @@ pub(crate) fn test_initialize_process_from_host_environment(
 /// explicit one.
 /// Inlining keeps the registered entry in the allocation caller's frame;
 /// the unregistered first-allocation branch still runs the same once body.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
 fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
     match admission::NativeAllocatorOperationGuard::enter() {
@@ -11524,7 +11524,7 @@ fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOpera
 /// An unregistered allocation may initialize only a still-cold process.
 /// Keep the once body and its second admission attempt outside registered
 /// allocation dispatch, retaining their original startup ordering.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[cold]
 #[inline(never)]
 fn enter_native_first_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
@@ -11539,7 +11539,7 @@ fn enter_native_first_allocation_operation() -> Option<admission::NativeAllocato
     admission::NativeAllocatorOperationGuard::enter().ok()
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any())]
 pub fn initialize_process(page_size_bytes: usize) -> bool {
     RUNTIME_PROCESS.initialize(page_size_bytes)
 }
@@ -11548,7 +11548,7 @@ pub fn initialize_process(page_size_bytes: usize) -> bool {
 #[doc(hidden)]
 #[inline]
 pub fn process_is_active() -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if admission::native_source_entry_is_terminal() { return false; }
     // A process without a page map still runs each new thread through its
     // (deferred) attachment, whose allocations then fail as C's do.
@@ -11567,7 +11567,7 @@ pub fn process_is_active() -> bool {
 /// outside this bounded selected-native slice.
 #[doc(hidden)]
 pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedProcessDoneResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return SelectedProcessDoneResult::Retained;
     };
@@ -11614,7 +11614,7 @@ pub fn finish_selected_default_release_process_after_user_atexit() -> SelectedPr
 #[doc(hidden)]
 #[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub fn ticket_zero_allocate(request: usize, zero: bool) -> TicketZeroPageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return TicketZeroPageAllocationResult::Unavailable;
     };
@@ -11645,7 +11645,7 @@ pub fn ticket_zero_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> TicketZeroPageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return TicketZeroPageAllocationResult::Unavailable;
     };
@@ -11822,7 +11822,7 @@ pub unsafe fn ticket_zero_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
 ) -> TicketZeroPageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return TicketZeroPageAllocationResult::Retained;
     };
@@ -11862,7 +11862,7 @@ pub unsafe fn ticket_zero_reallocate(
 #[doc(hidden)]
 #[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageFreeResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return TicketZeroPageFreeResult::Retained;
     };
@@ -11920,7 +11920,7 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
 #[doc(hidden)]
 #[cfg(any(test, feature = "native-runtime-test-audit"))]
 pub unsafe fn ticket_zero_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -12016,16 +12016,16 @@ fn native_initial_thread_allocate(
 fn native_initial_thread_free_pointer_first(
     block: core::ptr::NonNull<u8>,
 ) -> NativePageFreeResult {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     { return with_native_initial_fresh_allocation_owner(|original| Ok(native_initial_thread_free_pointer_first_in_owner(block, original)))
         .unwrap_or(NativePageFreeResult::Retained); }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     native_initial_thread_free_pointer_first_in_owner(block)
 }
 
 fn native_initial_thread_free_pointer_first_in_owner(
     block: core::ptr::NonNull<u8>,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] original: NativeFreshAllocationOwner<'_, '_>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] original: NativeFreshAllocationOwner<'_, '_>,
 ) -> NativePageFreeResult {
     let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
         // SAFETY: the caller's one PageMap observation associated this exact
@@ -12033,14 +12033,14 @@ fn native_initial_thread_free_pointer_first_in_owner(
         // source operation.
         let free = unsafe { owner.free(block) };
         (free, owner.is_retained(),
-            #[cfg(target_arch = "x86_64")] owner.allocator.take_live_page_validity_current_initial_thread_local())
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] owner.allocator.take_live_page_validity_current_initial_thread_local())
     });
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     let result = result.map(|(free, retained, task)| {
         if let Some(task) = task { settle_native_live_page_validity(task, Some(original), true); }
         (free, retained)
     });
-    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(feature = "mi-debug-3")))]
     let result = result.map(|(free, retained, _)| (free, retained));
     match result {
         Ok((Ok(()), false)) => NativePageFreeResult::Freed,
@@ -12072,30 +12072,30 @@ fn native_initial_thread_free_pointer_first_in_owner(
 fn native_initial_thread_free_pointer_first_associated(
     block: core::ptr::NonNull<u8>,
 ) -> NativePageFreeResult {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     { return with_native_initial_fresh_allocation_owner(|original| Ok(native_initial_thread_free_pointer_first_associated_in_owner(block, original)))
         .unwrap_or(NativePageFreeResult::Retained); }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     native_initial_thread_free_pointer_first_associated_in_owner(block)
 }
 
 fn native_initial_thread_free_pointer_first_associated_in_owner(
     block: core::ptr::NonNull<u8>,
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] original: NativeFreshAllocationOwner<'_, '_>,
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))] original: NativeFreshAllocationOwner<'_, '_>,
 ) -> NativePageFreeResult {
     let result = with_pointer_associated_initial_persistent_owner(|owner| {
         // SAFETY: the caller's PageMap observation associated this exact
         // live allocation with the current initial source owner.
         let free = unsafe { owner.free(block) };
         (free, owner.is_retained(),
-            #[cfg(target_arch = "x86_64")] owner.allocator.take_live_page_validity_current_initial_thread_local())
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] owner.allocator.take_live_page_validity_current_initial_thread_local())
     });
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     let result = result.map(|(free, retained, task)| {
         if let Some(task) = task { settle_native_live_page_validity(task, Some(original), true); }
         (free, retained)
     });
-    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(feature = "mi-debug-3")))]
     let result = result.map(|(free, retained, _)| (free, retained));
     match result {
         Ok((Ok(()), false)) => NativePageFreeResult::Freed,
@@ -12144,7 +12144,7 @@ pub fn prepare_native_initial_thread_owner() -> bool {
     if RUNTIME_PROCESS.page_map_unavailable() {
         return true;
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -12169,7 +12169,7 @@ pub fn prepare_native_later_thread_arena() -> bool {
     if RUNTIME_PROCESS.page_map_unavailable() {
         return true;
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -12185,7 +12185,7 @@ pub fn prepare_native_later_thread_arena() -> bool {
 /// as they exclude the allocation entry points. Hold it for the whole
 /// operation on the current thread.
 pub(crate) struct NativeSubprocessOperation {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     _operation: admission::NativeAllocatorOperationGuard,
 }
 
@@ -12193,7 +12193,7 @@ impl NativeSubprocessOperation {
     /// `None` when admission is closed or the thread is unregistered.
     pub(crate) fn enter() -> Option<Self> {
         Some(Self {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             _operation: admission::NativeAllocatorOperationGuard::enter().ok()?,
         })
     }
@@ -12211,7 +12211,7 @@ impl NativeSubprocessOperation {
     /// may span this call: protection warnings and padding reports can invoke
     /// application callbacks. Those callbacks cannot free this in-flight client
     /// or tear down its Heap/member. Neither outcome consumes the client.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn prepare_client_for_free(
         &self,
         block: core::ptr::NonNull<u8>,
@@ -12223,7 +12223,7 @@ impl NativeSubprocessOperation {
 }
 
 /// A source free ingress refusal before any client publication or consumption.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeFreePreparationError {
     /// Padding marking and payload filling have not completed. Guard-page
@@ -12388,7 +12388,7 @@ pub fn native_process_info() -> crate::diagnostic_output::SourceProcessInfo {
 /// Facts the statistics printers read from the started process: the output
 /// owner, the main subprocess sequence, and `_mi_os_numa_node_count`.
 fn statistics_print_facts() -> Option<(Option<&'static crate::diagnostic_output::OutputOwner>, usize, usize)> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -12684,7 +12684,7 @@ pub unsafe fn native_thread_stats_print_out(
 ) {
     let Some((owner, _, nodes)) = statistics_print_facts() else { return; };
     let theap = {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
         // SAFETY: the calling thread's own root, with no owner projection
         // live at this API entry.
@@ -12699,7 +12699,7 @@ pub unsafe fn native_thread_stats_print_out(
             b"heap", sequence, statistics, info, nodes,
         )
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     merge_current_thread_theap_statistics();
 }
@@ -12709,7 +12709,7 @@ pub unsafe fn native_thread_stats_print_out(
 /// and the main Heap into its owning subprocess.
 #[doc(hidden)]
 pub fn native_stats_reset() {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     // SAFETY: the calling thread's own root; no projection is live.
     if unsafe { crate::types::Theap::final_statistics_at(crate::compiler_tls::default_theap()) }.is_none()
@@ -12763,7 +12763,7 @@ fn merge_current_thread_theap_statistics() {
 /// owner exactly as the allocation phases do.
 #[doc(hidden)]
 pub fn native_collect(force: bool) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     if current_thread_has_active_native_initial_persistent_owner()
         || (!current_thread_has_native_persistent_owner()
@@ -12775,13 +12775,13 @@ pub fn native_collect(force: bool) {
             });
             native_initial_deferred_free_phase_result(projection)
         };
-        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
         let result = with_native_initial_fresh_allocation_owner(|owner| {
             let phase = begin()?;
             run_current_thread_native_initial_deferred_free_phase_with_owner(
                 phase, NativeGenericAllocationPath::Ordinary, Some(owner))
         });
-        #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+        #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
         let result = begin().and_then(run_current_thread_native_initial_deferred_free_phase);
         if matches!(result, Err(NativeInitialPersistentThreadOwnerAccessError::Retained)) {
             RUNTIME_PROCESS.retain_page_owner();
@@ -12801,13 +12801,13 @@ pub fn native_collect(force: bool) {
             Err(error) => Err(error),
         }
     };
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     let _ = with_native_worker_fresh_allocation_owner(|owner| {
         let Some(phase) = begin()? else { return Ok(None); };
         run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary,
             Some(NativeFreshAllocationOwner::Ready(owner)))
     });
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     if let Ok(Some(phase)) = begin() { let _ = run_current_thread_native_deferred_free_phase(phase); }
 }
 
@@ -12834,7 +12834,7 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
     // An empty source Theap rejects an invalid aligned request before thread
     // or process initialization. Its address grants no initialized projection;
     // the existing error authority can report with no allocator borrow held.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if let NativeAllocationShape::Aligned { alignment, offset } = shape {
         if crate::compiler_tls::default_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr() {
             if let Some(report) = SourceErrorReport::aligned_precheck(request, alignment, offset) {
@@ -12846,10 +12846,10 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
     // Admission can initialize the calling thread's Theap. Preserve the
     // immutable empty image's rate-zero decision using only its address;
     // initialized sampler fields remain inside the admitted operation.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     let entered_with_empty_sampler = SAMPLE_GUARDED
         && crate::compiler_tls::default_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr();
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Some(_operation) = enter_native_allocation_operation() else {
         return NativePageAllocationResult::Unavailable;
     };
@@ -12859,7 +12859,7 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
     // its overflow and class checks precede any page mutation. This branch
     // may therefore precede the aligned precheck below. Ordinary requests
     // may use regular queue heads too.
-    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(feature = "mi-debug-1")))]
     if let Some(owner) = native_local_fast_owner() {
         let alignment = match shape {
             NativeAllocationShape::Ordinary => Some(None),
@@ -12889,7 +12889,7 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
             }
         }
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     if entered_with_empty_sampler {
         return native_allocate_shaped_slow::<false>(request, shape, zero);
     }
@@ -12905,7 +12905,7 @@ fn native_allocate_shaped_slow<const SAMPLE_GUARDED: bool>(
     shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     {
         if SAMPLE_GUARDED {
             let aligned = match shape {
@@ -12935,7 +12935,7 @@ fn native_allocate_shaped_slow<const SAMPLE_GUARDED: bool>(
             }
         }
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     let request = if request == 0 && matches!(shape, NativeAllocationShape::Ordinary) {
         crate::config::WORD_SIZE
     } else { request };
@@ -12953,7 +12953,7 @@ fn native_allocate_shaped_slow<const SAMPLE_GUARDED: bool>(
         }
     }
     // No owner, and so no local fast Theap, exists without a page map.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if RUNTIME_PROCESS.page_map_unavailable() {
         return allocate_without_page_map(request, shape);
     }
@@ -13194,7 +13194,7 @@ fn native_reallocate_pointer_first_local(
         core::ptr::copy_nonoverlapping(block.as_ptr(), replacement.as_ptr(), copy_size);
     }
     drop(old);
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if crate::config::GUARDED {
         // Source realloc frees only after the replacement and prefix copy
         // succeed. All old-source projections ended before tail removal can
@@ -13224,7 +13224,7 @@ fn native_reallocate_pointer_first_local(
                 RUNTIME_PROCESS.retain_page_owner();
                 NativePageAllocationResult::Retained
             }
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             NativePageFreeResult::RejectedCorruption => {
                 native_reallocate_release_unpublished_replacement(replacement);
                 NativePageAllocationResult::Retained
@@ -13317,7 +13317,7 @@ fn native_reallocate_initialize_replacement(
 /// must not describe this fallback as a successful cleanup or return the
 /// replacement while the old source remains live.
 fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::NonNull<u8>) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if crate::config::GUARDED {
         // SAFETY: this exclusively held unpublished replacement remains a
         // live client. Its ordinary free includes any sampled tail removal
@@ -13425,9 +13425,9 @@ fn native_reallocate_pointer_first_nonlocal(
     // decides local versus nonlocal, because the source page may have been
     // reclaimed by this caller while the replacement was allocated.
     let source = source.into_live_allocation();
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let guarded_free = crate::config::GUARDED;
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let guarded_free = false;
     let released = if guarded_free {
         drop(source);
@@ -13471,7 +13471,7 @@ fn native_reallocate_pointer_first_nonlocal(
             RUNTIME_PROCESS.retain_page_owner();
             NativePageAllocationResult::Retained
         }
-        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
         NativePageFreeResult::RejectedCorruption => {
             native_reallocate_release_unpublished_replacement(replacement);
             NativePageAllocationResult::Retained
@@ -13502,7 +13502,7 @@ pub unsafe fn native_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
 ) -> NativePageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
@@ -13524,7 +13524,7 @@ pub unsafe fn native_reallocate_zeroed(
     block: Option<core::ptr::NonNull<u8>>,
     new_size: usize,
 ) -> NativePageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
@@ -13552,7 +13552,7 @@ pub unsafe fn native_reallocate_aligned(
     new_size: usize,
     alignment: usize,
 ) -> NativePageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
@@ -13584,7 +13584,7 @@ pub unsafe fn native_reallocate_aligned_zeroed(
     new_size: usize,
     alignment: usize,
 ) -> NativePageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
@@ -13617,7 +13617,7 @@ pub unsafe fn native_reallocate_source(
     new_size: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
@@ -13642,7 +13642,7 @@ pub unsafe fn native_reallocate_aligned_at(
     offset: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
@@ -13662,7 +13662,7 @@ pub unsafe fn native_reallocate_aligned_at(
 /// allocation that may be the process's first. That arm takes no outer guard;
 /// its nested [`native_allocate_aligned`] enters through the same lazy
 /// first-allocation boundary as any other allocation.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn enter_native_reallocation_operation(
     block: Option<core::ptr::NonNull<u8>>,
 ) -> Result<Option<admission::NativeAllocatorOperationGuard>, admission::NativeAllocatorEntryError> {
@@ -13736,7 +13736,7 @@ unsafe fn native_reallocate_inner(
     // SAFETY: forwarded from this boundary's exact-live native-client
     // contract. The returned observation remains live through one local or
     // nonlocal source operation below.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let allocation = {
         // Keep the pointer facts at their use site: fitting reuse needs only
         // immutable geometry and must not transport a full intermediate result.
@@ -13755,7 +13755,7 @@ unsafe fn native_reallocate_inner(
             }
         }
     };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let allocation = match unsafe { native_live_allocation_for_pointer_reallocation(block) } {
         Ok(allocation) => allocation,
         Err(result) => return result,
@@ -13840,11 +13840,11 @@ unsafe fn native_reallocate_inner(
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return NativePageFreeResult::Retained;
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     // SAFETY: the admission above retains this exact live client; no owner
     // or metadata projection exists through the source warning/report phase.
     if let Err(error) = unsafe { prepare_native_live_client_for_free(block) } {
@@ -13854,7 +13854,7 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             NativeFreePreparationError::PaddingRejected => NativePageFreeResult::RejectedCorruption,
         };
     }
-    #[cfg(all(not(target_arch = "x86_64"), feature = "mi-debug-1"))]
+    #[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), feature = "mi-debug-1"))]
     {
         // SAFETY: forwarded exact live-client requirement. The check has no
         // owner projection and ends before error callbacks may reenter.
@@ -13867,9 +13867,9 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             Err(None) => return NativePageFreeResult::Retained,
         }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let mut captured_page = None;
-    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(feature = "mi-debug-1")))]
     if let Some(owner) = native_local_fast_owner().filter(|owner| {
         // The fast path charges its page owner. Optional free statistics use
         // the caller's default Theap, so a distinct default takes the engine
@@ -13903,9 +13903,9 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         }
     }
     // SAFETY: forwarded exact-live-allocation contract.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     { unsafe { native_free_pointer_first(block, captured_page) } }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     { unsafe { native_free_pointer_first(block) } }
 }
 
@@ -13916,7 +13916,7 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
 /// The caller holds native operation admission and retains this exact live
 /// client, Page and Heap/member. No owner or metadata projection spans warning
 /// or error callbacks, which cannot free this client or tear down its owner.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
 unsafe fn prepare_native_live_client_for_free(
     block: core::ptr::NonNull<u8>,
@@ -13950,7 +13950,7 @@ unsafe fn prepare_native_live_client_for_free(
 ///
 /// `block` must be an exact live native allocation whose PageMap registration
 /// and page key remain stable through this operation.
-#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+#[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
 unsafe fn check_source_native_free_padding(
     block: core::ptr::NonNull<u8>,
 ) -> Result<(), Option<SourceErrorReport>> {
@@ -14036,7 +14036,7 @@ unsafe fn check_source_native_free_padding(
 #[inline(never)]
 unsafe fn native_free_pointer_first(
     block: core::ptr::NonNull<u8>,
-    #[cfg(target_arch = "x86_64")] captured_page: Option<core::ptr::NonNull<crate::types::Page>>,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] captured_page: Option<core::ptr::NonNull<crate::types::Page>>,
 ) -> NativePageFreeResult {
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         // The pointer contract could not obtain its one process-published
@@ -14049,11 +14049,11 @@ unsafe fn native_free_pointer_first(
     // Its source lifetime keeps the selected registration and page metadata
     // stable until one branch below consumes the observation. The lookup
     // takes no PageMap lifecycle lease.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     // SAFETY: a supplied page is the retained same-map selection from an
     // unchanged fast refusal; absent capture uses the selected lookup mode.
     let lookup = unsafe { page_map.lookup_native_live_allocation_with_captured_page(block, captured_page) };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let lookup = unsafe { page_map.lookup_live_allocation(block) };
     let allocation = match lookup {
         Ok(Some(allocation)) => allocation,
@@ -14227,7 +14227,7 @@ fn native_free_pointer_first_local(
     // the held pointer-first observation through that owner rather than
     // reopening PageMap inside `allocator.free`.
     let mut held_allocation = Some(allocation);
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     return with_native_worker_fresh_allocation_owner(|owner| {
         let mut task = None;
         let result = with_current_thread_native_persistent_allocator(false, |allocator| {
@@ -14245,7 +14245,7 @@ fn native_free_pointer_first_local(
             _ => NativePageFreeResult::Retained,
         })
     }).unwrap_or(NativePageFreeResult::Retained);
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     let result = with_current_thread_native_persistent_allocator(false, |allocator| {
         let allocation = held_allocation
             .take()
@@ -14257,9 +14257,9 @@ fn native_free_pointer_first_local(
     });
     // An owner access error leaves the held observation unconsumed. Dropping
     // it releases only the read guard; it never changes source page state.
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     drop(held_allocation);
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     match result {
         Ok(Ok(())) => NativePageFreeResult::Freed,
         Ok(Err(_)) | Err(_) => {
@@ -14435,7 +14435,7 @@ fn native_free_pointer_first_nonlocal(
 fn native_free_reclaim_on_free_into_current_thread(
     candidate: crate::single_thread::ProcessReclaimOnFreeCandidate<'_>,
 ) -> crate::abandoned::ReclaimOnFreeOutcome {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         use crate::abandoned::ReclaimOnFreeOutcome::Declined;
         let initial = RUNTIME_PROCESS.is_on_initial_allocation_thread();
@@ -14465,7 +14465,7 @@ fn native_free_reclaim_on_free_into_current_thread(
             else { with_native_worker_fresh_allocation_owner(|owner|
                 Ok(operation(NativeFreshAllocationOwner::Ready(owner)))).unwrap_or(Declined) };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     native_free_reclaim_on_free_without_validity(candidate)
 }
 
@@ -14477,7 +14477,7 @@ fn native_free_reclaim_on_free_without_validity(
         if !current_thread_native_owner_presence().initial_installed {
             return ReclaimOnFreeOutcome::Declined;
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         crate::local_fast_path::withdraw();
         return current_thread_native_initial_persistent_owner_cell()
             .with_owner(|owner| {
@@ -14518,20 +14518,20 @@ fn native_free_claimed_tail_process_page_facts(
 /// Refuses a selected allocation before any candidate client is created.
 /// Unavailable process admission differs from an invalid selected owner;
 /// neither outcome grants a fallback allocator or VM authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeAllocationOwnerAdmissionError {
     Unavailable,
     Invalid,
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
 static NATIVE_ALLOCATION_OWNER_BUSY_RETRIES: AtomicUsize = AtomicUsize::new(0);
 
 /// A borrowed selected allocation context within actual process admission.
 /// The enclosing callback retains the process-ready witness and, for a child,
 /// its registered record lease. This view cannot replace either lifetime.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct NativeAllocationOwner<'scope> {
     selected_theap: core::ptr::NonNull<crate::types::Theap>,
     heap: core::ptr::NonNull<crate::types::Heap>,
@@ -14540,7 +14540,7 @@ pub(crate) struct NativeAllocationOwner<'scope> {
     _ready: &'scope crate::process_init::ProcessMainReadyLease,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeAllocationOwner<'_> {
     pub(crate) fn selected_theap(&self) -> core::ptr::NonNull<crate::types::Theap> {
         self.selected_theap
@@ -14607,7 +14607,7 @@ impl NativeAllocationOwner<'_> {
 /// must not delete its selected Heap, finish its member, or consume a client
 /// whose lifetime supplies an ongoing protection or allocation operation.
 /// Ordinary nested allocation is permitted after metadata projections end.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn with_native_allocation_owner<R>(
     selected_theap: core::ptr::NonNull<crate::types::Theap>,
     callback: impl for<'scope> FnOnce(NativeAllocationOwner<'scope>) -> R,
@@ -14669,7 +14669,7 @@ pub(crate) unsafe fn with_native_allocation_owner<R>(
 /// delete that Heap, finish that member, or consume an in-flight client whose
 /// lifetime supplies the operation's span. Nested ordinary allocation is
 /// permitted.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn with_native_heap_callback_owner<R>(
     heap: core::ptr::NonNull<crate::types::Heap>,
     callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
@@ -14697,7 +14697,7 @@ pub(crate) unsafe fn with_native_heap_callback_owner<R>(
 /// Page and owner remain live through this operation; no engine or metadata
 /// projections are held. Warning callbacks cannot consume this in-flight
 /// client or tear down its selected Heap/member.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()> {
     let _operation = NativeSubprocessOperation::enter()?;
     let map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
@@ -14736,7 +14736,7 @@ unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()
 /// this synchronous call, with no overlapping owner or metadata projection.
 /// On Consumed the client must never be accessed or retried, including errors;
 /// RefusedBeforeConsumption leaves its ownership with the caller.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn native_free_local_metadata_with_progress(
     selected: core::ptr::NonNull<crate::types::Theap>,
     allocation: LiveAllocationPointer,
@@ -14775,7 +14775,7 @@ pub(crate) unsafe fn native_free_local_metadata_with_progress(
 /// Copied geometry of one canonical live block, paired with a process view
 /// whose actual owner remains admitted for the complete synchronous callback.
 /// These facts grant no client release or metadata mutation authority.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) struct GuardedLiveBlockFacts<'scope> {
     pub(crate) canonical: core::ptr::NonNull<u8>,
     pub(crate) block_size: usize,
@@ -14787,7 +14787,7 @@ pub(crate) struct GuardedLiveBlockFacts<'scope> {
 /// Outcome of the selected canonical allocator domain before placement.
 /// Only a completed source allocation with no client represents source OOM;
 /// routing and admission refusal carry no client or release obligation.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum NativeGuardedCanonicalAllocationProgress {
     OtherDomain,
@@ -14798,7 +14798,7 @@ pub(crate) enum NativeGuardedCanonicalAllocationProgress {
 /// A sampled guarded operation after its original canonical obligation was
 /// transferred to a placed client or successfully consumed by local cleanup.
 /// Admission refusal and short source geometry do not request OOM output.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum NativeGuardedAllocationOutcome {
     Placed { client: core::ptr::NonNull<u8>, usable_size: usize },
@@ -14809,7 +14809,7 @@ pub(crate) enum NativeGuardedAllocationOutcome {
 
 /// Allocates a canonical extent using only the originally admitted selected
 /// Theap. Domain refusal is never converted to source exhaustion.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 unsafe fn native_guarded_canonical_allocate_selected(
     owner: &NativeAllocationOwner<'_>,
     source_size: usize,
@@ -14859,7 +14859,7 @@ unsafe fn native_guarded_canonical_allocate_selected(
 /// Facts identify the client; the enclosing original owner supplies lifetime
 /// and release authority. A consumed result is final even if backing release
 /// or session publication later fails.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 unsafe fn native_guarded_canonical_cleanup(
     candidate: NativeGuardedCanonical<'_, '_>,
 ) -> NativeGuardedAllocationOutcome {
@@ -14947,7 +14947,7 @@ unsafe fn native_guarded_canonical_cleanup(
 /// No engine or metadata projection or lock survives entry or placement. The
 /// placement callback must retain the original token, never consume its client,
 /// and only return Placed after tag, protection and client geometry are complete.
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 pub(crate) unsafe fn native_guarded_allocate_in_owner<'owner, 'scope>(
     owner: &'owner NativeAllocationOwner<'scope>,
     source_size: usize,
@@ -14987,7 +14987,7 @@ pub(crate) unsafe fn native_guarded_allocate_in_owner<'owner, 'scope>(
 /// The original completed engine return retained inside one admitted scope.
 /// Only its actual issuing engine can supply the client ownership obligation;
 /// neither a map lookup nor copied geometry can create this value's rights.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 struct NativeGuardedOwnedEngineReturn<'owner, 'scope> {
     owner: &'owner NativeAllocationOwner<'scope>,
     block: core::ptr::NonNull<u8>,
@@ -14996,13 +14996,13 @@ struct NativeGuardedOwnedEngineReturn<'owner, 'scope> {
 /// An original canonical engine client validated against its admitted issuer.
 /// This non-copy token retains the original client obligation, not a release
 /// reconstructed from numeric facts. It has no automatic free or retry path.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use = "the original client must be transferred or consumed under its actual owner"]
 pub(crate) struct NativeGuardedCanonical<'owner, 'scope> {
     original: NativeGuardedOwnedEngineReturn<'owner, 'scope>,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeGuardedCanonical<'_, '_> {
     /// Transfers the original live canonical engine client obligation.
     /// A consuming free has a separate discharge transition.
@@ -15020,7 +15020,7 @@ impl NativeGuardedCanonical<'_, '_> {
 
 /// An internal original-client invariant, distinct from valid source geometry
 /// refusal, VM protection failure, completed OOM or process admission failure.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeGuardedCanonicalFactsInvariant {
     DifferentOwnerScope,
@@ -15031,14 +15031,14 @@ pub(crate) enum NativeGuardedCanonicalFactsInvariant {
 
 /// Retains the original engine client and its actual admitted context after
 /// an internal facts refusal. This is terminal custody, not a retry/free claim.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[must_use = "retain the original client and owner through internal terminal handling"]
 pub(crate) struct NativeGuardedCanonicalFactsFailure<'owner, 'scope> {
     original: NativeGuardedOwnedEngineReturn<'owner, 'scope>,
     invariant: NativeGuardedCanonicalFactsInvariant,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl NativeGuardedCanonicalFactsFailure<'_, '_> {
     pub(crate) fn owner(&self) -> &NativeAllocationOwner<'_> { self.original.owner }
     pub(crate) fn invariant(&self) -> NativeGuardedCanonicalFactsInvariant { self.invariant }
@@ -15068,7 +15068,7 @@ impl NativeGuardedCanonicalFactsFailure<'_, '_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn native_guarded_owned_engine_return_facts(
     original: &NativeGuardedOwnedEngineReturn<'_, '_>,
 ) -> Result<crate::process_page_map::LiveAllocationPointer, NativeGuardedCanonicalFactsInvariant> {
@@ -15098,7 +15098,7 @@ unsafe fn native_guarded_owned_engine_return_facts(
 /// has completed, all its projections/locks ended, and the actual Heap/member
 /// and client remain live. This function cannot turn a reconstructed address,
 /// arbitrary pointer, foreign engine return or pending claim into a client.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn native_guarded_canonical_from_owned_engine_return<'owner, 'scope>(
     owner: &'owner NativeAllocationOwner<'scope>,
     block: core::ptr::NonNull<u8>,
@@ -15124,7 +15124,7 @@ pub(crate) unsafe fn native_guarded_canonical_from_owned_engine_return<'owner, '
 /// excludes overlapping map, metadata and client mutation. No engine, Page,
 /// Heap, Theap or record projection or lock survives entry. The callback must
 /// not consume the in-flight client or tear down its selected Heap/member.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn with_guarded_live_block_in_owner<'owner, 'scope, R>(
     owner: &NativeAllocationOwner<'_>,
     candidate: NativeGuardedCanonical<'owner, 'scope>,
@@ -15178,7 +15178,7 @@ pub(crate) unsafe fn with_guarded_live_block_in_owner<'owner, 'scope, R>(
 /// metadata projections ended before entry; nested ordinary allocation is
 /// permitted. A parked foreign member must retain the selected owner until
 /// this operation ends; its process view comes from actual record admission.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) unsafe fn with_guarded_live_block<R>(
     selected_theap: core::ptr::NonNull<crate::types::Theap>,
     block: core::ptr::NonNull<u8>,
@@ -15233,7 +15233,7 @@ pub(crate) unsafe fn with_guarded_live_block<R>(
 /// selected to calculate the extent.
 #[doc(hidden)]
 pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -15269,18 +15269,18 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
 /// [`native_usable_size`].
 #[doc(hidden)]
 pub unsafe fn native_block_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // SAFETY: the exact live client retains the immutable source stride;
         // this observation grants no owner or canonical-block authority.
         unsafe { page_map.lookup_native_live_block_size(block) }.ok().flatten()
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         // SAFETY: forwarded exact-live native-client contract.
         match unsafe { page_map.lookup_live_allocation(block) } {
@@ -15294,7 +15294,7 @@ pub unsafe fn native_block_size(block: core::ptr::NonNull<u8>) -> Option<usize> 
 /// after `_mi_os_init`; `None` before the process has started.
 #[doc(hidden)]
 pub fn native_os_page_size() -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -15320,7 +15320,7 @@ pub fn native_os_page_size() -> Option<usize> {
 /// mapped client.
 #[doc(hidden)]
 pub unsafe fn native_pointer_is_mapped(pointer: *const u8) -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -20317,7 +20317,7 @@ pub fn ticket_zero_later_thread_page_roundtrip(
 #[doc(hidden)]
 #[inline]
 pub fn before_fork() {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     RUNTIME_FORK_ADMISSION.before_fork_with(|| {
         RUNTIME_PROCESS.prepare_quiescent_on_initial_thread_for_held_fork_gate()
@@ -20391,7 +20391,7 @@ fn attach_current_thread_after_entry(
     before_source: impl FnOnce(),
     report_deferred: bool,
 ) -> Option<ThreadAttachResult> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return None;
     };
@@ -20408,7 +20408,7 @@ fn attach_current_thread_after_entry(
 
     // Without a page map the metadata page for this thread's TLD cannot be
     // registered: pinned `mi_tld_create` fails (`src/init.c:267-269`).
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if RUNTIME_PROCESS.page_map_unavailable() {
         return Some(defer_current_thread_attachment(
             thread_local_data_allocation_reports(), report_deferred,
@@ -20484,7 +20484,7 @@ fn attach_current_thread_after_entry(
         return Some(ThreadAttachResult::Retained);
     };
 
-    #[cfg(all(target_arch = "x86_64", not(test)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(test)))]
     {
         // The cell projection spans construction without a whole-slot borrow.
         // Source diagnostics encounter the held entry and operation guards;
@@ -20521,7 +20521,7 @@ fn attach_current_thread_after_entry(
             }
         });
     }
-    #[cfg(any(test, not(target_arch = "x86_64")))]
+    #[cfg(any(test, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
     {
     // SAFETY: libc installed this child TLS image and calls before user code;
     // `slot` retains the returned current-thread owner until its explicit
@@ -20533,12 +20533,12 @@ fn attach_current_thread_after_entry(
     // prevents those callbacks from beginning a second attachment.
     let attachment = unsafe { MainHeapThreadAttachment::begin_with_vm_process(main_heap, config, process) };
     // The AArch64 runtime keeps its existing terminal retention.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let deferred = match &attachment {
         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => deferred_attach_reports(*error),
         _ => None,
     };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let deferred: Option<[SourceErrorReport; 2]> = None;
     if let Some(reports) = deferred {
         return Some(defer_current_thread_attachment(reports, report_deferred));
@@ -20608,7 +20608,7 @@ fn attach_current_thread_after_entry(
 /// `_mi_meta_zalloc`), then `mi_tld_create` or `_mi_theap_alloc` reports its
 /// own failure. Every other attachment rejection keeps its existing
 /// terminal handling.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn deferred_attach_reports(error: MainHeapThreadAttachmentError) -> Option<[SourceErrorReport; 2]> {
     use crate::diagnostic_output::SourceErrorReport as Report;
     use crate::meta::MetaError;
@@ -20628,7 +20628,7 @@ fn deferred_attach_reports(error: MainHeapThreadAttachmentError) -> Option<[Sour
 }
 
 /// The reports of a failed TLD metadata allocation (`src/init.c:267-269`).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn thread_local_data_allocation_reports() -> [SourceErrorReport; 2] {
     [
         SourceErrorReport::OutOfMemory { size: crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE },
@@ -20645,7 +20645,7 @@ fn thread_local_data_allocation_reports() -> [SourceErrorReport; 2] {
 /// for its generic request; a request beyond `MI_MAX_ALLOC_SIZE` is first
 /// refused by each `mi_find_page`. This allocation entry does not receive
 /// the page-map commit warnings from those attempts.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn allocate_without_page_map(request: usize, shape: NativeAllocationShape) -> NativePageAllocationResult {
     if current_thread_attach_is_deferred() {
         let _ = retry_deferred_attachment();
@@ -20664,7 +20664,7 @@ fn allocate_without_page_map(request: usize, shape: NativeAllocationShape) -> Na
 /// The size pinned `_mi_malloc_generic` receives for one validated request:
 /// the request itself, or the aligned entry's over-allocation or OS-aligned
 /// singleton size (`src/alloc-aligned.c:68-188`).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn source_generic_request(request: usize, shape: NativeAllocationShape) -> usize {
     use crate::aligned::{allocation_plan, AlignedAllocationPlan};
     use crate::config::{MAX_ALIGN_SIZE, PAGE_MAX_OVERALLOC_ALIGN};
@@ -20739,7 +20739,7 @@ fn retry_deferred_attachment() -> bool {
 pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 ) -> ThreadFinalProcessExitOwnerResult {
     if !admission::rearm_current_source_descriptor() { return ThreadFinalProcessExitOwnerResult::Retained; }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return ThreadFinalProcessExitOwnerResult::Retained;
     };
@@ -20820,7 +20820,7 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 #[doc(hidden)]
 #[cfg(not(test))]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return if admission::current_source_is_retired() {
             ThreadFinishResult::AlreadyFinished
@@ -20854,7 +20854,7 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 #[doc(hidden)]
 #[cfg(test)]
 pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return if admission::current_source_is_retired() {
             ThreadFinishResult::AlreadyFinished
@@ -20907,7 +20907,7 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 /// point therefore shares the ordinary finalizer.
 #[doc(hidden)]
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // The actual winning initializer still borrows its original source
         // owner. This transient admission is separate from an unfinished
@@ -20990,7 +20990,7 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
 /// ordinary-exit callbacks and `_exit`.
 #[doc(hidden)]
 pub fn retain_current_thread_native_owner_after_process_done_nonfinal() -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return false;
     };
@@ -21137,7 +21137,7 @@ fn begin_current_thread_native_owner_exit_deferred_free_phase(
     // the fast root, so failure to obtain it remains fail-closed without
     // asking a post-clear callback to manufacture a new default Theap.
     let pair = current_native_process_page_backing();
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // The factory retains the actual original issuer before fast-slot
         // removal or Page observation, including the lazy empty owner.
@@ -21166,7 +21166,7 @@ fn begin_current_thread_native_owner_exit_deferred_free_phase(
             }
         });
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     match with_current_thread_native_persistent_owner(|owner| owner.begin_owner_exit_deferred_free_phase(pair)) {
         Ok(Ok(phase)) => Ok(phase),
         _ => {
@@ -21181,7 +21181,7 @@ fn begin_current_thread_native_owner_exit_deferred_free_phase(
 fn resume_current_thread_native_owner_exit_deferred_free_phase(
     lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3"))]
     {
         // Select the actual pending issuer through a short scalar copy before
         // the collector can inspect a Page. Its root remains alive on failure;
@@ -21234,7 +21234,7 @@ fn resume_current_thread_native_owner_exit_deferred_free_phase(
             }
         };
     }
-    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    #[cfg(not(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-3")))]
     match with_current_thread_native_persistent_owner(|owner| {
         owner.resume_owner_exit_deferred_free_phase(lease)
     }) {
@@ -21968,7 +21968,7 @@ fn finish_current_thread_page_owner_after_user_destructors(
 /// traverse inherited locks, roots, lists, or page ownership.
 #[doc(hidden)]
 pub fn after_fork_child(fork_was_prepared: bool) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     if RUNTIME_FORK_ADMISSION.after_fork_child(fork_was_prepared) {
         return;
@@ -22002,7 +22002,7 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "native-runtime-test-fault"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "native-runtime-test-fault"))]
     #[test]
     fn heap_birth_reserves_sequence_before_contended_publication() {
         crate::test_process::run_in_fresh_process(
@@ -22152,7 +22152,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "native-runtime-test-fault"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "native-runtime-test-fault"))]
     #[test]
     fn heap_list_visitor_pins_members_across_owner_exit_and_contended_release() {
         crate::test_process::run_in_fresh_process(
@@ -22305,7 +22305,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "native-runtime-test-fault"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "native-runtime-test-fault"))]
     #[test]
     fn heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation() {
         crate::test_process::run_in_fresh_process(
@@ -22482,7 +22482,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "mi-secure-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), not(feature = "mi-secure-1")))]
     #[test]
     fn native_medium_arena_clients_retain_published_aligned_metadata_aliases() {
         crate::test_process::run_in_fresh_process(
@@ -22557,7 +22557,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn live_client_geometry_tracks_initial_arena_capacity_and_os_page() {
         crate::test_process::run_in_fresh_process(
@@ -22606,7 +22606,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct RuntimeLoaderTailObservation {
         runtime: &'static RuntimeProcessStorage,
         facts: NativeProcessStartupFacts,
@@ -22615,13 +22615,13 @@ mod tests {
         observed: core::cell::Cell<Option<(bool, bool, bool)>>,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     std::thread_local! {
         static RUNTIME_LOADER_TAIL_OBSERVATION: core::cell::Cell<*const RuntimeLoaderTailObservation> =
             const { core::cell::Cell::new(core::ptr::null()) };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn observe_runtime_loader_tail(_: *const core::ffi::c_char) {
         RUNTIME_LOADER_TAIL_OBSERVATION.with(|slot| {
             // SAFETY: the initializer retains its observation across this
@@ -22636,7 +22636,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn runtime_loader_tail_releases_once_before_delayed_output() {
         crate::test_process::run_in_fresh_process(
@@ -22644,7 +22644,7 @@ mod tests {
             || {
                 // Direct storage initialization inherits the embedding
                 // caller's registered initial operation admission.
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 let _operation = {
                     assert!(admission::register_initial_descriptor());
                     admission::NativeAllocatorOperationGuard::enter().unwrap()
@@ -22687,7 +22687,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn timer_tls_inventory_names_distinct_nonempty_objects_on_each_thread() {
         fn check(spans: [NativeAllocatorTlsSpan; 14]) {
@@ -22715,7 +22715,7 @@ mod tests {
 
     static NATIVE_DEFERRED_FREE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(miri)))]
     #[test]
     fn encoded_padded_native_owner_preserves_repeated_zeroed_clients() {
         crate::test_process::run_in_fresh_process(
@@ -22753,10 +22753,10 @@ mod tests {
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static NATIVE_ALLOCATION_OWNER_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn native_allocation_owner_warning_reentry(
         message: *const core::ffi::c_char, _argument: *mut core::ffi::c_void,
     ) {
@@ -22771,13 +22771,13 @@ mod tests {
         assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SelectedChildAllocationWarning {
         theap: NonNull<crate::types::Theap>,
         calls: AtomicUsize,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn native_child_allocation_owner_warning_reentry(
         message: *const core::ffi::c_char, argument: *mut core::ffi::c_void,
     ) {
@@ -22795,7 +22795,7 @@ mod tests {
         observed.calls.fetch_add(1, Ordering::AcqRel);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     fn native_guarded_driver_short_geometry_reuses_original_client() {
         let selected = default_theap();
         let output = crate::process_init::process_output_owner().unwrap();
@@ -22825,7 +22825,7 @@ mod tests {
         assert_eq!(unsafe { native_free(canonical.unwrap()) }, NativePageFreeResult::Freed);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn native_guarded_driver_consumes_short_geometry_in_initial_and_worker_owners() {
         crate::test_process::run_in_fresh_process(
@@ -22852,7 +22852,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn native_guarded_candidate_facts_retain_the_captured_owner_through_warning_reentry() {
         crate::test_process::run_in_fresh_process(
@@ -22902,7 +22902,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn native_allocation_owner_scope_precedes_candidate_and_allows_warning_reentry() {
         crate::test_process::run_in_fresh_process(
@@ -22954,7 +22954,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     unsafe extern "C" fn capture_secure_three_padding_error(
         error: core::ffi::c_int, argument: *mut core::ffi::c_void,
     ) {
@@ -22965,7 +22965,7 @@ mod tests {
         observed[1].store(error as usize, Ordering::Release);
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     #[test]
     fn secure_three_native_free_checks_the_source_record_without_debug_padding_bytes() {
         crate::test_process::run_in_fresh_process(
@@ -23025,23 +23025,23 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     std::thread_local! {
         static GUARDED_FREE_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(33) };
     }
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     static GUARDED_FREE_WARNING_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     static GUARDED_FREE_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     static GUARDED_FREE_WARNING_ERRNO: AtomicUsize = AtomicUsize::new(0);
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     unsafe fn guarded_free_store_errno(value: core::ffi::c_int) {
         GUARDED_FREE_ERRNO.with(|slot| slot.set(value));
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     unsafe extern "C" fn guarded_free_warning_reentry(
         message: *const core::ffi::c_char, _argument: *mut core::ffi::c_void,
     ) {
@@ -23060,7 +23060,7 @@ mod tests {
         GUARDED_FREE_ERRNO.with(|slot| slot.set(34));
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_free_protection_refusal_publishes_errno_before_reentry_and_still_consumes_client() {
         crate::test_process::run_in_fresh_process(
@@ -23114,7 +23114,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_reallocation_keeps_old_guard_until_replacement_then_unprotects_its_tail() {
         crate::test_process::run_in_fresh_process(
@@ -23155,7 +23155,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     fn native_mapping_permissions_for_test(address: usize) -> std::string::String {
         let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
         for line in maps.lines() {
@@ -23168,7 +23168,7 @@ mod tests {
         panic!("the keeper client retains this Page mapping");
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
     #[test]
     fn guarded_client_free_unprotects_only_its_tail_before_releasing_the_block() {
         crate::test_process::run_in_fresh_process(
@@ -23209,7 +23209,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn guarded_live_block_scope_ends_projections_before_nested_main_allocation() {
         crate::test_process::run_in_fresh_process(
@@ -23242,7 +23242,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn guarded_live_block_scope_retains_child_owner_during_same_theap_reentry() {
         crate::test_process::run_in_fresh_process(
@@ -23306,7 +23306,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn guarded_live_block_scope_admits_the_retained_foreign_child_before_remote_free() {
         struct TransferredClient {
@@ -23427,7 +23427,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn uninitialized_free_charges_page_subprocess_metadata_without_attachment() {
         crate::test_process::run_in_fresh_process(
@@ -23602,7 +23602,7 @@ mod tests {
 
     /// Startup facts naming only the fixture process's own `environ` and
     /// musl `stderr`, exactly as the selected libc bridge publishes them.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn host_startup_facts() -> NativeProcessStartupFacts {
         // SAFETY: the host reader and musl FILE fixture remain valid for the
         // fresh test process that consumes these facts.
@@ -23616,25 +23616,25 @@ mod tests {
         .expect("the native x86 fixture uses a supported base page size")
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct FullQueueEnvironment([*const core::ffi::c_char; 2]);
 
     // SAFETY: both the vector and its C string are immutable static data.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe impl Sync for FullQueueEnvironment {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static FULL_QUEUE_ENVIRONMENT: FullQueueEnvironment = FullQueueEnvironment([
         c"mimalloc_page_full_retain=-1".as_ptr(),
         core::ptr::null(),
     ]);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn full_queue_environment() -> *const *const core::ffi::c_char {
         FULL_QUEUE_ENVIRONMENT.0.as_ptr()
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn full_queue_startup_facts() -> NativeProcessStartupFacts {
         // SAFETY: this immutable process-lifetime vector selects the source
         // non-abandoning full-page mode before runtime initialization.
@@ -23649,7 +23649,7 @@ mod tests {
     }
 
     /// Allocates, writes, and frees one C-aligned native client on the caller.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_round_trip(size: usize) -> bool {
         let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(size, 16, false)
         else {
@@ -23662,7 +23662,7 @@ mod tests {
         true
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn selected_startup_installs_initial_owner_without_reserving_first_arena() {
         crate::test_process::run_in_fresh_process(
@@ -23689,7 +23689,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lazy_first_allocation_runs_the_published_source_startup_once() {
         crate::test_process::run_in_fresh_process(
@@ -23733,7 +23733,7 @@ mod tests {
     /// thread's unrelated registration change. A dormant initial owner that
     /// reactivates for an ordinary allocation must therefore succeed while a
     /// worker's post-exit terminal release holds its short remote-free boundary.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn dormant_initial_owner_allocates_while_a_terminal_page_release_holds_its_boundary() {
         crate::test_process::run_in_fresh_process(
@@ -23776,7 +23776,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn cold_allocation_without_startup_facts_refuses_without_retaining_the_process() {
         crate::test_process::run_in_fresh_process(
@@ -23802,7 +23802,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn null_reallocation_is_a_lazy_first_allocation() {
         crate::test_process::run_in_fresh_process(
@@ -23824,7 +23824,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn pointer_first_reallocation_replaces_another_live_threads_client() {
         crate::test_process::run_in_fresh_process(
@@ -23913,7 +23913,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn pointer_first_reallocation_replaces_an_abandoned_page_client() {
         crate::test_process::run_in_fresh_process(
@@ -24008,7 +24008,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn word_sized_aligned_reallocation_uses_ordinary_replacement() {
         crate::test_process::run_in_fresh_process(
@@ -24034,7 +24034,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn concurrent_first_allocations_start_one_initial_owner() {
         crate::test_process::run_in_fresh_process(
@@ -24076,27 +24076,27 @@ mod tests {
 
     /// A fixed environment vector that is deliberately not the process's
     /// ambient `environ`.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct SyntheticStartupEnvironment([*const core::ffi::c_char; 2]);
 
     // SAFETY: the vector and its one entry are immutable static C strings.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe impl Sync for SyntheticStartupEnvironment {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SYNTHETIC_STARTUP_ENVIRONMENT: SyntheticStartupEnvironment =
         SyntheticStartupEnvironment([c"mimalloc_purge_delay=321".as_ptr(), core::ptr::null()]);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static SYNTHETIC_STARTUP_ENVIRONMENT_READS: AtomicUsize = AtomicUsize::new(0);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn synthetic_startup_environment() -> *const *const core::ffi::c_char {
         SYNTHETIC_STARTUP_ENVIRONMENT_READS.fetch_add(1, Ordering::AcqRel);
         SYNTHETIC_STARTUP_ENVIRONMENT.0.as_ptr()
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lazy_startup_observes_options_only_through_the_published_reader() {
         crate::test_process::run_in_fresh_process(
@@ -24139,7 +24139,7 @@ mod tests {
     }
 
     /// The active process policy's source `os_preloading` scalar.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn active_process_is_preloading() -> bool {
         // SAFETY: callers observed ACTIVE through a completed startup; only
         // immutable ready witnesses and one atomic scalar are read.
@@ -24150,27 +24150,27 @@ mod tests {
 
     /// An invalid `show_errors` descriptor with `verbose` enabled: source
     /// options initialization stages one warning in the delayed buffer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static DELAYED_WARNING_ENVIRONMENT: DelayedWarningEnvironment = DelayedWarningEnvironment([
         c"mimalloc_show_errors=bogus".as_ptr(),
         c"mimalloc_verbose=1".as_ptr(),
         core::ptr::null(),
     ]);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct DelayedWarningEnvironment([*const core::ffi::c_char; 3]);
 
     // SAFETY: the vector and its entries are immutable static C strings.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe impl Sync for DelayedWarningEnvironment {}
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn delayed_warning_environment() -> *const *const core::ffi::c_char {
         DELAYED_WARNING_ENVIRONMENT.0.as_ptr()
     }
 
     /// Allocation-free capture of every default-stderr delivery.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct StartupStderrCapture {
         calls: AtomicUsize,
         /// Deliveries of the delayed buffer, which always begins with the
@@ -24180,7 +24180,7 @@ mod tests {
         bytes: [core::sync::atomic::AtomicU8; 512],
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static STARTUP_STDERR_CAPTURE: StartupStderrCapture = StartupStderrCapture {
         calls: AtomicUsize::new(0),
         delayed_flushes: AtomicUsize::new(0),
@@ -24188,7 +24188,7 @@ mod tests {
         bytes: [const { core::sync::atomic::AtomicU8::new(0) }; 512],
     };
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_startup_stderr(message: *const core::ffi::c_char) {
         STARTUP_STDERR_CAPTURE.calls.fetch_add(1, Ordering::AcqRel);
         // SAFETY: the source output primitive passes a NUL-terminated message.
@@ -24204,7 +24204,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn captured_startup_stderr_contains(needle: &[u8]) -> bool {
         let length = STARTUP_STDERR_CAPTURE.length.load(Ordering::Acquire).min(512);
         let bytes: std::vec::Vec<u8> = STARTUP_STDERR_CAPTURE.bytes[..length].iter()
@@ -24212,7 +24212,7 @@ mod tests {
         bytes.windows(needle.len()).any(|window| window == needle)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn delayed_warning_startup_facts() -> NativeProcessStartupFacts {
         // SAFETY: the reader returns an immutable static vector and the
         // capture primitive is process-lifetime and allocation-free.
@@ -24226,7 +24226,7 @@ mod tests {
         .expect("the native x86 fixture uses a supported base page size")
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn first_allocation_start_defers_the_loader_tail_to_runtime_startup() {
         crate::test_process::run_in_fresh_process(
@@ -24259,7 +24259,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn runtime_startup_does_not_repeat_loader_output_after_allocation() {
         crate::test_process::run_in_fresh_process(
@@ -24283,7 +24283,7 @@ mod tests {
     }
 
     /// Reports the default and metadata Theap random images' weak flags.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn startup_random_images_are_weak() -> (bool, bool) {
         // SAFETY: the initial source thread owns its default Theap and no
         // projection of it is live between these native operations.
@@ -24295,7 +24295,7 @@ mod tests {
         (default, metadata)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn entropy_failure_at_first_allocation_start_is_reseeded_by_runtime_startup() {
         crate::test_process::run_in_fresh_process(
@@ -24326,7 +24326,7 @@ mod tests {
     /// the native differential runner: a first
     /// allocation whose two startup entropy draws fail, followed by the
     /// runtime startup call. Every key is a normalized source-visible scalar.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_x86_64_startup_entry_rust_trace() {
         crate::test_process::run_in_fresh_process(
@@ -24398,7 +24398,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn entropy_failure_at_runtime_startup_is_reseeded_before_activation() {
         crate::test_process::run_in_fresh_process(
@@ -24420,7 +24420,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn page_map_failure_at_first_allocation_start_continues_without_page_map() {
         crate::test_process::run_in_fresh_process(
@@ -24460,15 +24460,15 @@ mod tests {
 
     /// First allocation result observed from inside the registered output
     /// callback: 0 none, 1 allocated, 2 unavailable, 3 other, 4 in progress.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static REGISTERED_OUTPUT_ALLOCATION_RESULT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static REGISTERED_OUTPUT_REENTERED_STARTUP: core::sync::atomic::AtomicU8 =
         core::sync::atomic::AtomicU8::new(0);
 
     /// Allocates and frees one native client during output registration,
     /// recording the result while nested diagnostics use the custom route.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn record_registered_output_first_allocation() {
         if REGISTERED_OUTPUT_ALLOCATION_RESULT.compare_exchange(0, 4, Ordering::AcqRel, Ordering::Acquire).is_err() { return; }
         // A first reservation can synchronously deliver another diagnostic.
@@ -24489,7 +24489,7 @@ mod tests {
 
     /// Captures source fragments while preserving the host fixture's actual
     /// permanent stderr transport, whose static backing needs no allocation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_startup_file_stderr(message: *const core::ffi::c_char) {
         // SAFETY: both operations receive the same valid source fragment;
         // the permanent FILE and atomic capture outlive this isolated process.
@@ -24499,7 +24499,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn file_output_startup_facts() -> NativeProcessStartupFacts {
         // SAFETY: immutable static environment and actual permanent stderr.
         unsafe { NativeProcessStartupFacts::new(
@@ -24507,14 +24507,14 @@ mod tests {
         ) }.expect("the native x86 fixture uses a supported base page size")
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     static REGISTERED_OUTPUT_RESERVATION_SEEN: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     /// A registered output callback runs after its custom default is
     /// published. Its first allocation can emit reservation diagnostics
     /// through that same custom route without entering the delayed buffer.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn allocating_registered_startup_output(
         message: *const core::ffi::c_char, _argument: *mut core::ffi::c_void,
     ) {
@@ -24531,7 +24531,7 @@ mod tests {
         unsafe { capture_startup_stderr(message) };
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn runtime_startup_default_file_output_keeps_the_first_arena_cold() {
         crate::test_process::run_in_fresh_process(
@@ -24554,7 +24554,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn registered_output_flush_allocates_through_the_cold_initial_owner() {
         crate::test_process::run_in_fresh_process(
@@ -24586,7 +24586,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn first_allocation_loader_tail_uses_the_permanent_file_output() {
         crate::test_process::run_in_fresh_process(
@@ -24603,7 +24603,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_attached_native_allocation_precedes_ready_and_survives_startup_completion() {
         crate::test_process::run_in_fresh_process(
@@ -24654,7 +24654,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "mi-debug-3"))]
     #[test]
     fn source_attached_fresh_zero_assertion_keeps_original_initializer_during_reentry() {
         const CHILD: &str = "CRABC_SOURCE_ATTACHED_FRESH_ZERO_CHILD";
@@ -24746,7 +24746,7 @@ mod tests {
         assert_eq!(result.stderr, b"original source-attached initializer retained during native reentry\nmimalloc: assertion failed: at \"src/page.c\":729, _mi_page_init\n  assertion: \"mi_mem_is_zero(page_start, mi_page_committed(page))\"\n");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_attached_initializer_scope_completes_in_both_normal_fork_images() {
         crate::test_process::run_in_fresh_process(
@@ -24839,7 +24839,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn runtime_process_once_waits_for_terminal_startup_and_refuses_owner_reentry() {
         use std::time::{Duration, Instant};
@@ -24991,13 +24991,13 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" {
         fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
         static mut stderr: *mut core::ffi::c_void;
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn deferred_free_boundary_test_stderr(
         message: *const core::ffi::c_char,
     ) {
@@ -25104,7 +25104,7 @@ mod tests {
                     let owner = NativePersistentThreadOwner {
                         attachment,
                         state: NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine },
-                        #[cfg(target_arch = "x86_64")]
+                        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                         generic_frequency_captures: 0,
                     };
                     operation(owner);
@@ -25227,7 +25227,7 @@ mod tests {
                 allocator,
                 deferred_free_callback_generation: 0,
                 deferred_free_callback_active: AtomicUsize::new(0),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 generic_frequency_captures: 0,
             };
             operation(&mut owner);
@@ -25294,7 +25294,7 @@ mod tests {
         let mut selected = None;
         loop {
             phase = match phase {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 NativeDeferredFreeAllocationPhase::FreshInitialization(task) => {
                     // This fixture has no source output admission. Keep the
                     // original unfinished claim alive through terminal exit
@@ -25302,7 +25302,7 @@ mod tests {
                     let _original_task = task;
                     crabc_core::process::exit_immediately(134);
                 }
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 NativeDeferredFreeAllocationPhase::LiveValidity(task) => {
                     // This fixture has no source output admission. Keep the
                     // original unfinished claim alive through terminal exit
@@ -25311,7 +25311,7 @@ mod tests {
                     crabc_core::process::exit_immediately(134);
                 }
                 NativeDeferredFreeAllocationPhase::Complete(block) => return (block, selected),
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
                     let frequency = capture.process.policy().generic_collect_frequency();
                     cell.with_owner(|owner| owner.get_mut().resume_generic_allocation_frequency(
@@ -25362,7 +25362,7 @@ mod tests {
         .is_some()
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn native_initial_generic_frequency_capture_resumes_in_both_fork_images() {
         crate::test_process::run_in_fresh_process(
@@ -25431,7 +25431,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn native_local_metadata_free_progress_uses_original_initial_and_worker_issuers() {
         fn free_one_local_client() {
@@ -25476,7 +25476,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn native_generic_frequency_capture_retains_worker_until_original_resume() {
         crate::test_process::run_in_fresh_process(
@@ -25566,7 +25566,7 @@ mod tests {
             let phase = owner
                 .begin_deferred_free_aligned_allocation(2048, 16, false)
                 .expect("the threshold generic entry returns a caller-stack phase");
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let phase = match phase {
                 NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
                     assert_eq!(owner.generic_frequency_captures, 1);
@@ -25577,7 +25577,7 @@ mod tests {
                 }
                 _ => panic!("the threshold publishes a source-option capture before collection"),
             };
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert_eq!(owner.generic_frequency_captures, 0);
             let NativeDeferredFreeAllocationPhase::Callback {
                 call,
@@ -25661,7 +25661,7 @@ mod tests {
             let phase = owner
                 .begin_deferred_free_aligned_allocation(7, 128 * crate::config::KIB, false)
                 .expect("the threshold aligned singleton starts an initial callback phase");
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let phase = match phase {
                 NativeInitialDeferredFreeAllocationPhase::GenericFrequency { capture, source, request, continuation } => {
                     assert_eq!(owner.generic_frequency_captures, 1);
@@ -25672,7 +25672,7 @@ mod tests {
                 }
                 _ => panic!("the initial threshold publishes source-option capture first"),
             };
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             assert_eq!(owner.generic_frequency_captures, 0);
             let NativeInitialDeferredFreeAllocationPhase::Callback {
                 call,
@@ -26046,7 +26046,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_deferred_free_callback_boundary_runs_initial_later_and_owner_exit_phase_abc() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::native_deferred_free_callback_boundary_runs_initial_later_and_owner_exit_phase_abc",
@@ -26055,7 +26055,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "native-runtime-test-audit"))]
     fn native_owner_exit_collects_a_late_remote_publication_before_survivor_reclaim() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::native_owner_exit_collects_a_late_remote_publication_before_survivor_reclaim",
@@ -26140,7 +26140,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees() {
         native_owner_exit_mixed_full_queue_fixture(
             MixedOwnerExitMode::DormantPreExitRemote,
@@ -26149,7 +26149,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_owner_exit_active_survivor_reclaims_full_medium_then_retires() {
         native_owner_exit_mixed_full_queue_fixture(
             MixedOwnerExitMode::ActivePreExitRemote,
@@ -26158,7 +26158,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_owner_exit_active_survivor_reclaims_late_remote_full_medium() {
         native_owner_exit_mixed_full_queue_fixture(
             MixedOwnerExitMode::ActiveLateRemote,
@@ -26166,7 +26166,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[derive(Clone, Copy, Eq, PartialEq)]
     enum MixedOwnerExitMode {
         DormantPreExitRemote,
@@ -26174,7 +26174,7 @@ mod tests {
         ActiveLateRemote,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_owner_exit_mixed_full_queue_fixture(mode: MixedOwnerExitMode, test_name: &'static str) {
         crate::test_process::run_in_fresh_process(
             test_name,
@@ -26449,7 +26449,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn native_deferred_free_callback_boundary_fixture() {
         let _runtime_driver = NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK.lock().expect(
             "the process-lifetime native driver regression has one initializer",
@@ -26570,7 +26570,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn worker_fixed_theap_collection_preserves_auxiliary_default() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::worker_fixed_theap_collection_preserves_auxiliary_default",
@@ -26621,7 +26621,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn worker_attachment_guard_refusal_preserves_registered_later_descriptor() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::worker_attachment_guard_refusal_preserves_registered_later_descriptor",
@@ -27032,7 +27032,7 @@ mod tests {
                 "only the terminal empty route may return its metadata capability"
             );
         };
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::dynamic_session_exit_ledger_keeps_metadata_until_its_last_detached_client",
             || {
@@ -27045,7 +27045,7 @@ mod tests {
                 operation(config);
             },
         );
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         operation(memory_config());
     }
 
@@ -27672,7 +27672,7 @@ mod tests {
         runtime.state.store(PROCESS_ACTIVE, Ordering::Release);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_staged_owner_allocates_before_ready_and_preserves_clients_after_completion() {
         thread::spawn(|| {
@@ -27759,7 +27759,7 @@ mod tests {
         });
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn source_staged_delayed_output_recovers_allocation_and_later_owner_uses_same_registry() {
         let mut default_initialized_on_allocation = false;
@@ -30713,7 +30713,7 @@ mod tests {
 
 #[path = "runtime_admission.rs"]
 mod admission;
-#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
 #[path = "runtime_fork_repair_tests.rs"]
 mod fork_repair_tests;
 pub use admission::{
@@ -30731,10 +30731,10 @@ pub use admission::{
         begin_native_allocator_raw_fork_copy,
 };
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[path = "runtime_destroy.rs"]
 mod destroy;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use destroy::{prepare_native_process_destroy, capture_native_process_destroy_request,
     NativeProcessDestroyRequest, NativePreparedProcessDestroy, NativeProcessDestroyError,
     native_process_done_action, NativeProcessDoneInvocation, NativeProcessDoneAction};

@@ -79,14 +79,14 @@ pub(crate) struct DiagnosticOptionSnapshot {
 }
 
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct RuntimeStderrOutput {
     invoke: DefaultStderrOutput,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 impl RuntimeStderrOutput {
     /// Wraps the selected process FILE output primitive for the private x86
     /// runtime initializer.
@@ -127,7 +127,7 @@ impl RuntimeStderrOutput {
 pub(crate) struct ProcessDiagnosticInputs {
     environment_reader: VmOptionEnvironmentReader,
     default_stderr_output: DefaultStderrOutput,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     source_errno_store: Option<crate::process_init::SourceErrnoStore>,
 }
 
@@ -149,20 +149,20 @@ impl ProcessDiagnosticInputs {
         default_stderr_output: DefaultStderrOutput,
     ) -> Self {
         Self { environment_reader, default_stderr_output,
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             source_errno_store: None,
         }
     }
 
     /// Retains the embedding process's current-thread errno setter for a
     /// source warning that follows a failed primitive before returning a client.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) const fn with_source_errno_store(mut self, store: crate::process_init::SourceErrnoStore) -> Self {
         self.source_errno_store = Some(store);
         self
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) const fn source_errno_store(&self) -> Option<crate::process_init::SourceErrnoStore> {
         self.source_errno_store
     }
@@ -1050,7 +1050,7 @@ impl SourceFormattedMessage {
 
 // Literal arrays keep their complete copy width visible independently of
 // numeric conversions. Variable strings and digits retain the bounded loop.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 fn append_os_literal<const N: usize>(
     bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, literal: &[u8; N],
@@ -1066,7 +1066,7 @@ fn append_os_literal<const N: usize>(
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 use self::append_mbind_bytes as append_os_literal;
 
 #[inline]
@@ -1243,7 +1243,7 @@ pub(crate) type ErrorCallback = unsafe extern "C" fn(core::ffi::c_int, *mut c_vo
 /// registration and argument lifetime obligations, and end every allocator
 /// metadata projection before a callback can reenter allocation. The supplied
 /// C strings must describe the failing source assertion and its location.
-#[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
 pub(crate) unsafe fn source_assert_fail(
     output: &OutputOwner,
     assertion: &'static CStr,
@@ -1279,7 +1279,7 @@ pub(crate) enum SourceErrorDisposition {
 /// after every allocator projection has ended. Selected terminal source
 /// error policies delegate to the embedding libc's own abort ABI.
 pub(crate) fn source_default_error_disposition(error: Errno) -> SourceErrorDisposition {
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-xmalloc", feature = "mi-secure-1", feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-xmalloc", feature = "mi-secure-1", feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     if (crate::config::XMALLOC && matches!(error, Errno::NOMEM | Errno::OVERFLOW | Errno::INVAL))
         || ((crate::config::SECURE_LEVEL > 0 || crate::config::DEBUG_LEVEL > 0) && error == Errno::FAULT)
     {
@@ -1365,11 +1365,11 @@ pub(crate) enum SourceErrorReport {
     /// map's reservation, in KiB, could not be mapped.
     PageMapReservation { kib: usize },
     /// `mi_check_padding_on_free` found the source freed canary (EAGAIN).
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     PaddingDoubleFree { block: usize, usable_size: usize },
     /// `mi_check_padding_on_free` found a changed record or padding byte
     /// (EFAULT). A changed record reports the full usable block size.
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     PaddingOverflow { block: usize, usable_size: usize, wrong_offset: usize },
 }
 
@@ -1392,9 +1392,9 @@ impl SourceErrorReport {
             | Self::PageMapReservation { .. } => Errno::NOMEM,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. }
             | Self::SecureGuardFailure { .. } => Errno::INVAL,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             Self::PaddingDoubleFree { .. } => Errno::AGAIN,
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             Self::PaddingOverflow { .. } => Errno::FAULT,
         }
     }
@@ -1495,7 +1495,7 @@ impl SourceErrorReport {
                 decimal(&mut message, offset);
                 message.append(b")\n");
             }
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             Self::PaddingDoubleFree { block, usable_size } => {
                 message.append(b"double free detected of heap block ");
                 append_source_pointer(&mut message.bytes, &mut message.length, block);
@@ -1503,7 +1503,7 @@ impl SourceErrorReport {
                 decimal(&mut message, usable_size);
                 message.append(b"\n");
             }
-            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
             Self::PaddingOverflow { block, usable_size, wrong_offset } => {
                 message.append(b"buffer overflow in heap block ");
                 append_source_pointer(&mut message.bytes, &mut message.length, block);
@@ -1601,42 +1601,42 @@ const PENDING_SOURCE_WARNINGS: usize = 4;
 /// names, so x86 stages their recipes and renders them after unlocking. The
 /// legacy route keeps formatting before the gate and moves its owned bytes.
 enum PendingSourceMessage<'message> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     Primary(&'message SourceFormattedMessage),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     InvalidOption(SourceOption),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     DeprecatedOption(SourceOption),
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     Owned(SourceFormattedMessage, core::marker::PhantomData<&'message SourceFormattedMessage>),
 }
 
 impl<'message> PendingSourceMessage<'message> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn primary(message: &'message SourceFormattedMessage) -> Self {
         Self::Primary(message)
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn primary(message: SourceFormattedMessage) -> Self {
         Self::Owned(message, core::marker::PhantomData)
     }
 
     fn invalid_option(option: SourceOption) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { Self::InvalidOption(option) }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { Self::Owned(invalid_source_option_message(option), core::marker::PhantomData) }
     }
 
     fn deprecated_option(option: SourceOption) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { Self::DeprecatedOption(option) }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         { Self::Owned(deprecated_source_option_message(option), core::marker::PhantomData) }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     fn into_owned(self) -> SourceFormattedMessage {
         let Self::Owned(message, _) = self;
         message
@@ -1705,7 +1705,7 @@ impl<'message> PendingSourceWarnings<'message> {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     unsafe fn deliver(self, output: &OutputOwner) {
         for index in 0..self.length {
             // SAFETY: `push` initializes exactly the prefix below `length`;
@@ -1741,7 +1741,7 @@ impl<'message> PendingSourceWarnings<'message> {
     /// Descriptor locking has ended. Any table selected by temporary verbose
     /// entries and the registered callbacks remain live under the caller's
     /// output admission. Registration and replacement are serialized with delivery.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn deliver(&mut self, output: &OutputOwner) {
         let length = self.length;
         self.length = 0;
@@ -1778,7 +1778,7 @@ impl<'message> PendingSourceWarnings<'message> {
 
 /// Only selected static option names are rendered here. The primary body is
 /// already formatted in caller storage and never enters this cold path.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[cold]
 #[inline(never)]
 unsafe fn deliver_source_option_recipe(output: &OutputOwner, entry: &PendingSourceWarning<'_>) {
@@ -1988,7 +1988,7 @@ impl OutputOwner {
     /// process-lifetime stability requirement is documented by
     /// [`ProcessDiagnosticInputs`]. The registered callback or default FILE
     /// primitive may synchronously reenter this route, as in pinned C.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
         // SAFETY: the byvalue adapter owns the immutable message until the
         // synchronous borrowed gate and every callback return.
@@ -2001,11 +2001,11 @@ impl OutputOwner {
     /// Callback registration and in-flight delivery obey [`Self::warning`].
     /// The environment reader retains its process-lifetime stability, and
     /// synchronous output may reenter the source gate after unlocking.
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let message = PendingSourceMessage::primary(&message);
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
@@ -2029,7 +2029,7 @@ impl OutputOwner {
     /// The same registration, environment, and callback admission obligations
     /// as [`Self::warning_from_source_options`] apply. Callback code must not
     /// modify or retain the borrowed body beyond its synchronous invocation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn warning_from_source_options_borrowed(&self, message: &SourceFormattedMessage) {
         let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
@@ -2754,9 +2754,9 @@ impl OutputOwner {
         options: DiagnosticOptionSnapshot,
         message: SourceFormattedMessage,
     ) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         unsafe { self.warning_borrowed(options, &message) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         self.gated_output(
             options, &self.warning_count, self.max_warning_count.load(Ordering::Relaxed), WARNING_PREFIX_HEAD, message,
         );
@@ -2770,9 +2770,9 @@ impl OutputOwner {
     /// The same obligations as [`Self::warning`] apply.
     #[inline]
     unsafe fn error(&self, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         unsafe { self.error_borrowed(options, &message) };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         self.gated_output(
             options, &self.error_count, self.max_error_count.load(Ordering::Relaxed), ERROR_PREFIX_HEAD, message,
         );
@@ -2783,7 +2783,7 @@ impl OutputOwner {
     /// # Safety
     /// The same registration and callback lifetime obligations as `warning`
     /// apply; the message must remain immutable until delivery returns.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn warning_borrowed(&self, options: DiagnosticOptionSnapshot, message: &SourceFormattedMessage) {
         self.gated_output(
             options, &self.warning_count, self.max_warning_count.load(Ordering::Relaxed), WARNING_PREFIX_HEAD, message,
@@ -2795,7 +2795,7 @@ impl OutputOwner {
     /// # Safety
     /// The same registration and callback lifetime obligations as `warning`
     /// apply; the message must remain immutable until delivery returns.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn error_borrowed(&self, options: DiagnosticOptionSnapshot, message: &SourceFormattedMessage) {
         self.gated_output(
             options, &self.error_count, self.max_error_count.load(Ordering::Relaxed), ERROR_PREFIX_HEAD, message,
@@ -2808,9 +2808,9 @@ impl OutputOwner {
         count: &AtomicUsize,
         max_count: isize,
         prefix_head: &[u8],
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         message: SourceFormattedMessage,
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         message: &SourceFormattedMessage,
     ) {
         if !options.verbose_enabled() {
@@ -2866,7 +2866,7 @@ impl OutputOwner {
     /// The obligations of [`Self::warning_from_source_options`] apply to the
     /// message, and a registered handler must satisfy
     /// [`Self::register_error`]'s contract.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
         // SAFETY: the byvalue adapter owns the immutable message until the
         // synchronous borrowed gate and every callback return.
@@ -2878,11 +2878,11 @@ impl OutputOwner {
     /// # Safety
     /// The warning gate's registration, environment, and synchronous delivery
     /// obligations apply; a handler obeys [`Self::register_error`].
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let message = PendingSourceMessage::primary(&message);
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
@@ -2912,7 +2912,7 @@ impl OutputOwner {
     /// The same registration, environment, and callback admission obligations
     /// as [`Self::error_message`] apply. Callback code must not modify or retain
     /// the borrowed body beyond its synchronous invocation.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     pub(crate) unsafe fn error_message_borrowed(&self, error: Errno, message: &SourceFormattedMessage) -> SourceErrorDisposition {
         let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
@@ -3650,7 +3650,7 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// have passed the source
     /// `0 <= node < 8 * MI_INTPTR_SIZE - 1` predicate.
     #[inline]
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn mbind_failure(&self, numa_node: i32, errno: Errno) {
         let message = SourceFormattedMessage::mbind_failure(numa_node, errno);
         unsafe { self.output.warning_from_source_options(message) };
@@ -3663,7 +3663,7 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// The caller retains process startup serialization and output callback
     /// lifetimes at the matching source warning branch; `numa_node` must
     /// satisfy `0 <= node < 8 * MI_INTPTR_SIZE - 1`.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn mbind_failure(&self, numa_node: i32, errno: Errno) {
         let message = SourceFormattedMessage::mbind_failure(numa_node, errno);
@@ -3680,7 +3680,7 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// [`Self::mbind_failure`] apply. The caller must invoke this at the
     /// matching pinned source branch, before transferring or releasing pages.
     #[inline]
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) unsafe fn huge_warning(&self, message: SourceFormattedMessage) {
         unsafe { self.output.warning_from_source_options(message) };
     }
@@ -3692,7 +3692,7 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// The caller retains process startup serialization and output callback
     /// lifetimes at the matching source warning branch before transferring or
     /// releasing any mapped primitive.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[inline]
     pub(crate) unsafe fn huge_warning(&self, message: SourceFormattedMessage) {
         // SAFETY: the source route retains callback admission; this original
@@ -4475,7 +4475,7 @@ mod tests {
         capture.count.fetch_add(1, Ordering::Relaxed);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn os_literal_append_preserves_bounded_payload_and_reserved_tail() {
         let literal = b"0123456789abcdefghijklmnopqrstuv";
@@ -4514,7 +4514,7 @@ mod tests {
         assert_eq!(bounded.as_c_str().to_bytes().len(), 990);
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn diagnostic_inputs_forward_explicit_errno_while_retaining_legacy_output() {
         std::thread_local! {
@@ -4544,7 +4544,7 @@ mod tests {
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), b"retained output\n");
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-debug-1"))]
     #[test]
     fn source_assertion_delivers_raw_output_then_aborts_without_error_handler() {
         const CHILD: &str = "CRABC_MI_ASSERT_CHILD";
@@ -4583,7 +4583,7 @@ mod tests {
         assert_eq!(result.stderr, b"mimalloc: assertion failed: at \"src/page.c\":43, mi_page_list_count\n  assertion: \"page != NULL\"\n");
     }
 
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
     #[test]
     fn padding_reports_preserve_source_error_and_record_geometry() {
         use super::SourceErrorReport;
@@ -4626,7 +4626,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-debug-1")))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-secure-1", feature = "mi-debug-1")))]
     #[test]
     fn source_default_fault_aborts_after_registered_handler_priority() {
         const CHILD: &str = "CRABC_MI_SOURCE_FAULT_CHILD";
@@ -5369,7 +5369,7 @@ mod tests {
         assert_eq!(capture.message(1), b"selected mbind failure\n");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn pending_warning_delivery_drains_original_storage_once() {
         let options = DiagnosticOptionSnapshot::new(1, 1, -1);
@@ -5408,7 +5408,7 @@ mod tests {
         assert_eq!(capture.message(5), b"new staged warning\n");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     struct StagedPrimaryCapture {
         capture: Capture,
         owner: *const OutputOwner,
@@ -5417,7 +5417,7 @@ mod tests {
         reentered: AtomicBool,
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe extern "C" fn capture_staged_primary(message: *const c_char, argument: *mut c_void) {
         // SAFETY: the isolated test retains this capture and owner throughout
         // registration and every synchronous nested dispatch.
@@ -5438,7 +5438,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn staged_primary_keeps_caller_storage_through_warning_and_error_reentry() {
         let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.lock()
@@ -5479,7 +5479,7 @@ mod tests {
         assert_eq!(primary.as_c_str().to_bytes(), b"original caller body\n");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn borrowed_source_gates_keep_primary_storage_through_nested_output_and_handler() {
         struct HandlerCapture<'capture> {
@@ -5535,7 +5535,7 @@ mod tests {
         assert_eq!(primary.as_c_str().to_bytes(), b"borrowed gate body\n");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn huge_warning_route_preserves_nested_mbind_huge_and_error_delivery() {
         struct RouteCapture {

@@ -157,9 +157,9 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     let main_theap = owner.theap_pointer().ok_or(HeapNewError::InvalidChild)?;
     // SAFETY: forwarded current-thread obligation.
     unsafe { owner.cached_set(child, binding, main_theap) }.map_err(|_| HeapNewError::Retained)?;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let image_size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let image_size = size_of::<NonMainHeapImage>();
     // SAFETY: forwarded current-thread obligation.
     let (block, extent_invalid) = unsafe {
@@ -167,11 +167,11 @@ pub(crate) unsafe fn child_heap_new_in_arena(
             let block = engine.allocate(image_size, true)?;
             // The allocating engine owns this PageMap. A process-global
             // usable-size query cannot observe an independent child binding.
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             // SAFETY: this engine just returned the exact live private block.
             let extent_invalid = unsafe { engine.usable_size(block) }
                 .is_none_or(|usable| usable < image_size);
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let extent_invalid = false;
             Some((block, extent_invalid))
         })
@@ -209,7 +209,7 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     // initialization and list publication. A refused child projection retains
     // this allocation and key without reading or dropping its Heap bytes.
     unsafe {
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         Heap::write_bootstrap_empty_at(image.cast());
         core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
@@ -219,10 +219,10 @@ pub(crate) unsafe fn child_heap_new_in_arena(
         // SAFETY: the image is exclusively owned until the list publishes it,
         // and stays pinned in its allocation until `mi_heap_free`.
         // heap.c:103-114, then the list push at 115-124.
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         unsafe { Heap::write_non_main_at(heap, identity, key, arena.as_ptr(), memory) };
         let heap = unsafe { &mut *heap.as_ptr() };
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         heap.initialize_non_main(identity, key, arena.as_ptr(), memory);
         // SAFETY: the Heap was initialized for this subprocess just above.
         unsafe { identity.heap_list().link_non_main(heap, identity) }
@@ -466,11 +466,11 @@ unsafe fn child_heap_release_foreign(
     // on delete and are discarded only on the destructive release.
     unsafe { delete_heap_pages(child, binding, heap, target) }?;
     // SAFETY: each record remains a live child block until its own free.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let records_released = unsafe { heap.as_ref().take_non_main_arena_pages(|record| {
         unsafe { free_foreign_child_block_with_progress(binding, record) }
     }) };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     // SAFETY: retain the historical terminal legacy record-free contract.
     let records_released = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|record| {
         unsafe { free_foreign_child_block(binding, record) }
@@ -493,7 +493,7 @@ unsafe fn child_heap_release_foreign(
 ///
 /// # Safety
 /// `block` is one exact live child allocation that no other thread frees.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_foreign_child_block_with_progress(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
     use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
     // SAFETY: the block stays live until its remote publication completes.
@@ -509,7 +509,7 @@ unsafe fn free_foreign_child_block_with_progress(binding: ProcessMainBackingBind
 
 /// # Safety
 /// `block` is an exact live foreign child allocation, retained until publication.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
     matches!(unsafe { free_foreign_child_block_with_progress(binding, block) },
         crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
@@ -520,7 +520,7 @@ unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: No
 ///
 /// # Safety
 /// `block` is one exact live foreign child allocation, freed once.
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
     // SAFETY: the block remains live until source remote publication.
     let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
@@ -538,7 +538,7 @@ unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: No
 /// # Safety
 /// `owner` is this thread's admitted child owner, `child` and `binding` retain
 /// its allocation backing, and `block` is an exact live block freed once.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_heap_metadata_with_progress(
     owner: *mut ChildThreadOwner,
     child: *mut ChildMainHeapContextOwner<'_>,
@@ -570,7 +570,7 @@ unsafe fn free_heap_metadata_with_progress(
 /// The admitted child owner and exact live metadata block obey the same
 /// obligations as `free_heap_metadata_with_progress`. Failure may follow
 /// consumption and is terminal for this full Heap release operation.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn free_heap_metadata(
     owner: *mut ChildThreadOwner,
     child: *mut ChildMainHeapContextOwner<'_>,
@@ -586,7 +586,7 @@ unsafe fn free_heap_metadata(
 /// # Safety
 /// `owner` is this thread's admitted child owner, `child` and `binding`
 /// retain its backing, and `block` is an exact live allocation freed once.
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 unsafe fn free_heap_metadata(
     owner: *mut ChildThreadOwner,
     child: *mut ChildMainHeapContextOwner<'_>,
@@ -709,13 +709,13 @@ unsafe fn release_heap(
     let child_pointer: *mut ChildMainHeapContextOwner<'_> = child;
     // SAFETY: the live Heap; each record is a live block of the child main
     // Heap, freed once; neither pointer is otherwise borrowed meanwhile.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let freed = unsafe {
         heap.as_ref().take_non_main_arena_pages(|block| {
             free_heap_metadata_with_progress(owner, child_pointer, binding, block)
         })
     };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     // SAFETY: retain this target's source metadata-free and terminal policy.
     let freed = unsafe {
         heap.as_ref().legacy_take_non_main_arena_pages(|block| {
@@ -779,11 +779,11 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
     // SAFETY: the Theaps are detached above.
     unsafe { delete_heap_pages(child, binding, heap, None) }?;
     // SAFETY: the live Heap; its records go with the child arenas.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let records_transferred = unsafe { heap.as_ref().take_non_main_arena_pages(|_record| {
         crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
     }) };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     // SAFETY: terminal bulk teardown retains the records' complete backing.
     let records_transferred = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|_| true) };
     if !records_transferred {
@@ -815,9 +815,9 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
         return Err(HeapNewError::Retained);
     }
     let key = slot.key().raw();
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let image_size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     let image_size = size_of::<NonMainHeapImage>();
     let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     let image = block.cast::<NonMainHeapImage>();
@@ -825,16 +825,16 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     // cover both fields. Retain the slot in its sole release owner before
     // the complete Heap initialization and subsequent list publication.
     unsafe {
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         Heap::write_bootstrap_empty_at(image.cast());
         core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
     let heap = image.cast::<Heap>();
     // SAFETY: the image is exclusively owned until the push publishes it.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe { Heap::write_non_main_at(heap, subprocess, key, exclusive_arena.as_ptr(), memory) };
     let heap_ref = unsafe { &mut *heap.as_ptr() };
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     heap_ref.initialize_non_main(subprocess, key, exclusive_arena.as_ptr(), memory);
     // SAFETY: the Heap was initialized for this subprocess just above.
     unsafe { subprocess.heap_list().link_non_main(heap_ref, subprocess) }.map_err(HeapNewError::List)?;
@@ -953,7 +953,7 @@ mod tests {
     /// A Heap deletion detaches both workers' selected Theaps, but the last
     /// cached worker keeps its exact arena slice until it selects its main
     /// Heap. The child counts follow the same source list/refcount sequence.
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn child_selected_arena_two_workers_hold_and_release_exact_theap_slices() {
         use crate::runtime_lifecycle::{
@@ -1475,7 +1475,7 @@ mod tests {
                     }.expect("the allocating engine remains available")
                         .expect("the live Heap image is in its allocating PageMap");
                     assert!(usable >= size_of::<NonMainHeapImage>());
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     assert!(usable >= crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE);
                     assert_eq!(first.as_ptr().addr() % align_of::<NonMainHeapImage>(), 0);
                     push_heap(&mut trace, child, first);
