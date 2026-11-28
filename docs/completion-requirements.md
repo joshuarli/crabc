@@ -183,8 +183,29 @@ Also required:
   qualification must distinguish mandatory live payload and kernel charge
   granularity from implementation overhead under the then-active cost policy.
 
+### AArch64 restart scope (2026-11-27)
+
+The restart's scope reassessment concluded:
+
+- Every obligation above applies to Linux/AArch64 as it does to x86-64. The
+  AArch64 engine converges onto the x86-64 source routes, as
+  [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md) did for libc. One
+  engine tree serves both architectures. A small architecture layer owns only
+  what really differs: the thread-pointer and TLS access, probed page size
+  (4 KiB is never assumed), and atomics or instructions with no shared
+  spelling. Older AArch64-only routes are deleted once the converged route
+  passes their tests.
+- Convergence must leave the x86-64 build unchanged: x86-visible code keeps
+  its tokens, and a `x86_64-unknown-linux-musl` check passes.
+- The `compat/allocator/` runners and milestone manifests take the
+  architecture as a parameter and run natively in the arm64 VM. They produce
+  AArch64 evidence alongside the x86-64 evidence and never relabel it.
+- Cost gates (R1–R4, the M5 throughput bound and the engine matrix) and
+  default promotion stay deferred to the x86 phase. AArch64 correctness
+  evidence may be produced now.
+
 Source feature groups, each of which must be implemented and verified for
-Linux/x86-64: source foundations, memory substrate, local engine, allocation
+Linux/x86-64 and Linux/AArch64: source foundations, memory substrate, local engine, allocation
 API, concurrency and lifecycle, owned Heap, Theap, arena and subprocess APIs,
 configuration and options, and runtime composition. The applicable
 inventories are the milestone manifests under `compat/allocator/`.
