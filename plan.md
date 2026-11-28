@@ -133,6 +133,29 @@ as pending, not run or substituted. The owner holds the open decisions in this
 phase's scope and has delegated them to the coordinator: settle them, record
 each in its owning document and continue.
 
+### Mac and arm64 phase progress
+
+Host: OrbStack machine `crabc` with the clone and lane worktrees on the ext4
+volume `/mnt/crabc` ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack));
+arm image `sha256:7b7cd03d…`, all 18 arm manifest tool hashes verified in it.
+
+Integrated: arm re-pin `be0b2ec70`; aarch64 corpus closure re-solve
+`db3eb2f5a`; relay scripts `ae2c95b34`; M5 arm evidence fixtures and the
+compiler-helper reader `daa754630`; corpus runner fixtures `48f3e33b4`;
+CRAB-11 lock-free current-thread TSD `4b6de3e7c`; the allocator engine
+converged onto one route for both arches `b57623927` (1,626 lib tests and
+every native target pass on AArch64; the cfg-expanded x86 source differs only
+by moving `PageSize` and deleting the dead asymmetric fence).
+
+Open in this phase: the allocator harness on AArch64 (launcher, unit,
+integration, M1, then M2–M4 and M6–M10 correctness gates); CRAB-7 D1–D3;
+the full arm correctness candidate at one SHA after the product lanes land
+(a baseline run at `db3eb2f5a` with seeded inputs had no preflight blockers).
+
+Blocked here: the CRAB-11 `getset` SCHED_FIFO progress proof. Pinned musl
+stalls in this VM as often as crabc (3 of 6 each), so it needs another native
+arm64 host.
+
 ## D25 dual-native milestone
 
 **D25 — owner decision, 2026-11-23.** It replaces the A5/F2 resume handoff and
