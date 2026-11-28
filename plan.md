@@ -188,7 +188,9 @@ runtime defect: AArch64 `__divtc3` called compiler_builtins' Rust-ABI
 with any product-source change on both arches (x86 refreshed 407 by hand in
 `41997cf6f`), so the static export check now ignores `anon.` names as it
 ignores `_R` names; the shared-library export check still gates every dynamic
-export. Next: a fresh candidate at main.
+export. Candidate 4, the first on ctrs, runs at `3976806d0` in the devbox
+clone's `.work/wt/arm-cand4` (log `.work/wt/arm-cand4-run.log`; dry run 86
+steps, no preflight blockers).
 
 Allocator M2 on AArch64: all eight components run natively with no C/Rust
 mismatch; bitmaps and recursion are complete (`f9d27ec12`). `0dbeffd7e` closed
