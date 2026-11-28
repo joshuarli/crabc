@@ -3126,11 +3126,6 @@ impl<'arena> ArenaView<'arena> {
         unsafe { self.ordinary_bitmap(self.arena().pages_main.pages) }
     }
 
-    /// Attaches to one initialized main-heap abandoned-page bitmap.
-    ///
-    /// Dynamic heap-local `ArenaPages` images are intentionally not created
-    /// here. The returned capability is valid only while this `ArenaView`
-    /// keeps the in-place arena metadata live.
     #[cfg(feature = "native-runtime-test-audit")]
     pub(crate) fn abandoned_pages_slot_address(&self, bin: usize) -> Option<usize> {
         (bin < ARENA_BIN_COUNT).then(|| {
@@ -3138,6 +3133,11 @@ impl<'arena> ArenaView<'arena> {
         })
     }
 
+    /// Attaches to one initialized main-heap abandoned-page bitmap.
+    ///
+    /// Dynamic heap-local `ArenaPages` images are intentionally not created
+    /// here. The returned capability is valid only while this `ArenaView`
+    /// keeps the in-place arena metadata live.
     pub(crate) fn abandoned_pages(&self, bin: usize) -> Option<ArenaAbandonedPages<'arena>> {
         if bin >= ARENA_BIN_COUNT {
             return None;
