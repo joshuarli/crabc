@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::time::{clock_gettime, realtime_millis, ClockId, NANOS_PER_SECOND};
 
 #[test]

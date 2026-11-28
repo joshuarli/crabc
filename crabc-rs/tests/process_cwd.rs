@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::fs::{self, Mode, OFlags};
 use crabc_rs::process;
 use crabc_rs::{Errno, OwnedFd, Result};
@@ -29,6 +28,12 @@ impl Drop for CwdGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
+const TMP_PHYSICAL: &[u8] = b"/tmp";
+// macOS's `/tmp` is a symbolic link to `/private/tmp`.
+#[cfg(target_os = "macos")]
+const TMP_PHYSICAL: &[u8] = b"/private/tmp";
+
 fn cwd_bytes() -> Vec<u8> {
     process::getcwd_alloc(Vec::new())
         .expect("getcwd")
@@ -53,13 +58,13 @@ fn chdir_and_fchdir_restore_process_cwd_after_failure() {
         )?;
 
         process::chdir("/tmp")?;
-        assert_eq!(cwd_bytes(), b"/tmp");
+        assert_eq!(cwd_bytes(), TMP_PHYSICAL);
 
         process::fchdir(&guard.original)?;
         assert_eq!(cwd_bytes(), before);
 
         process::fchdir(&target)?;
-        assert_eq!(cwd_bytes(), b"/tmp");
+        assert_eq!(cwd_bytes(), TMP_PHYSICAL);
 
         // Force the fallible path while the process is away from its entry
         // directory. CwdGuard must restore the original descriptor on return.

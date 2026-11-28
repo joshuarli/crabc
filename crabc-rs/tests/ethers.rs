@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::net::ethers::{
     parse_line, EthernetDatabase, EthernetLine, Ipv6Constants, IN6ADDR_ANY, IN6ADDR_LOOPBACK,
 };

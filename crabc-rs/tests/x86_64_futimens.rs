@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 
 use core::cell::Cell;
 use core::mem::{align_of, size_of};
@@ -11,9 +10,32 @@ use crabc_rs::{AsFd, BorrowedFd, Errno, OwnedFd};
 // clock, and realtime can be adjusted between the surrounding observations.
 const CURRENT_TIME_TOLERANCE_SECONDS: i64 = 2;
 
+#[cfg(target_os = "linux")]
 fn timestamp_fixture() -> OwnedFd {
     fs::memfd_create("crabc-x86-64-futimens", fs::MemfdFlags::CLOEXEC)
         .expect("create timestamp fixture")
+}
+
+// Darwin has no memory files; an unlinked temporary file is the closest
+// anonymous regular file.
+#[cfg(target_os = "macos")]
+fn timestamp_fixture() -> OwnedFd {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+    let path = format!(
+        "/tmp/crabc-x86-64-futimens-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed),
+    );
+    let file = fs::open(
+        path.as_str(),
+        fs::OFlags::RDWR | fs::OFlags::CREATE | fs::OFlags::EXCL | fs::OFlags::CLOEXEC,
+        fs::Mode::RUSR | fs::Mode::WUSR,
+    )
+    .expect("create timestamp fixture");
+    fs::unlink(path.as_str()).expect("unlink timestamp fixture");
+    file
 }
 
 struct TrackingFd<'fd> {
@@ -190,19 +212,34 @@ fn x86_64_futimens_keeps_kernel_validation_and_state_atomicity_direct() {
         },
         last_modification: before.last_modification,
     };
-    assert_eq!(
-        fs::futimens(&file, &invalid),
-        Err(Errno::INVAL),
-        "the direct kernel timestamp validator must reject noncanonical nanoseconds",
-    );
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(
+            fs::futimens(&file, &invalid),
+            Err(Errno::INVAL),
+            "the direct kernel timestamp validator must reject noncanonical nanoseconds",
+        );
 
-    let observed_after = fs::fstat(&file).expect("observe timestamps after kernel rejection");
-    assert_eq!(
-        (observed_after.st_atime, observed_after.st_atime_nsec),
-        (observed_before.st_atime, observed_before.st_atime_nsec),
-    );
-    assert_eq!(
-        (observed_after.st_mtime, observed_after.st_mtime_nsec),
-        (observed_before.st_mtime, observed_before.st_mtime_nsec),
-    );
+        let observed_after = fs::fstat(&file).expect("observe timestamps after kernel rejection");
+        assert_eq!(
+            (observed_after.st_atime, observed_after.st_atime_nsec),
+            (observed_before.st_atime, observed_before.st_atime_nsec),
+        );
+        assert_eq!(
+            (observed_after.st_mtime, observed_after.st_mtime_nsec),
+            (observed_before.st_mtime, observed_before.st_mtime_nsec),
+        );
+    }
+    // XNU carries an overflowing nanosecond count into the seconds instead of
+    // rejecting the record.
+    #[cfg(target_os = "macos")]
+    {
+        fs::futimens(&file, &invalid).expect("Darwin normalizes overflowing nanoseconds");
+        let observed_after = fs::fstat(&file).expect("observe normalized timestamps");
+        assert_eq!((observed_after.st_atime, observed_after.st_atime_nsec), (1, 0));
+        assert_eq!(
+            (observed_after.st_mtime, observed_after.st_mtime_nsec),
+            (observed_before.st_mtime, observed_before.st_mtime_nsec),
+        );
+    }
 }

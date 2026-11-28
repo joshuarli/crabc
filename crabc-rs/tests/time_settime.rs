@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::time::{self, ClockId, Timespec};
 use crabc_rs::Errno;
 

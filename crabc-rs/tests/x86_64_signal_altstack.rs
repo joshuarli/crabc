@@ -1,5 +1,4 @@
-#![cfg(target_os = "linux")]
-
+#[cfg(target_os = "linux")]
 use core::arch::global_asm;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -8,8 +7,10 @@ use crabc_rs::{signal, Errno};
 static STACK_BASE: AtomicUsize = AtomicUsize::new(0);
 static STACK_END: AtomicUsize = AtomicUsize::new(0);
 static OBSERVED: AtomicUsize = AtomicUsize::new(0);
+#[cfg(target_os = "linux")]
 static VALUE: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 global_asm!(
     ".global signal_altstack_test_restorer",
@@ -19,6 +20,7 @@ global_asm!(
     "syscall",
 );
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 global_asm!(
     ".global signal_altstack_test_restorer",
@@ -28,6 +30,7 @@ global_asm!(
     "svc #0",
 );
 
+#[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn __errno_location() -> *mut i32;
     fn signal_altstack_test_restorer();
@@ -36,6 +39,7 @@ unsafe extern "C" {
 #[repr(align(16))]
 struct StackMemory([u8; 65536]);
 
+#[cfg(target_os = "linux")]
 unsafe extern "C" fn info_handler(
     received: signal::Signal, info: *mut signal::SigInfo, context: *mut c_void,
 ) {
@@ -85,6 +89,7 @@ unsafe extern "C" fn simple_handler(received: signal::Signal) {
     OBSERVED.store(usize::from(received == signal::Signal::USR1 && on_stack), Ordering::Relaxed);
 }
 
+#[cfg(target_os = "linux")]
 fn raw_action() -> crabc_core::signal::KernelSigAction {
     let mut action = core::mem::MaybeUninit::uninit();
     // SAFETY: The output is writable compact x86-64 kernel action storage.
@@ -94,6 +99,7 @@ fn raw_action() -> crabc_core::signal::KernelSigAction {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_signal_altstack_action_suspend_composition() {
     let mut blocked = signal::SignalSet::EMPTY;
@@ -185,6 +191,131 @@ fn x86_64_signal_altstack_action_suspend_composition() {
         let simple = signal::SigAction::with_mask(signal::SigHandler::Simple(simple_handler),
             handler_mask, signal::SigActionFlags::ONSTACK | signal::SigActionFlags::SIGINFO);
         #[cfg(target_arch = "aarch64")]
+        let simple = signal::SigAction::new(signal::SigHandler::Simple(simple_handler),
+            handler_mask, signal::SigActionFlags::ONSTACK | signal::SigActionFlags::SIGINFO);
+        assert!(!simple.flags().contains(signal::SigActionFlags::SIGINFO));
+        signal::sigaction(signal::Signal::USR1, Some(&simple)).unwrap();
+        signal::raise(signal::Signal::USR1).unwrap();
+        assert_eq!(signal::suspend(&suspended_mask), Err(Errno::INTR));
+        assert_eq!(OBSERVED.load(Ordering::Relaxed), 1);
+        assert_eq!(signal::current_mask().unwrap(), caller_mask);
+        signal::sigaction(signal::Signal::USR1, Some(&original_action)).unwrap();
+        signal::sigaltstack(Some(&signal::Stack::disabled())).unwrap();
+        assert!(signal::sigaltstack(None).unwrap().flags().contains(signal::StackFlags::DISABLE));
+        signal::sigaltstack(Some(&original_stack)).unwrap();
+    }
+    signal::set_mask(&original_mask).unwrap();
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn darwin_info_handler(
+    received: signal::Signal, info: *mut signal::SigInfo, context: *mut c_void,
+) {
+    let local = 0_u8;
+    let address = core::ptr::addr_of!(local) as usize;
+    let mut observations = usize::from(received == signal::Signal::USR1);
+    if address >= STACK_BASE.load(Ordering::Relaxed)
+        && address < STACK_END.load(Ordering::Relaxed)
+    {
+        observations |= 2;
+    }
+    // SAFETY: libSystem supplies a live, initialized siginfo record during
+    // this three-argument handler invocation; this copy never escapes it.
+    let info = unsafe { info.read() };
+    if info.signal() == Some(received) {
+        observations |= 4;
+    }
+    if !context.is_null() {
+        observations |= 8;
+    }
+    if let Ok(mask) = signal::current_mask() {
+        if mask.contains(received) && mask.contains(signal::Signal::USR2) {
+            observations |= 16;
+        }
+    }
+    // SAFETY: Querying owns no stack memory. Disabling an active alternate
+    // stack must fail; the allocated stack remains installed and live.
+    unsafe {
+        if let Ok(stack) = signal::sigaltstack(None) {
+            if stack.flags().contains(signal::StackFlags::ONSTACK) {
+                observations |= 32;
+            }
+        }
+        // XNU reports disabling the active stack as EINVAL rather than EPERM.
+        if matches!(signal::sigaltstack(Some(&signal::Stack::disabled())), Err(Errno::INVAL)) {
+            observations |= 64;
+        }
+    }
+    OBSERVED.store(observations, Ordering::Relaxed);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_signal_altstack_action_suspend_composition() {
+    let mut blocked = signal::SignalSet::EMPTY;
+    blocked.insert(signal::Signal::USR1);
+    blocked.insert(signal::Signal::USR2);
+    let original_mask = signal::block(&blocked).unwrap();
+    if std::env::var_os("CRABC_SIGNAL_ALTSTACK_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "x86_64_signal_altstack_action_suspend_composition", "--test-threads=1"])
+            .env("CRABC_SIGNAL_ALTSTACK_CHILD", "1").output().unwrap();
+        signal::set_mask(&original_mask).unwrap();
+        assert!(output.status.success(), "isolated alt-stack child: {:?}\n{}\n{}",
+            output.status, String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+
+    let caller_mask = signal::current_mask().unwrap();
+    let mut memory = Box::new(StackMemory([0; 65536]));
+    let base = memory.0.as_mut_ptr();
+    let stack = signal::Stack::new(base, memory.0.len());
+    STACK_BASE.store(base as usize, Ordering::Relaxed);
+    STACK_END.store(base as usize + memory.0.len(), Ordering::Relaxed);
+    // SAFETY: The child exclusively owns aligned stack memory until the old
+    // stack is restored after all handlers have returned. All handlers use
+    // only libSystem signal calls and lock-free atomics and never unwind.
+    unsafe {
+        let original_stack = signal::sigaltstack(None).unwrap();
+        let tiny = signal::Stack::new(base, 1);
+        assert_eq!(signal::sigaltstack(Some(&tiny)).unwrap_err(), Errno::NOMEM);
+        let unchanged = signal::sigaltstack(None).unwrap();
+        assert_eq!(unchanged.as_mut_ptr(), original_stack.as_mut_ptr());
+        assert_eq!(unchanged.size(), original_stack.size());
+        assert_eq!(unchanged.flags(), original_stack.flags());
+        signal::sigaltstack(Some(&stack)).unwrap();
+        let enabled = signal::sigaltstack(None).unwrap();
+        assert_eq!(enabled.as_mut_ptr(), base);
+        assert_eq!(enabled.size(), memory.0.len());
+        assert!(enabled.flags().is_empty());
+
+        let mut handler_mask = signal::SignalSet::EMPTY;
+        handler_mask.insert(signal::Signal::USR2);
+        let action = signal::SigAction::new(signal::SigHandler::SigInfo(darwin_info_handler),
+            handler_mask, signal::SigActionFlags::ONSTACK);
+        assert!(action.flags().contains(signal::SigActionFlags::SIGINFO));
+        assert_eq!(action.mask(), handler_mask);
+        let original_action = signal::sigaction(signal::Signal::USR1, Some(&action)).unwrap();
+        let queried = signal::sigaction(signal::Signal::USR1, None).unwrap();
+        assert!(matches!(queried.handler(), signal::SigHandler::SigInfo(_)));
+        assert_eq!(queried.mask(), handler_mask);
+        assert!(queried.flags().contains(signal::SigActionFlags::ONSTACK | signal::SigActionFlags::SIGINFO));
+
+        // A queried action reinstalls its libSystem record verbatim.
+        let replaced = signal::sigaction(signal::Signal::USR1, Some(&queried)).unwrap();
+        let reinstalled = signal::sigaction(signal::Signal::USR1, None).unwrap();
+        assert_eq!((reinstalled.mask(), reinstalled.flags()), (replaced.mask(), replaced.flags()));
+
+        let mut suspended_mask = caller_mask;
+        suspended_mask.remove(signal::Signal::USR1);
+        signal::raise(signal::Signal::USR1).unwrap();
+        assert!(signal::pending().unwrap().contains(signal::Signal::USR1));
+        assert_eq!(signal::suspend(&suspended_mask), Err(Errno::INTR));
+        assert_eq!(OBSERVED.load(Ordering::Relaxed), 127);
+        assert_eq!(signal::current_mask().unwrap(), caller_mask);
+        assert!(!signal::pending().unwrap().contains(signal::Signal::USR1));
+        assert!(signal::sigaltstack(None).unwrap().flags().is_empty());
+
         let simple = signal::SigAction::new(signal::SigHandler::Simple(simple_handler),
             handler_mask, signal::SigActionFlags::ONSTACK | signal::SigActionFlags::SIGINFO);
         assert!(!simple.flags().contains(signal::SigActionFlags::SIGINFO));

@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
@@ -124,15 +123,22 @@ fn x86_64_current_dir_name_falls_back_for_invalid_pwd_snapshots() {
     }
 }
 
+// APFS stores names as UTF-8 and rejects other byte sequences, so Darwin
+// checks byte preservation with non-ASCII UTF-8 names.
+#[cfg(target_os = "linux")]
+const NON_UTF8_NAMES: [&[u8]; 2] = [b"physical-\xff", b"logical-\xfe"];
+#[cfg(target_os = "macos")]
+const NON_UTF8_NAMES: [&[u8]; 2] = ["physical-\u{e9}".as_bytes(), "logical-\u{fc}".as_bytes()];
+
 #[test]
 fn x86_64_current_dir_name_preserves_validated_non_utf8_pwd_bytes() {
     let fixture = LogicalCwdFixture::new();
     let physical = fixture
         .root()
-        .join(OsString::from_vec(b"physical-\xff".to_vec()));
+        .join(OsString::from_vec(NON_UTF8_NAMES[0].to_vec()));
     let logical = fixture
         .root()
-        .join(OsString::from_vec(b"logical-\xfe".to_vec()));
+        .join(OsString::from_vec(NON_UTF8_NAMES[1].to_vec()));
     std::fs::create_dir(&physical).expect("create non-UTF-8 physical fixture directory");
     std::os::unix::fs::symlink(&physical, &logical)
         .expect("create non-UTF-8 logical current-directory symlink");

@@ -1,7 +1,7 @@
-#![cfg(target_os = "linux")]
 
 use crabc_rs::process::{self, Resource, Rlimit};
 
+#[cfg(target_os = "linux")]
 const RESOURCES: &[Resource] = &[
     Resource::Cpu,
     Resource::Fsize,
@@ -19,6 +19,18 @@ const RESOURCES: &[Resource] = &[
     Resource::Nice,
     Resource::Rtprio,
     Resource::Rttime,
+];
+#[cfg(target_os = "macos")]
+const RESOURCES: &[Resource] = &[
+    Resource::Cpu,
+    Resource::Fsize,
+    Resource::Data,
+    Resource::Stack,
+    Resource::Core,
+    Resource::As,
+    Resource::Memlock,
+    Resource::Nproc,
+    Resource::Nofile,
 ];
 
 fn assert_limit_invariant(resource: Resource, limit: Rlimit) {

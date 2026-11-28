@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 #![cfg(feature = "alloc")]
 
 use std::ffi::CStr;
@@ -7,6 +6,11 @@ use crabc_rs::{process, signal::Signal, Errno, Pid};
 
 fn cstr(bytes: &'static [u8]) -> &'static CStr {
     CStr::from_bytes_with_nul(bytes).expect("test C strings include one terminal NUL")
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
 }
 
 fn sleeping_child() -> process::Child {
@@ -58,9 +62,13 @@ fn x86_64_kill_process_delivers_to_a_child_by_pid() {
     let pid = child.pid();
     process::kill_process(pid, Signal::TERM).expect("signal the child by PID");
     let mut status = 0;
+    #[cfg(target_os = "linux")]
     // SAFETY: `pid` names this test's unreaped child and `status` is writable.
     let reaped = unsafe { crabc_core::process::wait4_raw(pid.as_raw_pid(), &mut status, 0) }
         .expect("reap the PID-addressed child");
+    #[cfg(target_os = "macos")]
+    // SAFETY: `pid` names this test's unreaped child and `status` is writable.
+    let reaped = unsafe { waitpid(pid.as_raw_pid(), &mut status, 0) };
     assert_eq!(reaped, pid.as_raw_pid());
     assert_eq!(status & 0x7f, 15, "the child terminated by SIGTERM");
 }

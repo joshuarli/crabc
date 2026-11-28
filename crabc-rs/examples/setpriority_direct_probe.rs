@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native Linux `setpriority` operation.
 
 #![no_std]

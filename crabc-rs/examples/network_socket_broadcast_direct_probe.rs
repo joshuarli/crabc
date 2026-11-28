@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the direct Linux/AArch64 `SO_BROADCAST` seam.
 
 #![no_std]

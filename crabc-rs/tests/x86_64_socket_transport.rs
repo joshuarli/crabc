@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 
 use core::mem::MaybeUninit;
 
@@ -16,6 +15,7 @@ fn loopback_v6(port: u16) -> SocketAddress {
     )
 }
 
+#[cfg(target_os = "linux")]
 fn tcp_loopback_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     let listener = net::socket(
         net::AddressFamily::INET,
@@ -37,6 +37,7 @@ fn tcp_loopback_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     (sender, receiver)
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn tcp_trunc_reports_discarded_count_without_initializing_the_receive_buffer() {
     let (sender, receiver) = tcp_loopback_pair();
@@ -81,6 +82,7 @@ fn tcp_trunc_reports_discarded_count_without_initializing_the_receive_buffer() {
     assert_eq!(&storage, b"efgh");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn tcp_trunc_recvmsg_preserves_count_with_empty_initialized_segments() {
     let (sender, receiver) = tcp_loopback_pair();
@@ -101,6 +103,7 @@ fn tcp_trunc_recvmsg_preserves_count_with_empty_initialized_segments() {
     assert_eq!(lengths, [0, 0]);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn tcp_trunc_recvmmsg_keeps_completed_disposition_across_reuse_partial_and_error() {
     let (sender, receiver) = tcp_loopback_pair();
@@ -148,6 +151,7 @@ fn tcp_trunc_recvmmsg_keeps_completed_disposition_across_reuse_partial_and_error
     assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"mnop");
 }
 
+#[cfg(target_os = "linux")]
 fn udp_loopback_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     let receiver = net::socket(net::AddressFamily::INET, net::SocketType::DGRAM,
         net::SocketFlags::CLOEXEC, None).unwrap();
@@ -158,6 +162,7 @@ fn udp_loopback_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
     (sender, receiver)
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn udp_trunc_preserves_full_datagram_count_and_copied_prefix_in_every_receive_form() {
     let (sender, receiver) = udp_loopback_pair();
@@ -205,6 +210,7 @@ fn udp_trunc_preserves_full_datagram_count_and_copied_prefix_in_every_receive_fo
     assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::DONTWAIT), Err(crabc_rs::Errno::AGAIN));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn unix_stream_trunc_copies_payload_for_scalar_vectored_and_batched_receives() {
     let (sender, receiver) = net::socketpair(net::AddressFamily::UNIX, net::SocketType::STREAM,
@@ -229,6 +235,7 @@ fn unix_stream_trunc_copies_payload_for_scalar_vectored_and_batched_receives() {
     assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"abcd");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn tcp_urgent_peek_copy_and_discard_preserve_initialized_prefixes() {
     let (sender, receiver) = tcp_loopback_pair();
@@ -272,6 +279,7 @@ fn tcp_urgent_peek_copy_and_discard_preserve_initialized_prefixes() {
     assert!(unsafe { messages[0].initialized_segments() }.all(|prefix| prefix.is_empty()));
 }
 
+#[cfg(target_os = "linux")]
 fn udp_error_queue_sender() -> crabc_rs::OwnedFd {
     let sender = net::socket(net::AddressFamily::INET, net::SocketType::DGRAM,
         net::SocketFlags::CLOEXEC, None).unwrap();
@@ -304,6 +312,7 @@ fn udp_error_queue_sender() -> crabc_rs::OwnedFd {
     sender
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn udp_error_queue_trunc_copies_payload_in_every_receive_form() {
     let flags = net::RecvFlags::ERRQUEUE | net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT;
@@ -367,6 +376,7 @@ fn udp_error_queue_trunc_copies_payload_in_every_receive_form() {
     assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"abcd");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn copied_batches_preserve_prior_prefixes_flags_and_counts_on_partial_and_error() {
     let udp = udp_loopback_pair();
@@ -410,6 +420,7 @@ fn copied_batches_preserve_prior_prefixes_flags_and_counts_on_partial_and_error(
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn sendmmsg_rejects_receive_records_before_reading_payload() {
     let (sender, _receiver) = udp_loopback_pair();
@@ -422,6 +433,7 @@ fn sendmmsg_rejects_receive_records_before_reading_payload() {
     assert_eq!(messages[0].bytes(), 0);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn recvmmsg_rejects_send_records_before_writing_payload() {
     let (sender, receiver) = udp_loopback_pair();
@@ -434,6 +446,7 @@ fn recvmmsg_rejects_send_records_before_writing_payload() {
     assert_eq!(messages[0].bytes(), 0);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn mixed_message_batches_reject_atomically_without_payload_or_timeout_changes() {
     let (sender, receiver) = udp_loopback_pair();
@@ -470,6 +483,7 @@ fn mixed_message_batches_reject_atomically_without_payload_or_timeout_changes() 
     assert_eq!(&received[..4], b"next");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn empty_message_batches_preserve_the_queued_datagram() {
     let (sender, receiver) = udp_loopback_pair();
@@ -536,18 +550,21 @@ fn descriptor_addressed_udp_round_trip_reports_bound_and_source_endpoints() {
     )
     .expect("create native UDP receiver");
     assert_eq!(net::sockopt::socket_type(&receiver).unwrap(), net::SocketType::DGRAM);
-    assert_eq!(net::sockopt::socket_domain(&receiver).unwrap(), net::AddressFamily::INET);
-    assert_eq!(
-        net::sockopt::socket_protocol(&receiver)
-            .unwrap()
-            .expect("UDP protocol is concrete after native socket creation")
-            .as_raw()
-            .get(),
-        17,
-    );
-    let cookie = net::sockopt::socket_cookie(&receiver).expect("read stable UDP cookie");
-    assert_ne!(cookie, 0);
-    assert_eq!(net::sockopt::socket_cookie(&receiver).unwrap(), cookie);
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(net::sockopt::socket_domain(&receiver).unwrap(), net::AddressFamily::INET);
+        assert_eq!(
+            net::sockopt::socket_protocol(&receiver)
+                .unwrap()
+                .expect("UDP protocol is concrete after native socket creation")
+                .as_raw()
+                .get(),
+            17,
+        );
+        let cookie = net::sockopt::socket_cookie(&receiver).expect("read stable UDP cookie");
+        assert_ne!(cookie, 0);
+        assert_eq!(net::sockopt::socket_cookie(&receiver).unwrap(), cookie);
+    }
     net::sockopt::set_socket_broadcast(&receiver, true).expect("enable broadcast option");
     assert!(net::sockopt::socket_broadcast(&receiver).unwrap());
     net::bind(&receiver, loopback_v4(0)).expect("bind native UDP receiver");
@@ -632,11 +649,13 @@ fn loopback_tcp_connect_accept_and_peer_name_preserve_typed_addresses() {
         None,
     )
     .expect("create native TCP listener");
+    #[cfg(target_os = "linux")]
     assert!(!net::sockopt::socket_acceptconn(&listener).unwrap());
     net::sockopt::set_socket_oobinline(&listener, true).expect("enable inline urgent data");
     assert!(net::sockopt::socket_oobinline(&listener).unwrap());
     net::bind(&listener, loopback_v4(0)).expect("bind native TCP listener");
     net::listen(&listener, 4).expect("listen on native TCP listener");
+    #[cfg(target_os = "linux")]
     assert!(net::sockopt::socket_acceptconn(&listener).unwrap());
     let local = net::getsockname(&listener).expect("read native TCP listener endpoint");
 
@@ -665,7 +684,17 @@ fn loopback_tcp_connect_accept_and_peer_name_preserve_typed_addresses() {
         b"tcp-transport".len()
     );
     let mut payload = [0_u8; 32];
+    #[cfg(target_os = "linux")]
     let (initialized, count) = net::recv(&accepted, &mut payload, net::RecvFlags::empty()).unwrap();
+    // XNU delivers loopback TCP asynchronously, so the nonblocking receiver
+    // can report EAGAIN before the sent bytes arrive.
+    #[cfg(target_os = "macos")]
+    let (initialized, count) = loop {
+        match net::recv(&accepted, &mut payload, net::RecvFlags::empty()) {
+            Err(crabc_rs::Errno::AGAIN) => std::thread::yield_now(),
+            result => break result.unwrap(),
+        }
+    };
     assert_eq!(initialized, b"tcp-transport".len());
     assert_eq!(&payload[..count], b"tcp-transport");
 
@@ -682,6 +711,7 @@ fn loopback_tcp_connect_accept_and_peer_name_preserve_typed_addresses() {
     assert_eq!(net::getpeername(&plain_accepted).unwrap(), plain_local);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn typed_socket_option_and_batched_messages_round_trip() {
     let (sender, receiver) = net::socketpair(

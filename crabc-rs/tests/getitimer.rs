@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 use core::time::Duration;
 
@@ -26,21 +26,24 @@ fn native_getitimer_reads_all_closed_kinds_without_mutating_timer_state() {
 fn interval_timer_selector_rejects_an_invalid_linux_kind() {
     assert_eq!(
         IntervalTimerKind::try_from(3),
-        Err(crabc_core::Errno::INVAL)
+        Err(crabc_rs::Errno::INVAL)
     );
 
     // Exercise the raw seam as well: Linux rejects selector 3 with EINVAL,
     // while the valid output storage remains untouched by this failed query.
-    let mut value = MaybeUninit::<crabc_core::time::KernelItimerval>::uninit();
-    let result = unsafe { crabc_core::time::getitimer_raw(3, value.as_mut_ptr().cast()) };
-    assert_eq!(result, Err(crabc_core::Errno::INVAL));
+    #[cfg(target_os = "linux")]
+    {
+        let mut value = MaybeUninit::<crabc_core::time::KernelItimerval>::uninit();
+        let result = unsafe { crabc_core::time::getitimer_raw(3, value.as_mut_ptr().cast()) };
+        assert_eq!(result, Err(crabc_core::Errno::INVAL));
+    }
 }
 
 #[test]
 fn getitimer_error_keeps_kernel_errno_separate_from_validation() {
     assert_eq!(
-        GetitimerError::Kernel(crabc_core::Errno::INVAL).kernel_errno(),
-        Some(crabc_core::Errno::INVAL),
+        GetitimerError::Kernel(crabc_rs::Errno::INVAL).kernel_errno(),
+        Some(crabc_rs::Errno::INVAL),
     );
     assert_eq!(GetitimerError::InvalidKernelValue.kernel_errno(), None);
 }

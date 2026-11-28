@@ -1,10 +1,10 @@
-#![cfg(target_os = "linux")]
 
 use core::convert::TryFrom;
 use core::mem::{align_of, offset_of, size_of};
 
 use crabc_rs::time::{self, ClockId, Timespec, NANOS_PER_SECOND};
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_timespec_record_matches_linux_wire_shape() {
     assert_eq!(size_of::<Timespec>(), 16);
@@ -83,4 +83,25 @@ fn x86_64_process_cpu_time_is_a_nonnegative_duration() {
 
     assert_ne!(checksum, 0);
     assert!(after >= before);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_timespec_record_matches_darwin_wire_shape() {
+    assert_eq!(size_of::<Timespec>(), 16);
+    assert_eq!(align_of::<Timespec>(), 8);
+    assert_eq!(offset_of!(Timespec, tv_sec), 0);
+    assert_eq!(offset_of!(Timespec, tv_nsec), 8);
+    assert_eq!(ClockId::Realtime as i32, 0);
+    assert_eq!(ClockId::MonotonicRaw as i32, 4);
+    assert_eq!(ClockId::MonotonicRawApprox as i32, 5);
+    assert_eq!(ClockId::Monotonic as i32, 6);
+    assert_eq!(ClockId::UptimeRaw as i32, 8);
+    assert_eq!(ClockId::UptimeRawApprox as i32, 9);
+    assert_eq!(ClockId::ProcessCPUTime as i32, 12);
+    assert_eq!(ClockId::ThreadCPUTime as i32, 16);
+    assert_eq!(NANOS_PER_SECOND, 1_000_000_000);
+    assert_eq!(ClockId::try_from(12), Ok(ClockId::ProcessCPUTime));
+    assert_eq!(ClockId::try_from(16), Ok(ClockId::ThreadCPUTime));
+    assert_eq!(ClockId::try_from(1), Err(crabc_rs::Errno::INVAL));
 }

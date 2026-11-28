@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![cfg(target_os = "linux")]
 
 use core::ffi::CStr;
 use core::mem::MaybeUninit;

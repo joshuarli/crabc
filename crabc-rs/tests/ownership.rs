@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::fs::{self as stdfs, OpenOptions};
 use std::os::unix::fs::{symlink, MetadataExt};
@@ -44,6 +43,13 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn parent_gid(path: &Path) -> u32 {
+    stdfs::metadata(path.parent().expect("fixture has a parent"))
+        .expect("read fixture parent metadata")
+        .gid()
+}
+
 fn create_file(path: &Path) {
     OpenOptions::new()
         .write(true)
@@ -61,7 +67,11 @@ fn ownership_operations_accept_the_callers_existing_ids() {
     let group = process::getegid();
     let initial = stdfs::metadata(fixture.path()).expect("read fixture metadata");
     assert_eq!(initial.uid(), owner.as_raw());
+    #[cfg(target_os = "linux")]
     assert_eq!(initial.gid(), group.as_raw());
+    // BSD gives a new file its directory's group rather than the creator's.
+    #[cfg(target_os = "macos")]
+    assert_eq!(initial.gid(), parent_gid(fixture.path()));
 
     fs::chown(fixture.path(), Some(owner), Some(group)).expect("chown existing ownership");
     let after_chown = stdfs::metadata(fixture.path()).expect("read chown metadata");
@@ -108,7 +118,10 @@ fn lchown_uses_the_ownership_specific_nofollow_flag() {
     let target_metadata = stdfs::metadata(fixture.path()).expect("read symlink target metadata");
     assert!(target_metadata.file_type().is_file());
     assert_eq!(target_metadata.uid(), owner.as_raw());
+    #[cfg(target_os = "linux")]
     assert_eq!(target_metadata.gid(), group.as_raw());
+    #[cfg(target_os = "macos")]
+    assert_eq!(target_metadata.gid(), parent_gid(fixture.path()));
 }
 
 #[test]

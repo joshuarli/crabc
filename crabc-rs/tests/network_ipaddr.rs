@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[test]

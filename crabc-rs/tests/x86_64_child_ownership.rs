@@ -1,8 +1,55 @@
-#![cfg(target_os = "linux")]
 
 use std::ffi::CStr;
 
 use crabc_rs::{io, pipe, process, signal::Signal, Errno};
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+}
+
+/// Reports whether `pid` (or any child, for -1) can still be selected by a
+/// nonblocking wait, through the target's raw wait.
+fn unreaped_child_selectable(pid: i32) -> Result<i32, Errno> {
+    let mut status = 0_i32;
+    #[cfg(target_os = "linux")]
+    // SAFETY: `status` is writable Linux `int` storage.
+    let result = unsafe { crabc_core::process::wait4_raw(pid, &mut status, 1) };
+    // XNU tears down the transient child of a failed `posix_spawn` itself; a
+    // nonblocking wait can see it as running until it is gone, but it is never
+    // reported as reapable.
+    #[cfg(target_os = "macos")]
+    let result = {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // SAFETY: `status` is writable `int` storage; WNOHANG is 1 on Darwin.
+            match unsafe { waitpid(pid, &mut status, 1) } {
+                -1 => {
+                    let raw = std::io::Error::last_os_error().raw_os_error().unwrap();
+                    break Err(Errno::from_raw(raw).unwrap());
+                }
+                0 if std::time::Instant::now() < deadline => std::thread::yield_now(),
+                waited => break Ok(waited),
+            }
+        }
+    };
+    result
+}
+
+#[cfg(target_os = "linux")]
+const PID_SLOT: i32 = 20;
+#[cfg(target_os = "linux")]
+const RELEASE_SLOT: i32 = 21;
+#[cfg(target_os = "linux")]
+const SYNCHRONIZED_SCRIPT: &CStr = c"printf '%s\\n' \"$$\" >&20; IFS= read -r _ <&21; exit 23";
+// macOS's /bin/sh is dash, which accepts only single-digit redirection
+// descriptors.
+#[cfg(target_os = "macos")]
+const PID_SLOT: i32 = 8;
+#[cfg(target_os = "macos")]
+const RELEASE_SLOT: i32 = 9;
+#[cfg(target_os = "macos")]
+const SYNCHRONIZED_SCRIPT: &CStr = c"printf '%s\\n' \"$$\" >&8; IFS= read -r _ <&9; exit 23";
 
 fn cstr(bytes: &'static [u8]) -> &'static CStr {
     CStr::from_bytes_with_nul(bytes).expect("test C strings include one terminal NUL")
@@ -81,13 +128,9 @@ fn x86_64_prepared_child_reports_exec_failure_and_reaps_it() {
     .expect("prepare missing executable");
     assert_eq!(missing.spawn().unwrap_err(), Errno::NOENT);
 
-    let mut status = 0_i32;
-    // SAFETY: `status` is writable Linux `int` storage. The failed prepared
-    // spawn must have reaped its private child, so no child is selectable.
-    assert_eq!(
-        unsafe { crabc_core::process::wait4_raw(-1, &mut status, 1) }.unwrap_err(),
-        Errno::CHILD
-    );
+    // The failed prepared spawn must have reaped its private child, so no
+    // child is selectable.
+    assert_eq!(unreaped_child_selectable(-1).unwrap_err(), Errno::CHILD);
 }
 
 #[test]
@@ -129,15 +172,15 @@ fn x86_64_child_wait_nohang_returns_the_owner_until_the_child_is_reaped() {
     let actions = [
         process::FdAction::close(&pid_reader),
         process::FdAction::close(&release_writer),
-        process::FdAction::dup2(&pid_writer, 20),
-        process::FdAction::dup2(&release_reader, 21),
+        process::FdAction::dup2(&pid_writer, PID_SLOT),
+        process::FdAction::dup2(&release_reader, RELEASE_SLOT),
     ];
     let prepared = process::PreparedExec::new(
         cstr(b"/bin/sh\0"),
         &[
             cstr(b"sh\0"),
             cstr(b"-c\0"),
-            cstr(b"printf '%s\\n' \"$$\" >&20; IFS= read -r _ <&21; exit 23\0"),
+            SYNCHRONIZED_SCRIPT,
         ],
         &[],
     )
@@ -174,12 +217,8 @@ fn x86_64_child_wait_nohang_returns_the_owner_until_the_child_is_reaped() {
         .reaped()
         .expect("a blocking wait reports the child exit");
     assert_eq!(status.exit_status(), Some(23));
-    let mut raw_status = 0_i32;
-    // SAFETY: `raw_status` is writable; this only proves no child was left unreaped.
-    assert_eq!(
-        unsafe { crabc_core::process::wait4_raw(reported_pid, &mut raw_status, 1) },
-        Err(Errno::CHILD)
-    );
+    // This only proves no child was left unreaped.
+    assert_eq!(unreaped_child_selectable(reported_pid), Err(Errno::CHILD));
 }
 
 #[test]
@@ -201,8 +240,13 @@ fn x86_64_prepared_child_replaces_descriptor_actions() {
     // The parent owns a known slot which exec will close unless a retained
     // dup2 action clears its close-on-exec flag in the child.
     let target = io::fcntl_dupfd_cloexec(&writer, 64).unwrap();
+    #[cfg(target_os = "linux")]
     let command = std::ffi::CString::new(format!(
         "test ! -e /proc/self/fd/{}", target.as_raw_fd(),
+    )).unwrap();
+    #[cfg(target_os = "macos")]
+    let command = std::ffi::CString::new(format!(
+        "test ! -e /dev/fd/{}", target.as_raw_fd(),
     )).unwrap();
     let cleared = process::PreparedExec::new(
         cstr(b"/bin/sh\0"),
@@ -292,7 +336,10 @@ fn x86_64_child_stop_and_continue_reports_return_the_owner() {
     let child = match child.wait(process::WaitOptions::UNTRACED).expect("observe the stop") {
         process::WaitOutcome::Changed(child, status) => {
             assert!(status.stopped());
+            #[cfg(target_os = "linux")]
             assert_eq!(status.stopping_signal(), Some(19));
+            #[cfg(target_os = "macos")]
+            assert_eq!(status.stopping_signal(), Some(17));
             child
         }
         other => panic!("UNTRACED must report the stop: {other:?}"),
@@ -331,4 +378,32 @@ fn x86_64_child_wait_error_returns_the_owner() {
         .reaped()
         .expect("a blocking wait reports the termination");
     assert_eq!(status.terminating_signal(), Some(9));
+}
+
+// POSIX_SPAWN_CLOEXEC_DEFAULT closes every descriptor that no action names,
+// whether or not it has FD_CLOEXEC; open standard descriptors are inherited.
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_prepared_child_inherits_only_standard_and_named_descriptors() {
+    let (_reader, writer) = pipe::pipe().expect("create inheritable pipe");
+    assert!(!io::fcntl_getfd(&writer).unwrap().contains(io::FdFlags::CLOEXEC));
+    let unnamed = std::ffi::CString::new(format!(
+        "test ! -e /dev/fd/{} && test -e /dev/fd/0 && test -e /dev/fd/1 && test -e /dev/fd/2",
+        writer.as_raw_fd(),
+    )).unwrap();
+    let prepared = process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), unnamed.as_c_str()],
+        &[],
+    ).unwrap();
+    assert_eq!(prepared.spawn().unwrap().wait(process::WaitOptions::empty())
+        .unwrap().reaped().unwrap().exit_status(), Some(0));
+
+    let named = process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), cstr(b"test -e /dev/fd/7\0")],
+        &[],
+    ).unwrap().with_actions(&[process::FdAction::dup2(&writer, 7)]);
+    assert_eq!(named.spawn().unwrap().wait(process::WaitOptions::empty())
+        .unwrap().reaped().unwrap().exit_status(), Some(0));
 }

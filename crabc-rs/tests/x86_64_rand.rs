@@ -1,10 +1,13 @@
-#![cfg(target_os = "linux")]
 
+#[cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 
-use crabc_rs::rand::{self, GetRandomFlags, RandomState, GETENTROPY_MAX_LENGTH};
+#[cfg(target_os = "linux")]
+use crabc_rs::rand::GetRandomFlags;
+use crabc_rs::rand::{self, RandomState, GETENTROPY_MAX_LENGTH};
 use crabc_rs::Errno;
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_getrandom_uses_linux_flags_and_initializes_only_received_bytes() {
     assert_eq!(GetRandomFlags::NONBLOCK.bits(), 0x1);

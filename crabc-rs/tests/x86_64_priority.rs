@@ -1,18 +1,26 @@
-#![cfg(target_os = "linux")]
 
 use crabc_rs::process::{self, Pid, Priority, PriorityTarget};
 
 fn assert_priority(priority: Priority) {
+    #[cfg(target_os = "linux")]
     assert!((-20..=19).contains(&priority.as_raw()));
+    #[cfg(target_os = "macos")]
+    assert!((-20..=20).contains(&priority.as_raw()));
 }
 
 #[test]
 fn x86_64_priority_types_and_targets_are_closed() {
     assert_eq!(Priority::MIN.as_raw(), -20);
     assert_eq!(Priority::DEFAULT.as_raw(), 0);
+    #[cfg(target_os = "linux")]
     assert_eq!(Priority::MAX.as_raw(), 19);
+    #[cfg(target_os = "macos")]
+    assert_eq!(Priority::MAX.as_raw(), 20);
     assert_eq!(Priority::from_raw(-21), None);
+    #[cfg(target_os = "linux")]
     assert_eq!(Priority::from_raw(20), None);
+    #[cfg(target_os = "macos")]
+    assert_eq!(Priority::from_raw(21), None);
 
     assert_eq!(
         PriorityTarget::process(None).as_raw(),
@@ -28,6 +36,7 @@ fn x86_64_priority_types_and_targets_are_closed() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_getpriority_translates_the_nonnegative_kernel_encoding() {
     let raw = crabc_core::process::getpriority_raw(0, 0)

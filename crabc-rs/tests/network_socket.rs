@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use core::num::NonZeroU32;
 
 use crabc_rs::{io, net};
@@ -24,8 +23,14 @@ fn socket_returns_an_owned_descriptor_with_typed_creation_flags() {
 
 #[test]
 fn socket_flags_reject_unknown_bits_and_shutdown_uses_a_typed_mode() {
+    #[cfg(target_os = "linux")]
     assert!(
         net::SocketFlags::from_bits(0x4).is_none(),
+        "unknown socket creation flags must not be silently forwarded",
+    );
+    #[cfg(target_os = "macos")]
+    assert!(
+        net::SocketFlags::from_bits(0x1).is_none(),
         "unknown socket creation flags must not be silently forwarded",
     );
 

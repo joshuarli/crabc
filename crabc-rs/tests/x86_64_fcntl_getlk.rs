@@ -1,5 +1,5 @@
-#![cfg(target_os = "linux")]
 
+#[cfg(target_os = "linux")]
 use core::mem::{align_of, offset_of, size_of};
 use core::num::NonZeroU64;
 use crabc_rs::{fs, process, BorrowedFd, Errno};
@@ -72,13 +72,16 @@ fn child_record_lock_case() -> bool {
 
 #[test]
 fn x86_64_fcntl_getlk_matches_the_linux_flock_record_and_unlocked_query() {
-    assert_eq!(size_of::<crabc_core::process::KernelFlock>(), 32);
-    assert_eq!(align_of::<crabc_core::process::KernelFlock>(), 8);
-    assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_type), 0);
-    assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_whence), 2);
-    assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_start), 8);
-    assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_len), 16);
-    assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_pid), 24);
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(size_of::<crabc_core::process::KernelFlock>(), 32);
+        assert_eq!(align_of::<crabc_core::process::KernelFlock>(), 8);
+        assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_type), 0);
+        assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_whence), 2);
+        assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_start), 8);
+        assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_len), 16);
+        assert_eq!(offset_of!(crabc_core::process::KernelFlock, l_pid), 24);
+    }
 
     let (file, _cleanup) = fixture_file();
     // SAFETY: `file` remains open and is not closed through another alias for

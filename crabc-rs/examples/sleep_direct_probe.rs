@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native interrupt-aware sleep seam.
 
 #![no_std]

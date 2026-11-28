@@ -1,6 +1,6 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::process::{self, Pid, Priority, PriorityTarget};
 
+#[cfg(target_os = "linux")]
 #[test]
 fn priority_type_is_closed_to_linux_nice_range() {
     assert_eq!(Priority::MIN.as_raw(), -20);
@@ -28,6 +28,7 @@ fn priority_target_vocabulary_matches_pinned_linux_selectors() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn getpriority_translates_linux_nonnegative_syscall_encoding() {
     let raw = crabc_core::process::getpriority_raw(0, 0)
@@ -66,4 +67,16 @@ fn getpriority_errors_are_ordinary_results_without_a_minus_one_sentinel() {
         process::getpriority(PriorityTarget::Process(Some(missing))),
         Err(crabc_rs::Errno::SRCH),
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn priority_type_is_closed_to_darwin_nice_range() {
+    assert_eq!(Priority::MIN.as_raw(), -20);
+    assert_eq!(Priority::DEFAULT.as_raw(), 0);
+    assert_eq!(Priority::MAX.as_raw(), 20);
+    assert_eq!(Priority::from_raw(-20), Some(Priority::MIN));
+    assert_eq!(Priority::from_raw(20), Some(Priority::MAX));
+    assert_eq!(Priority::from_raw(-21), None);
+    assert_eq!(Priority::from_raw(21), None);
 }

@@ -1,6 +1,6 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::process;
 
+#[cfg(target_os = "linux")]
 fn proc_status_ids() -> ([u32; 4], [u32; 4]) {
     let status = std::fs::read_to_string("/proc/self/status")
         .expect("read the current process identity oracle");
@@ -19,6 +19,7 @@ fn proc_status_ids() -> ([u32; 4], [u32; 4]) {
     )
 }
 
+#[cfg(target_os = "linux")]
 fn parse_id_fields(value: &str) -> [u32; 4] {
     let mut fields = [0; 4];
     for (slot, text) in value.split_whitespace().take(4).enumerate() {
@@ -27,6 +28,7 @@ fn parse_id_fields(value: &str) -> [u32; 4] {
     fields
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn typed_identity_syscalls_match_linux_real_and_effective_ids() {
     let (uid, gid) = proc_status_ids();
@@ -45,6 +47,7 @@ fn typed_identity_syscalls_match_linux_real_and_effective_ids() {
     assert_eq!(real_gid.is_root(), real_gid.as_raw() == 0);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn typed_identity_triples_match_linux_real_effective_saved_ids() {
     let (uid, gid) = proc_status_ids();
@@ -63,6 +66,7 @@ fn typed_identity_triples_match_linux_real_effective_saved_ids() {
     assert_eq!(group_ids.effective, process::getegid());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn typed_identity_triples_are_read_only_and_stable() {
     let first_uid = process::getresuid().expect("read Linux user identity triple");
@@ -72,4 +76,38 @@ fn typed_identity_triples_are_read_only_and_stable() {
 
     assert_eq!(first_uid, second_uid);
     assert_eq!(first_gid, second_gid);
+}
+
+/// Reads one identity from `/usr/bin/id`, a child that inherits this
+/// process's real and effective IDs.
+#[cfg(target_os = "macos")]
+fn id_oracle(flag: &str) -> u32 {
+    let output = std::process::Command::new("/usr/bin/id")
+        .arg(flag)
+        .output()
+        .expect("run the id identity oracle");
+    assert!(output.status.success(), "id {flag} failed");
+    core::str::from_utf8(&output.stdout)
+        .expect("id prints ASCII")
+        .trim()
+        .parse()
+        .expect("id prints a numeric identity")
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn typed_identity_calls_match_darwin_real_and_effective_ids() {
+    let real_uid = process::getuid();
+    let effective_uid = process::geteuid();
+    let real_gid = process::getgid();
+    let effective_gid = process::getegid();
+
+    assert_eq!(real_uid.as_raw(), id_oracle("-ru"));
+    assert_eq!(effective_uid.as_raw(), id_oracle("-u"));
+    assert_eq!(real_gid.as_raw(), id_oracle("-rg"));
+    assert_eq!(effective_gid.as_raw(), id_oracle("-g"));
+    assert_eq!(real_uid, process::Uid::from_raw(real_uid.as_raw()));
+    assert_eq!(real_gid, process::Gid::from_raw(real_gid.as_raw()));
+    assert_eq!(real_uid.is_root(), real_uid.as_raw() == 0);
+    assert_eq!(real_gid.is_root(), real_gid.as_raw() == 0);
 }

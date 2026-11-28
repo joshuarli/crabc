@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 #![no_std]
 #![crate_type = "staticlib"]
 

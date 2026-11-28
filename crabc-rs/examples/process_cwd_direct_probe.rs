@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the process CWD mutation seam.
 //!
 //! The registered static-library target lets the architecture harness inspect

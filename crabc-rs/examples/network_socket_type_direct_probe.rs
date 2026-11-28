@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the typed `SO_TYPE` seam.
 //!
 //! This source is intentionally unregistered until the architecture harness

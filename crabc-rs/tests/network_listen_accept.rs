@@ -1,9 +1,11 @@
-#![cfg(target_os = "linux")]
 use std::io::Write;
 use std::net::TcpStream;
 use std::os::unix::net::{UnixListener, UnixStream};
 
+#[cfg(target_os = "linux")]
 use crabc_rs::resolver::{IpAddress, SocketAddress};
+#[cfg(target_os = "macos")]
+use crabc_rs::net::{IpAddress, SocketAddress};
 use crabc_rs::{io, net, Errno};
 
 fn native_listener() -> (crabc_rs::OwnedFd, SocketAddress) {
@@ -39,6 +41,7 @@ fn listen_and_accept_return_an_owned_stream_descriptor() {
     assert_eq!(&received[..length], b"native-accept");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn accept4_applies_cloexec_and_nonblock_atomically() {
     let (listener, address) = native_listener();
@@ -101,7 +104,13 @@ fn acceptfrom_with_decodes_the_peer_and_preserves_accept4_flags() {
 
 #[test]
 fn acceptfrom_rejects_an_unrepresented_socket_family() {
-    let path = std::env::temp_dir().join(format!(
+    #[cfg(target_os = "linux")]
+    let directory = std::env::temp_dir();
+    // macOS's per-user temporary directory is too long for the 104-byte
+    // Unix socket path.
+    #[cfg(target_os = "macos")]
+    let directory = std::path::PathBuf::from("/tmp");
+    let path = directory.join(format!(
         "crabc-native-accept-{}-{}",
         std::process::id(),
         std::thread::current().name().unwrap_or("test")
@@ -129,4 +138,68 @@ fn accept_with_uses_the_typed_accept_flags() {
     assert!(io::fcntl_getfd(&accepted)
         .unwrap()
         .contains(io::FdFlags::CLOEXEC));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn accept_with_applies_cloexec_and_nonblock_after_accept() {
+    let (listener, address) = native_listener();
+    assert!(matches!(
+        net::accept_with(&listener, net::SocketFlags::from_bits_retain(0x1)),
+        Err(Errno::INVAL)
+    ));
+    let _client = TcpStream::connect(("127.0.0.1", address.port()))
+        .expect("connect standard-library client to native listener");
+    let accepted = net::accept_with(
+        &listener,
+        net::SocketFlags::CLOEXEC | net::SocketFlags::NONBLOCK,
+    )
+    .expect("accept pending native connection with flags");
+
+    assert!(
+        io::fcntl_getfd(&accepted)
+            .expect("read accepted descriptor flags")
+            .contains(io::FdFlags::CLOEXEC),
+        "CLOEXEC must become FD_CLOEXEC on the accepted descriptor",
+    );
+    let mut byte = [0u8; 1];
+    assert_eq!(io::read(&accepted, &mut byte), Err(Errno::AGAIN));
+}
+
+// XNU copies a listener's O_NONBLOCK to each accepted socket; the facade
+// keeps Linux's contract that an accepted descriptor starts blocking.
+#[cfg(target_os = "macos")]
+#[test]
+fn accept_from_a_nonblocking_listener_returns_a_blocking_descriptor() {
+    let listener = net::socket(
+        net::AddressFamily::INET,
+        net::SocketType::STREAM,
+        net::SocketFlags::CLOEXEC | net::SocketFlags::NONBLOCK,
+        None,
+    )
+    .expect("create nonblocking IPv4 stream listener");
+    net::bind(&listener, SocketAddress::new(IpAddress::V4([127, 0, 0, 1]), 0))
+        .expect("bind nonblocking listener");
+    net::listen(&listener, 4).expect("enable nonblocking listener");
+    let address = net::getsockname(&listener).expect("read nonblocking listener address");
+    assert_eq!(net::accept(&listener).map(|_| ()), Err(Errno::AGAIN));
+
+    let mut client = TcpStream::connect(("127.0.0.1", address.port()))
+        .expect("connect standard-library client to nonblocking listener");
+    let accepted = loop {
+        match net::accept(&listener) {
+            Ok(accepted) => break accepted,
+            Err(Errno::AGAIN) => std::thread::yield_now(),
+            Err(error) => panic!("accept from nonblocking listener: {error}"),
+        }
+    };
+    assert!(!crabc_rs::fs::fcntl_getfl(&accepted)
+        .expect("read accepted status flags")
+        .contains(crabc_rs::fs::OFlags::NONBLOCK));
+    assert!(!io::fcntl_getfd(&accepted)
+        .expect("read accepted descriptor flags")
+        .contains(io::FdFlags::CLOEXEC));
+    client.write_all(b"b").expect("write through standard-library client");
+    let mut byte = [0u8; 1];
+    assert_eq!(io::read(&accepted, &mut byte), Ok(1));
 }

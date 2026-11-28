@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 
 use crabc_rs::process::{self, ResourceUsage, ResourceUsageTarget};
 
@@ -31,6 +30,7 @@ fn assert_usage_is_kernel_canonical(usage: ResourceUsage) {
 fn x86_64_resource_usage_target_vocabulary_matches_linux() {
     assert_eq!(ResourceUsageTarget::SelfProcess.as_raw(), 0);
     assert_eq!(ResourceUsageTarget::Children.as_raw(), -1);
+    #[cfg(target_os = "linux")]
     assert_eq!(ResourceUsageTarget::Thread.as_raw(), 1);
 }
 
@@ -39,6 +39,7 @@ fn x86_64_getrusage_reads_each_closed_target() {
     for target in [
         ResourceUsageTarget::SelfProcess,
         ResourceUsageTarget::Children,
+        #[cfg(target_os = "linux")]
         ResourceUsageTarget::Thread,
     ] {
         let usage = process::getrusage(target).expect("read Linux resource usage");

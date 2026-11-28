@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native process resource-limit query.
 //!
 //! This source is intentionally unregistered until the architecture harness

@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use std::process::Command;
 
 use crabc_rs::process::{self, Pid, Priority, PriorityTarget, Uid};
@@ -32,6 +31,7 @@ fn setpriority_current_process_is_isolated() {
 }
 
 fn isolated_setpriority_case() {
+    #[cfg(target_os = "linux")]
     assert_eq!(
         crabc_core::process::setpriority_raw(99, 0, 0),
         Err(Errno::INVAL),
@@ -47,9 +47,16 @@ fn isolated_setpriority_case() {
         process::setpriority_process_group(Some(missing), Priority::MAX),
         Err(Errno::SRCH),
     );
+    #[cfg(target_os = "linux")]
     assert_eq!(
         process::setpriority_user(Uid::from_raw(u32::MAX), Priority::MAX),
         Err(Errno::SRCH),
+    );
+    // XNU rejects the all-ones user ID itself rather than finding no process.
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        process::setpriority_user(Uid::from_raw(u32::MAX), Priority::MAX),
+        Err(Errno::INVAL),
     );
 
     process::setpriority_process(None, Priority::MAX)

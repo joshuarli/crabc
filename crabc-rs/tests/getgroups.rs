@@ -1,8 +1,8 @@
-#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 
 use crabc_rs::process::{self, Gid};
 
+#[cfg(target_os = "linux")]
 fn proc_supplementary_groups() -> Vec<u32> {
     let status = std::fs::read_to_string("/proc/self/status")
         .expect("read the current process group oracle");
@@ -16,6 +16,7 @@ fn proc_supplementary_groups() -> Vec<u32> {
         .collect()
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn query_and_fill_match_linux_supplementary_group_snapshot() {
     let expected = proc_supplementary_groups();

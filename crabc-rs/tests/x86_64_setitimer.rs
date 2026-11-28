@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 
 use core::time::Duration;
 use std::process::Command;
@@ -142,7 +141,17 @@ fn isolated_setitimer_case() {
     assert!(old_micros <= 600_000_000);
     assert_eq!(time::getitimer(IntervalTimerKind::Real).unwrap(), disarmed);
 
+    #[cfg(target_os = "linux")]
     assert_eq!(time::alarm(u32::MAX).expect("arm largest alias second setting"), 0);
+    // XNU rejects interval-timer values above 100,000,000 seconds.
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(
+            time::alarm(u32::MAX),
+            Err(time::IntervalTimerError::Kernel(crabc_rs::Errno::INVAL))
+        );
+        assert_eq!(time::alarm(100_000_000).expect("arm largest Darwin alias setting"), 0);
+    }
     assert_eq!(
         time::ualarm(0, 0).expect("saturating microsecond alias return"),
         u32::MAX

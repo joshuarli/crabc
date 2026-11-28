@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 
 use core::cell::Cell;
 use core::ffi::CStr;

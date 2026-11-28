@@ -1,7 +1,7 @@
-#![cfg(target_os = "linux")]
 
 use crabc_rs::process;
 
+#[cfg(target_os = "linux")]
 fn proc_status_ids() -> ([u32; 4], [u32; 4]) {
     let status = std::fs::read_to_string("/proc/self/status")
         .expect("read the current process identity oracle");
@@ -20,6 +20,7 @@ fn proc_status_ids() -> ([u32; 4], [u32; 4]) {
     )
 }
 
+#[cfg(target_os = "linux")]
 fn parse_id_fields(value: &str) -> [u32; 4] {
     let mut fields = [0; 4];
     for (slot, text) in value.split_whitespace().take(4).enumerate() {
@@ -42,6 +43,7 @@ fn x86_64_process_and_parent_ids_are_typed_and_stable() {
     assert_eq!(process::Pid::from_raw(0), None);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_scalar_and_saved_identity_queries_match_proc_status() {
     let (uid, gid) = proc_status_ids();
@@ -98,4 +100,29 @@ fn x86_64_exit_immediately_ends_the_thread_group_without_destructors() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("buffered bytes"), "BufWriter was flushed: {stdout:?}");
     assert!(!String::from_utf8_lossy(&output.stderr).contains("destructor ran"));
+}
+
+/// Reads one identity from `/usr/bin/id`, a child that inherits this
+/// process's real and effective IDs.
+#[cfg(target_os = "macos")]
+fn id_oracle(flag: &str) -> u32 {
+    let output = std::process::Command::new("/usr/bin/id")
+        .arg(flag)
+        .output()
+        .expect("run the id identity oracle");
+    assert!(output.status.success(), "id {flag} failed");
+    core::str::from_utf8(&output.stdout)
+        .expect("id prints ASCII")
+        .trim()
+        .parse()
+        .expect("id prints a numeric identity")
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_scalar_identity_queries_match_the_id_oracle() {
+    assert_eq!(process::getuid().as_raw(), id_oracle("-ru"));
+    assert_eq!(process::geteuid().as_raw(), id_oracle("-u"));
+    assert_eq!(process::getgid().as_raw(), id_oracle("-rg"));
+    assert_eq!(process::getegid().as_raw(), id_oracle("-g"));
 }

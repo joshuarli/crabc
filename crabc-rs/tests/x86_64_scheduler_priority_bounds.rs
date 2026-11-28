@@ -1,7 +1,7 @@
-#![cfg(target_os = "linux")]
 
 use crabc_rs::process::{self, SchedulerPolicy};
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_scheduler_priority_bounds_match_linux_policy_values() {
     let policies = [
@@ -30,5 +30,19 @@ fn x86_64_scheduler_priority_bounds_are_stable_read_only_observations() {
         let second = process::scheduler_priority_bounds(policy)
             .expect("second scheduler-priority observation");
         assert_eq!(first, second);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_scheduler_priority_bounds_match_darwin_policy_values() {
+    for policy in [
+        SchedulerPolicy::Other,
+        SchedulerPolicy::Fifo,
+        SchedulerPolicy::RoundRobin,
+    ] {
+        let bounds = process::scheduler_priority_bounds(policy)
+            .expect("Darwin must expose bounds for each admitted scheduler policy");
+        assert_eq!((bounds.minimum(), bounds.maximum()), (15, 47));
     }
 }

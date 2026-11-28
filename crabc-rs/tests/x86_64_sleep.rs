@@ -1,9 +1,9 @@
-#![cfg(target_os = "linux")]
-
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
-use crabc_rs::{process, signal, thread, time, Errno};
+#[cfg(target_os = "linux")]
+use crabc_rs::{process, thread};
+use crabc_rs::{signal, time, Errno};
 use crabc_rs::time::{SleepError, SleepOutcome};
 
 static SIGNAL_DELIVERED: AtomicBool = AtomicBool::new(false);
@@ -12,6 +12,7 @@ unsafe extern "C" fn interrupt_handler(_: signal::Signal) {
     SIGNAL_DELIVERED.store(true, Ordering::SeqCst);
 }
 
+#[cfg(target_os = "linux")]
 fn voluntary_context_switches(pid: i32, tid: i32) -> u64 {
     let status_path = format!("/proc/{pid}/task/{tid}/status");
     let status = std::fs::read_to_string(status_path)
@@ -23,6 +24,7 @@ fn voluntary_context_switches(pid: i32, tid: i32) -> u64 {
         .expect("task status must expose voluntary context switches")
 }
 
+#[cfg(target_os = "linux")]
 fn wait_until_nanosleep_is_blocked(pid: i32, tid: i32, initial_switches: u64) {
     let status_path = format!("/proc/{pid}/task/{tid}/status");
     loop {
@@ -62,6 +64,7 @@ fn x86_64_nanosleep_rejects_seconds_outside_linux_timespec_range() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_nanosleep_preserves_eintr_and_remaining_duration() {
     SIGNAL_DELIVERED.store(false, Ordering::SeqCst);
@@ -108,6 +111,65 @@ fn x86_64_nanosleep_preserves_eintr_and_remaining_duration() {
             // representation. Linux may round an interrupted remainder, so
             // this direct boundary deliberately preserves its positive value
             // rather than imposing a lossy comparison with `requested`.
+        }
+        SleepOutcome::Completed => panic!("signal must preserve EINTR as interrupted"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn pthread_self() -> usize;
+    fn pthread_kill(thread: usize, signal: i32) -> i32;
+}
+
+// Darwin exposes no task state for a sleeping thread, so the sender signals
+// after a delay long enough for the sleeper to have blocked, and the elapsed
+// monotonic time shows that the sleep did block before it was interrupted.
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_nanosleep_preserves_eintr_and_remaining_duration() {
+    SIGNAL_DELIVERED.store(false, Ordering::SeqCst);
+    let selected = signal::Signal::USR1;
+    let action = signal::SigAction::new(
+        signal::SigHandler::Simple(interrupt_handler),
+        signal::SignalSet::EMPTY,
+        signal::SigActionFlags::empty(),
+    );
+    // SAFETY: The handler is static and remains installed until restored
+    // below; it performs only an atomic signal-safe store.
+    let old_action = unsafe { signal::sigaction(selected, Some(&action)) }
+        .expect("install interruption handler");
+
+    // SAFETY: `pthread_self` has no preconditions; this thread outlives the
+    // sender, which joins before the handler is removed.
+    let sleeper = unsafe { pthread_self() };
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        // SAFETY: `sleeper` names the live sleeping thread.
+        assert_eq!(unsafe { pthread_kill(sleeper, selected.as_raw()) }, 0);
+    });
+
+    let requested = Duration::from_secs(2);
+    let before = time::clock_gettime(time::ClockId::Monotonic).expect("monotonic before");
+    let outcome = time::nanosleep(requested).expect("nanosleep call");
+    let after = time::clock_gettime(time::ClockId::Monotonic).expect("monotonic after");
+    sender.join().expect("join signal sender");
+
+    // SAFETY: Restore the caller's previous action after the handler has
+    // returned and the sender has stopped targeting this thread.
+    unsafe { signal::sigaction(selected, Some(&old_action)) }
+        .expect("restore interruption handler");
+
+    assert!(SIGNAL_DELIVERED.load(Ordering::SeqCst));
+    let elapsed = Duration::new(
+        (after.tv_sec - before.tv_sec) as u64,
+        0,
+    ) + Duration::from_nanos(after.tv_nsec as u64) - Duration::from_nanos(before.tv_nsec as u64);
+    assert!(elapsed >= Duration::from_millis(100), "slept only {elapsed:?}");
+    match outcome {
+        SleepOutcome::Interrupted { remaining } => {
+            assert!(remaining > Duration::ZERO);
+            assert!(remaining < requested);
         }
         SleepOutcome::Completed => panic!("signal must preserve EINTR as interrupted"),
     }

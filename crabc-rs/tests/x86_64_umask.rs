@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::process::{self, Mode};
 
 struct RestoreUmask(Mode);

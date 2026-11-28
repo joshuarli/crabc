@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native bind/getsockname seam.
 //!
 //! This source is intentionally unregistered until the architecture harness

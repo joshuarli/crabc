@@ -1,8 +1,8 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::process::Mode;
 use crabc_rs::process::{self, Resource, Rlimit};
 use crabc_rs::Errno;
 
+#[cfg(target_os = "linux")]
 const RESOURCES: &[Resource] = &[
     Resource::Cpu,
     Resource::Fsize,
@@ -20,6 +20,18 @@ const RESOURCES: &[Resource] = &[
     Resource::Nice,
     Resource::Rtprio,
     Resource::Rttime,
+];
+#[cfg(target_os = "macos")]
+const RESOURCES: &[Resource] = &[
+    Resource::Cpu,
+    Resource::Fsize,
+    Resource::Data,
+    Resource::Stack,
+    Resource::Core,
+    Resource::As,
+    Resource::Memlock,
+    Resource::Nproc,
+    Resource::Nofile,
 ];
 
 fn assert_limit_invariant(resource: Resource, limit: Rlimit) {
@@ -52,6 +64,7 @@ fn getrlimit_is_read_only_and_does_not_change_the_observed_limit() {
     assert_limit_invariant(Resource::Nofile, first);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn getrlimit_for_explicit_current_pid_matches_pid_zero_query() {
     let current = process::getrlimit(Resource::Nofile).expect("read current open-file limit");
@@ -62,6 +75,7 @@ fn getrlimit_for_explicit_current_pid_matches_pid_zero_query() {
     assert_limit_invariant(Resource::Nofile, explicit);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn getrlimit_for_missing_pid_preserves_esrch() {
     let missing = process::Pid::from_raw(i32::MAX).expect("i32::MAX is a non-zero typed PID");

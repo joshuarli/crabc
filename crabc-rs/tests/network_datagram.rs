@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 use std::io::ErrorKind;
 use std::net::UdpSocket;
@@ -6,7 +5,10 @@ use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_rs::net;
+#[cfg(target_os = "linux")]
 use crabc_rs::resolver::{IpAddress, SocketAddress};
+#[cfg(target_os = "macos")]
+use crabc_rs::net::{IpAddress, SocketAddress};
 use crabc_rs::Errno;
 
 static UNIX_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
@@ -152,7 +154,11 @@ fn recvfrom_reports_full_truncated_length_but_only_initializes_the_buffer_prefix
     let ((initialized, remaining), received, source) =
         net::recvfrom(&receiver, &mut buffer, net::RecvFlags::TRUNC)
             .expect("receive truncation fixture");
+    #[cfg(target_os = "linux")]
     assert_eq!(received, payload.len());
+    // Darwin reports the copied length of a truncated datagram.
+    #[cfg(target_os = "macos")]
+    assert_eq!(received, 4);
     assert_eq!(&*initialized, &payload[..4]);
     assert!(matches!(source.ip(), IpAddress::V4(_)));
     assert!(remaining.is_empty());

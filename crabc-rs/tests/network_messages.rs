@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 
 use crabc_rs::io;
@@ -30,7 +29,10 @@ fn sendmsg_and_recvmsg_preserve_vectored_boundaries_and_truncation() {
     ];
     let mut received = net::recvmsg(&receiver, &mut buffers, net::RecvFlags::TRUNC)
         .expect("receive one vectored message");
+    #[cfg(target_os = "linux")]
     assert_eq!(received.bytes(), 7, "MSG_TRUNC keeps the datagram length");
+    #[cfg(target_os = "macos")]
+    assert_eq!(received.bytes(), 5, "Darwin reports the copied length of a truncated datagram");
     assert!(received.flags().contains(net::RecvFlags::TRUNC));
 
     let mut initialized = received.initialized_segments();

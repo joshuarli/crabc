@@ -1,6 +1,6 @@
-#![cfg(target_os = "linux")]
-
-use crabc_rs::{signal, Errno};
+#[cfg(target_os = "linux")]
+use crabc_rs::Errno;
+use crabc_rs::signal;
 
 #[test]
 fn x86_64_signal_mask_query_preserves_the_calling_thread() {
@@ -15,6 +15,7 @@ fn x86_64_signal_mask_query_preserves_the_calling_thread() {
     assert_eq!(signal::current_mask().unwrap(), before);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_signal_mask_full_set_matches_one_kernel_word() {
     let previous = signal::set_mask(&signal::SignalSet::full()).unwrap();
@@ -42,6 +43,7 @@ fn x86_64_signal_mask_full_set_matches_one_kernel_word() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_signal_mask_pending_inheritance_and_signalfd_drain() {
     const CHILD: &str = "CRABC_SIGNAL_MASK_TEST_CHILD";
@@ -104,4 +106,102 @@ fn x86_64_signal_mask_pending_inheritance_and_signalfd_drain() {
     assert_eq!(signal::current_mask().unwrap(), unblocked);
     assert_eq!(signal::set_mask(&previous).unwrap(), unblocked);
     assert_eq!(signal::current_mask().unwrap(), previous);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_signal_mask_full_set_matches_the_darwin_sigset() {
+    let previous = signal::set_mask(&signal::SignalSet::full()).unwrap();
+    let observed = signal::current_mask().unwrap();
+    let replaced = signal::set_mask(&previous).unwrap();
+    assert_eq!(replaced, observed);
+    assert_eq!(signal::current_mask().unwrap(), previous);
+    for raw in 1..=31 {
+        let member = signal::Signal::from_named_raw(raw).unwrap();
+        let unmaskable = member == signal::Signal::KILL || member == signal::Signal::STOP;
+        assert_eq!(observed.contains(member), !unmaskable, "signal {raw}");
+    }
+    assert!(signal::Signal::from_named_raw(32).is_none());
+}
+
+#[cfg(target_os = "macos")]
+static DELIVERED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn record_delivery(received: signal::Signal) {
+    DELIVERED.fetch_or(1 << received.as_raw(), core::sync::atomic::Ordering::SeqCst);
+}
+
+// Darwin has no signal descriptors; unblocking with a handler installed is
+// the delivery path that drains the pending set.
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_signal_mask_pending_inheritance_and_handler_drain() {
+    const CHILD: &str = "CRABC_SIGNAL_MASK_TEST_CHILD";
+    let mut selected = signal::SignalSet::EMPTY;
+    selected.insert(signal::Signal::USR1);
+    selected.insert(signal::Signal::USR2);
+    let previous = signal::block(&selected).unwrap();
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("x86_64_signal_mask_pending_inheritance_and_handler_drain")
+            .arg("--test-threads=1").env(CHILD, "1").status().unwrap();
+        signal::set_mask(&previous).unwrap();
+        assert!(status.success(), "isolated inherited signal-mask child: {status}");
+        return;
+    }
+    let inherited = signal::current_mask().unwrap();
+    for member in [signal::Signal::USR1, signal::Signal::USR2] {
+        assert!(inherited.contains(member));
+    }
+    assert!(signal::pending().unwrap().is_empty());
+    let worker = std::thread::spawn(move || {
+        assert_eq!(signal::current_mask().unwrap(), inherited);
+        let mut only_usr1 = signal::SignalSet::EMPTY;
+        only_usr1.insert(signal::Signal::USR1);
+        assert_eq!(signal::unblock(&only_usr1).unwrap(), inherited);
+        assert!(!signal::current_mask().unwrap().contains(signal::Signal::USR1));
+    });
+    worker.join().unwrap();
+    assert_eq!(signal::current_mask().unwrap(), inherited);
+
+    let record = signal::SigAction::new(
+        signal::SigHandler::Simple(record_delivery),
+        signal::SignalSet::EMPTY,
+        signal::SigActionFlags::empty(),
+    );
+    // SAFETY: The handler performs one lock-free atomic update, and this
+    // isolated child restores both dispositions before it exits.
+    let old_usr1 = unsafe { signal::sigaction(signal::Signal::USR1, Some(&record)) }.unwrap();
+    // SAFETY: As above.
+    let old_usr2 = unsafe { signal::sigaction(signal::Signal::USR2, Some(&record)) }.unwrap();
+    for member in [signal::Signal::USR1, signal::Signal::USR2] {
+        signal::raise(member).unwrap();
+    }
+    assert_eq!(signal::pending().unwrap(), selected);
+    assert_eq!(DELIVERED.load(core::sync::atomic::Ordering::SeqCst), 0);
+
+    let mut only_usr1 = signal::SignalSet::EMPTY;
+    only_usr1.insert(signal::Signal::USR1);
+    assert_eq!(signal::unblock(&only_usr1).unwrap(), inherited);
+    let usr1_bit = 1 << signal::Signal::USR1.as_raw();
+    let usr2_bit = 1 << signal::Signal::USR2.as_raw();
+    assert_eq!(DELIVERED.load(core::sync::atomic::Ordering::SeqCst), usr1_bit);
+    let mut remaining = selected;
+    remaining.remove(signal::Signal::USR1);
+    assert_eq!(signal::pending().unwrap(), remaining);
+
+    let mut unblocked = inherited;
+    unblocked.remove(signal::Signal::USR1);
+    assert_eq!(signal::unblock(&remaining).unwrap(), unblocked);
+    assert_eq!(DELIVERED.load(core::sync::atomic::Ordering::SeqCst), usr1_bit | usr2_bit);
+    assert!(signal::pending().unwrap().is_empty());
+    unblocked.remove(signal::Signal::USR2);
+    assert_eq!(signal::set_mask(&previous).unwrap(), unblocked);
+    assert_eq!(signal::current_mask().unwrap(), previous);
+    // SAFETY: Restores the dispositions returned by the installs above.
+    unsafe { signal::sigaction(signal::Signal::USR1, Some(&old_usr1)) }.unwrap();
+    // SAFETY: As above.
+    unsafe { signal::sigaction(signal::Signal::USR2, Some(&old_usr2)) }.unwrap();
 }

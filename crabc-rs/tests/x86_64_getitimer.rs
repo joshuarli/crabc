@@ -1,12 +1,14 @@
-#![cfg(target_os = "linux")]
 
 use core::convert::TryFrom;
+#[cfg(target_os = "linux")]
 use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 use core::time::Duration;
 
+#[cfg(target_os = "linux")]
 use crabc_core::time::{KernelItimerval, KernelItimervalTimeval};
 use crabc_rs::time::{getitimer, GetitimerError, IntervalTimerKind};
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_getitimer_wire_records_and_selectors_match_linux() {
     assert_eq!(size_of::<KernelItimervalTimeval>(), 16);
@@ -42,15 +44,27 @@ fn x86_64_getitimer_reads_every_closed_kind_without_mutating_timer_state() {
 
 #[test]
 fn x86_64_getitimer_keeps_kernel_errors_separate_from_validation() {
-    let mut value = MaybeUninit::<KernelItimerval>::uninit();
-    // SAFETY: This is writable storage for the exact x86 Linux output record.
-    // Selector 3 is intentionally invalid and must leave the result unread.
-    let result = unsafe { crabc_core::time::getitimer_raw(3, value.as_mut_ptr()) };
-    assert_eq!(result, Err(crabc_rs::Errno::INVAL));
+    #[cfg(target_os = "linux")]
+    {
+        let mut value = MaybeUninit::<KernelItimerval>::uninit();
+        // SAFETY: This is writable storage for the exact x86 Linux output record.
+        // Selector 3 is intentionally invalid and must leave the result unread.
+        let result = unsafe { crabc_core::time::getitimer_raw(3, value.as_mut_ptr()) };
+        assert_eq!(result, Err(crabc_rs::Errno::INVAL));
+    }
 
     assert_eq!(
         GetitimerError::Kernel(crabc_rs::Errno::INVAL).kernel_errno(),
         Some(crabc_rs::Errno::INVAL),
     );
     assert_eq!(GetitimerError::InvalidKernelValue.kernel_errno(), None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_getitimer_selectors_match_darwin() {
+    assert_eq!(IntervalTimerKind::Real as i32, 0);
+    assert_eq!(IntervalTimerKind::Virtual as i32, 1);
+    assert_eq!(IntervalTimerKind::Profiler as i32, 2);
+    assert_eq!(IntervalTimerKind::try_from(3), Err(crabc_rs::Errno::INVAL));
 }

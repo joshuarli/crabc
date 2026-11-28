@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native wall-clock seam.
 //!
 //! The private native evidence runner builds this static archive after its

@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native vectored message seam.
 //!
 //! This source is intentionally unregistered until the architecture harness

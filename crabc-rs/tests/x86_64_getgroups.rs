@@ -1,11 +1,12 @@
-#![cfg(target_os = "linux")]
 
 use core::mem::MaybeUninit;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 use crabc_rs::process::{self, Gid};
 use crabc_rs::Errno;
 
+#[cfg(target_os = "linux")]
 fn proc_supplementary_groups() -> Vec<u32> {
     let status = std::fs::read_to_string("/proc/self/status")
         .expect("read the current process group oracle");
@@ -19,6 +20,7 @@ fn proc_supplementary_groups() -> Vec<u32> {
         .collect()
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_getgroups_query_and_fill_match_the_current_credential_snapshot() {
     let expected = proc_supplementary_groups();
@@ -68,6 +70,7 @@ fn x86_64_getgroups_rejects_an_undersized_buffer_without_changing_credentials() 
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_getgroups_empty_fill_keeps_the_count_query_out_of_buffer_results() {
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
@@ -88,6 +91,7 @@ fn x86_64_getgroups_empty_fill_keeps_the_count_query_out_of_buffer_results() {
     );
 }
 
+#[cfg(target_os = "linux")]
 fn set_child_groups(groups: &[u32]) {
     let result: isize;
     // SAFETY: Linux x86-64 setgroups reads exactly this live u32 slice. This
@@ -119,6 +123,7 @@ fn set_child_groups(groups: &[u32]) {
     assert_eq!(result, 0, "the credential fixture requires CAP_SETGID");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 #[ignore = "the parent regression invokes this test only in a subprocess"]
 fn x86_64_getgroups_empty_fill_child_checks_nonempty_and_empty_lists() {
@@ -160,4 +165,20 @@ fn x86_64_getgroups_empty_fill_child_checks_nonempty_and_empty_lists() {
         );
         assert_eq!(groups.len(), 0);
     }
+}
+
+// An unprivileged Darwin process cannot replace its group list, but BSD
+// credentials always carry the effective group, so the list is never empty.
+#[cfg(target_os = "macos")]
+#[test]
+fn x86_64_getgroups_empty_fill_rejects_a_nonempty_list() {
+    assert!(process::getgroups_count().expect("query Darwin supplementary-group count") > 0);
+
+    let mut initialized: [Gid; 0] = [];
+    assert_eq!(process::getgroups(&mut initialized), Err(Errno::INVAL));
+    let mut uninitialized: [MaybeUninit<Gid>; 0] = [];
+    assert!(matches!(
+        process::getgroups(&mut uninitialized),
+        Err(Errno::INVAL),
+    ));
 }

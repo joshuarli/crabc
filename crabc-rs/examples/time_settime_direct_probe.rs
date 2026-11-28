@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the direct Linux clock-settime seam.
 
 #![no_std]

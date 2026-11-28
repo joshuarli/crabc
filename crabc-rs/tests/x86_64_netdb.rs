@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Native x86-64 regression for owned conventional netdb snapshots.
 //!
 //! These tests use caller bytes and read-only conventional-file smoke checks.
@@ -28,13 +27,16 @@ fn x86_64_hosts_snapshot_is_owned_and_system_loader_matches_direct_snapshot() {
         Err(NetDbError::InvalidInput)
     );
 
-    let expected = HostDatabase::from_bytes(
-        &std::fs::read("/etc/hosts").expect("read hosts fixture snapshot"),
-    )
-    .expect("parse hosts fixture snapshot");
-    let direct = HostDatabase::from_system().expect("load direct hosts snapshot");
-    assert_eq!(direct, expected);
-    assert_eq!(direct.iter().count(), direct.len());
+    #[cfg(target_os = "linux")]
+    {
+        let expected = HostDatabase::from_bytes(
+            &std::fs::read("/etc/hosts").expect("read hosts fixture snapshot"),
+        )
+        .expect("parse hosts fixture snapshot");
+        let direct = HostDatabase::from_system().expect("load direct hosts snapshot");
+        assert_eq!(direct, expected);
+        assert_eq!(direct.iter().count(), direct.len());
+    }
 }
 
 #[test]
@@ -107,6 +109,7 @@ fn x86_64_service_and_protocol_malformed_records_reject_the_complete_snapshot() 
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_service_and_protocol_system_loaders_match_direct_snapshots() {
     let services_expected = ServiceDatabase::from_bytes(

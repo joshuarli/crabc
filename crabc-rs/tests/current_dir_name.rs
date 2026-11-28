@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
 
@@ -90,11 +89,18 @@ fn mismatched_relative_empty_and_missing_pwd_fall_back_to_getcwd() {
     drop(logical);
 }
 
+// APFS stores names as UTF-8 and rejects other byte sequences, so Darwin
+// checks byte preservation with non-ASCII UTF-8 names.
+#[cfg(target_os = "linux")]
+const NON_UTF8_NAMES: [&[u8]; 2] = [b"real-\xff", b"logical-\xfe"];
+#[cfg(target_os = "macos")]
+const NON_UTF8_NAMES: [&[u8]; 2] = ["real-\u{e9}".as_bytes(), "logical-\u{fc}".as_bytes()];
+
 #[test]
 fn validated_pwd_preserves_non_utf8_bytes() {
     let (guard, root, _) = logical_fixture();
-    let non_utf8_real = root.join(OsString::from_vec(b"real-\xff".to_vec()));
-    let non_utf8_logical = root.join(OsString::from_vec(b"logical-\xfe".to_vec()));
+    let non_utf8_real = root.join(OsString::from_vec(NON_UTF8_NAMES[0].to_vec()));
+    let non_utf8_logical = root.join(OsString::from_vec(NON_UTF8_NAMES[1].to_vec()));
     std::fs::create_dir(&non_utf8_real).expect("create non-UTF-8 directory");
     std::os::unix::fs::symlink(&non_utf8_real, &non_utf8_logical)
         .expect("create non-UTF-8 logical symlink");

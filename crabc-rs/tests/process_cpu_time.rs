@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::time::process_cpu_time;
 
 #[test]

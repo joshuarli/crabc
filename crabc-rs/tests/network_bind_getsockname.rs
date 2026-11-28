@@ -1,9 +1,11 @@
-#![cfg(target_os = "linux")]
 use std::io::ErrorKind;
 use std::net::UdpSocket;
 
 use crabc_rs::net;
+#[cfg(target_os = "linux")]
 use crabc_rs::resolver::{IpAddress, SocketAddress};
+#[cfg(target_os = "macos")]
+use crabc_rs::net::{IpAddress, SocketAddress};
 use crabc_rs::Errno;
 
 #[test]
