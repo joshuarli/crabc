@@ -38,15 +38,6 @@ Next: 25
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
 
-### CRAB-24 · P3 · Rust heap_theap drops the source EFAULT report on slot-table refusal
-
-- **Area:** allocator
-- **Where:** crabc-mimalloc/src/subproc_main_heaps.rs (heap_theap); pinned src/threadlocal.c:136; docs/design/allocator.md:782; m2-fault-seam-inventory-aarch64-v3.5.0.fragment.json
-- **Problem:** When the dynamic thread-local slot table cannot be allocated, pinned C reports _mi_error_message(EFAULT, "unable to allocate thread local variables\n") and Rust reports nothing. The arm slot-table refusal differential records C=1 report, Rust=0. A user error callback or diagnostic output sees a different error stream.
-- **Recommendation:** Emit the source EFAULT error report from heap_theap on slot-table refusal, then make the arm receiver require report.efault equal on both sides.
-- **Fix with:** reference-parity
-- **Effort:** S
-
 ### CRAB-23 · P4 · Validators and the parity ledger read plan.md, blocking its move into the roadmap
 
 - **Area:** Qualification harness tests
