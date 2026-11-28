@@ -224,6 +224,12 @@ pub fn setitimer(
 }
 
 const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+    assert!(size_of::<Timespec>() == size_of::<sys::Timespec>());
+    assert!(align_of::<Timespec>() == align_of::<sys::Timespec>());
+    assert!(offset_of!(Timespec, tv_sec) == offset_of!(sys::Timespec, tv_sec));
+    assert!(offset_of!(Timespec, tv_nsec) == offset_of!(sys::Timespec, tv_nsec));
+
     assert!(IntervalTimerKind::Real as i32 == sys::ITIMER_REAL);
     assert!(IntervalTimerKind::Virtual as i32 == sys::ITIMER_VIRTUAL);
     assert!(IntervalTimerKind::Profiler as i32 == sys::ITIMER_PROF);
