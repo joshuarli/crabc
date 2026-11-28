@@ -410,10 +410,21 @@ import on arm and the raw syscalls on x86-64; Rust keeps its raw
 `openat`/`read`/`close` route on both. The Rust trace roster now names the
 converged `crabc-core/src/syscall/<architecture>.rs` and no longer the
 `mm_x86_64.rs` and `syscall_x86_64.rs` files that `19827e480` removed, which
-also lets the x86 fault-inventory host tests read their roster again. The
-component stays partial: the x86 conditions on unselected callers,
-diagnostics and detection remain, the VM has no hugetlbfs pool or NUMA nodes,
-and 16 KiB and 64 KiB hosts need their own runs. The x86 fault fragment is
+also lets the x86 fault-inventory host tests read their roster again.
+
+The arm conditions that waited on other components now name the evidence
+those components execute: the metadata component (detached allocation,
+replacement and release, child-subprocess ownership, the Arena-kind release)
+and the initialization component (later-TLD and Theap metadata failures)
+cover the other metadata callers; allocator-recursion covers recursive output
+reentry; initialization covers process initialization beyond the detection
+observations and output-callback delivery during startup. What stays open is
+named exactly: `mi_subproc_new`'s failed-allocation cleanup and the dynamic
+thread-local slot tables have no fault receiver; general diagnostic
+receivers, FILE-stream parity, the deferred-free and error callbacks, the
+general statistics owners, ambient detection callers and installed-product
+startup remain unqualified; the VM has no hugetlbfs pool or NUMA nodes; and
+16 KiB and 64 KiB hosts need their own runs. The x86 fault fragment is
 unchanged.
 
 ### AArch64 metadata, bitmap and allocator-recursion components
