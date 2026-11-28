@@ -1,10 +1,12 @@
 # CRAB-7: macOS/AArch64 libSystem backend for `crabc-rs`
 
-Status: accepted 2026-11-27. The owner admitted it in parallel with Linux/AArch64
-feature completion ([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md)) and
-delegated the open questions, which take every recommendation below. D1 and
-D2 are done ([D1 record](#d1-record), [D2 record](#d2-record)); the backend's
-current boundary and module status live in the
+Status: done 2026-11-28. The owner admitted it on 2026-11-27 in parallel with
+Linux/AArch64 feature completion
+([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md)) and delegated the open
+questions, which take every recommendation below. D1, D2 and D3 are done
+([D1 record](#d1-record), [D2 record](#d2-record), [D3 record](#d3-record));
+the [final module classification](#final-module-classification) closes the
+RFC. The backend's current boundary and module status live in the
 [`crabc-rs` design](../design/crabc-rs.md#darwin-backend).
 
 ## Decisions
@@ -19,6 +21,12 @@ current boundary and module status live in the
    proposed macOS 13).
 6. Ported modules are source-compatible across both targets, enforced by
    building the facade's examples for both.
+7. D3 ports `timezone` and `LocalCalendar`: every TZif file macOS ships
+   parses with the existing explicit-rule parser.
+8. D3 ports `shm` over `shm_open` and `shm_unlink`, with Darwin's 31-byte
+   name limit.
+9. SysV `ipc` stays absent: the facade's `ipc` module is POSIX message
+   queues, which macOS lacks, and the facade has no SysV interface to port.
 
 ## Summary
 
@@ -102,6 +110,10 @@ table.
 
 ### Proposed module classification
 
+This is the proposal as admitted. The
+[final module classification](#final-module-classification) records the
+outcome.
+
 | Class | Modules | Darwin notes |
 | --- | --- | --- |
 | Port, core | `fd`, `io`, `fs` (openat-family, `fstatat`, directories, links, permissions, times), `pipe`, `path`, `buffer`, `collections`, `numeric`, `param` subset | No `statx` (use `fstatat`); macOS 27's `pipe2` creates pipes with atomic close-on-exec |
@@ -155,8 +167,8 @@ the facade does not need. See open question 2.
 3. **D2, process, time and networking (done):** `process`, `signal`, `time`,
    `rand` and `net`, with ownership and close-on-exec semantics documented
    per type.
-4. **D3, terminals, memory and decided modules:** `termios`, `pty`, `mm`, and
-   whatever open question 4 admits.
+4. **D3, terminals, memory and decided modules (done):** `termios`, `pty`,
+   `mm`, `fs::canonicalize`, `timezone` and `LocalCalendar`, and `shm`.
 
 Each phase is independent of the Linux campaign and changes no Linux product
 source. That keeps the Linux product source digest stable, provided the shared
@@ -239,7 +251,102 @@ cargo check -p crabc-rs --target x86_64-unknown-linux-musl
 scripts/lanes/orb-vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
 ```
 
+### D3 record
+
+D3 ports `termios`, `pty`, the `mm` subset, `shm` and `timezone`, adds
+`fs::canonicalize` and `canonicalize_into` and `time::LocalCalendar`, and
+settles the delegated decisions 7 to 9. Each module's documentation lists its
+Darwin differences and absent items. The findings that shape the port:
+
+- **Terminals.** Darwin's `struct termios` has 64-bit flag words, twenty
+  special codes and numeric speed words, so `Termios`, `SpecialCodes`,
+  `SpecialCodeIndex`, `QueueSelector` and `Action` have Darwin definitions;
+  `OptionalActions` and `Winsize` share Linux's values and layout. The port
+  calls libSystem's `tcgetattr` family and `ttyname_r` rather than raw
+  `TIOC*` requests. `make_raw` applies the Linux transformation with Darwin
+  bits, not libSystem's broader `cfmakeraw`. Darwin reports the output rate
+  for a zero input rate, rejects terminal requests on a master until its
+  slave has been opened once, answers terminal requests on `/dev/null` with
+  `ENODEV`, and admits an unprivileged reopen of an exclusive slave.
+- **Pseudoterminals.** `posix_openpt` accepts `O_CLOEXEC` on macOS 27.
+  Darwin has no `TIOCGPTPEER`, so `PtyPair::open` opens the slave by its
+  `ptsname_r` name while it holds the master. XNU's `TIOCSCTTY` has no steal
+  form; taking another session's terminal fails with `EPERM`, whatever
+  `steal` says.
+- **Memory.** Apple Silicon pages are 16 KiB. XNU's `MADV_DONTNEED` keeps
+  page contents, so `Advice::LinuxDontNeed` is absent; `mlockall` and
+  `munlockall` always return `ENOSYS`, so they are absent rather than ported
+  to a runtime failure. `mincore` rounds an unaligned range to its page span,
+  so the Darwin output check counts that span with the process page size.
+  `msync` rejects a zero length, libSystem's `posix_madvise` validates the
+  range and reports failure through `errno`, a writable and executable
+  mapping fails with `EACCES`, and a protection fault raises `SIGBUS`.
+- **Canonicalization.** The algorithm is shared, with Darwin's bounds from
+  the SDK: `PATH_MAX` 1024 (`sys/syslimits.h`) and `MAXSYMLINKS` 32
+  (`sys/param.h`). Darwin has no `O_PATH`, so a component is classified with
+  a no-follow `fstatat` and only an entered directory is opened, with
+  `O_SEARCH`. Results keep the caller's spelling on a case-insensitive
+  volume, as the Linux contract preserves bytes, rather than taking the
+  stored names libSystem `realpath` reports. Darwin's `getcwd` reports a
+  working directory beyond `PATH_MAX` as `ERANGE`; the port reports it as
+  `ENAMETOOLONG`, as Linux does.
+- **Time zones (decision 7).** The module makes no OS call. All 599 TZif
+  files under `/var/db/timezone/zoneinfo` (tzdata 2026f, version 2 with a
+  trailing POSIX rule) parse, and the offsets of `/etc/localtime` and a
+  sample of zones agree with `/bin/date`.
+- **Shared memory (decision 8).** `shm_open` names are opaque strings, so
+  `/x` and `x` differ; the port keeps Linux's name validation and passes
+  `/<name>`. `PSHMNAMLEN` (`sys/posix_shm.h`) is 31 bytes counting the slash.
+  XNU sets `FD_CLOEXEC` on every descriptor, as POSIX requires, and rejects
+  an explicit `O_CLOEXEC`, which the port removes; it accepts only the access
+  mode, `O_CREAT` and `O_EXCL`. The object is sized once with `ftruncate`,
+  is used through `mmap`, and fails `read` and `write` with `ENXIO`.
+- **SysV IPC (decision 9).** There is no SysV interface in the facade, so
+  porting one would add an interface rather than port it; `ipc` stays absent
+  with POSIX message queues.
+
+D3 changes shared `crabc-rs` sources by compile-time gates, `os` aliases,
+per-target mechanisms under the shared `canonicalize` algorithm and `shm`
+name validation, and documentation. The rustdoc JSON public-API comparison
+against `53da80782` drops docs, spans, numeric IDs, link tables and `#[cfg]`
+traces, merges inherent impl blocks, and finds 0 differing items in each of
+13,619, 11,635, 13,616 and 11,611 items for `aarch64-unknown-linux-musl` and
+`x86_64-unknown-linux-musl` with and without default features. Linux
+`cargo check` diagnostics are identical to the base, apart from the
+one-line shift in the three examples whose Linux-only gate was removed. The
+gate passed with these commands:
+
+```sh
+cargo check -q -p crabc-rs --target aarch64-apple-darwin
+cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features
+cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features --features alloc
+cargo test -p crabc-rs --target aarch64-apple-darwin --no-fail-fast
+cargo check -p crabc-rs --target x86_64-unknown-linux-musl --all-targets
+scripts/lanes/orb-vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
+```
+
+### Final module classification
+
+| Module | Darwin | Reason or scope |
+| --- | --- | --- |
+| `buffer`, `collections`, `ffi`, `numeric`, `path` | Ported | Target-neutral |
+| `fd`, `io`, `pipe` | Ported | D1 |
+| `fs` | Ported subset | D1, D2 ownership, D3 canonicalization; no `statx`, `openat2`, `memfd`, `O_TMPFILE`, xattrs, `statfs`, `fallocate`, `sendfile` or `RawDir` |
+| `process`, `signal`, `time`, `rand`, `net`, `netdb` | Ported subset | D2; D3 adds `LocalCalendar` to `time` |
+| `termios`, `pty`, `shm`, `timezone` | Ported | D3 |
+| `mm` | Ported subset | D3; no `LinuxDontNeed`, `mremap`, `mlock2`, `mlockall` or `remap_file_pages` |
+| `ipc` | Absent | POSIX message queues; macOS has none, and the facade has no SysV IPC |
+| `users`, `resolver` | Absent | Decision 4 |
+| `event` | Absent | `eventfd` and epoll; kqueue would be a separate proposal |
+| `ioctl`, `mount`, `system`, `thread`, `sync`, `param` | Absent | Linux mechanisms |
+| `fenv`, `pattern`, `text` | Absent | Implemented in `crabc-core`, which macOS does not build |
+| `memory`, `stdio` | Absent | Outside this classification; no Darwin behavior tests |
+| `cfile`, `dl`, `runtime_thread` | Absent | Bind crabc's private `RuntimeV1` table |
+
 ## Open questions
+
+[Decisions](#decisions) 1 to 6 answer these questions as they were put to
+the owner.
 
 1. **Admit it now, later or never?** The current direction defers this until
    F2 is accepted. F3 (performance) is also pending. The question is whether

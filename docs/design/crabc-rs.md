@@ -63,11 +63,13 @@ Rust application
 
 - **Declarations.** `crabc-rs/src/darwin/sys.rs` declares by hand each
   libSystem function, record and constant the backend calls. Every record has
-  size, alignment and field-offset assertions from the macOS 27 SDK. `fcntl`,
-  `ioctl` and `openat` are declared variadic because Apple's AArch64 ABI
-  passes variadic arguments on the stack. The `posix_spawn` family,
-  `pthread_sigmask` and `pthread_kill` return an error number instead of
-  setting `errno`.
+  size, alignment and field-offset assertions from the macOS 27 SDK, and the
+  bounds the backend encodes (`PATH_MAX`, `MAXSYMLINKS`, `PSHMNAMLEN`) are
+  the SDK's. `fcntl`, `ioctl`, `openat` and `shm_open` are declared variadic
+  because Apple's AArch64 ABI passes variadic arguments on the stack. The
+  `posix_spawn` family, `pthread_sigmask`, `pthread_kill` and `ttyname_r`
+  return an error number instead of setting `errno`; libSystem's
+  `posix_madvise` sets `errno` instead of returning one as POSIX specifies.
 - **Errors.** libSystem reports failures only through thread-local `errno`.
   Each Darwin wrapper reads it through `__error()` immediately after the
   failing call, before any other call can overwrite it, and returns it as the
@@ -78,21 +80,32 @@ Rust application
   is the same on both targets, as for `BorrowedFd`, `OwnedFd`, `IoSlice`,
   `PathArg`, `Mode`, `FileType`, both `Timespec` types, `NamedTempFile`,
   `Pid`, `Uid`, `Gid`, `Rlimit`, `ResourceUsage`, `SigHandler`,
-  `IntervalTimerKind`, `SocketType`, `IpAddress` and `SocketAddress`. A type
-  that holds OS values, such as `Errno`, `OFlags`, the `*AtFlags` types,
+  `IntervalTimerKind`, `SocketType`, `IpAddress`, `SocketAddress`, `Winsize`,
+  `OptionalActions`, `PtyPair`, `ProtFlags`, `MprotectFlags`, `MapFlags`,
+  `PosixAdvice`, `shm::NameArg`, `TimeZone` and `LocalCalendar`; compile-time
+  assertions check the flag and enum values against the SDK. A type that
+  holds OS values, such as `Errno`, `OFlags`, the `*AtFlags` types,
   `PipeFlags`, `DupFlags`, `Stat`, `Dir`, `Signal`, `SignalSet`, `SigAction`,
-  `WaitStatus`, `Resource`, `ClockId`, `AddressFamily` and the socket flag
-  types, has a Darwin definition built from `darwin/sys.rs` constants.
+  `WaitStatus`, `Resource`, `ClockId`, `AddressFamily`, the socket flag
+  types, `Termios`, `SpecialCodes`, `SpecialCodeIndex`, `QueueSelector`,
+  `Action`, `OpenptFlags`, `MsyncFlags`, `Advice` and `MINCORE_PAGE_SIZE`,
+  has a Darwin definition built from `darwin/sys.rs` constants.
   Nothing translates Linux values at run time, and the backend is chosen only
   at compile time.
 - **Shared bodies.** Where a Linux operation is a single call into
   `crabc-core` that libSystem can provide with the same shape, the facade
   module imports either `crabc_core::<module>` or `darwin::<module>` as `os`
   and keeps one body, as `getpid`, `kill_process`, `getcwd`, `listen`,
-  `send` and `recvmsg` do. Operations whose records, values or failure
-  reporting differ, such as `PreparedExec::spawn`, `getrlimit`,
-  `getpriority`, `sigaction`, `clock_gettime` and the socket constructors,
-  have separate Darwin implementations.
+  `send`, `recvmsg`, the `mm` mapping, locking, advice and `msync` calls and
+  `PtyPair::establish_session_and_controlling_terminal` do. Operations whose
+  records, values or failure reporting differ, such as `PreparedExec::spawn`,
+  `getrlimit`, `getpriority`, `sigaction`, `clock_gettime`, the socket
+  constructors, the `termios` calls and `mincore`, have separate Darwin
+  implementations. Shared algorithms keep one body with per-target
+  mechanisms: `fs::canonicalize` walks components with Linux `O_PATH`
+  descriptors or with Darwin `fstatat` and `O_SEARCH` directories, and
+  `shm` validates names once and maps them to `/dev/shm/<name>` or to
+  `/<name>`.
 - **Close-on-exec.** macOS 27 provides `O_CLOEXEC`, `F_DUPFD_CLOEXEC`,
   `pipe2` and `dup3`, so the `fd`, `io`, `fs` and `pipe` constructors set
   close-on-exec atomically. The macOS 27 SDK still has no `SOCK_CLOEXEC`,
@@ -105,7 +118,10 @@ Rust application
   children are immune to it: `posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT`
   closes every descriptor that is not a standard stream or a `Dup2` target.
   `Dir` errs the other way: libSystem's `fdopendir` sets `FD_CLOEXEC` on the
-  descriptor it adopts.
+  descriptor it adopts. `pty::openpt` passes `O_CLOEXEC` to `posix_openpt`
+  and `PtyPair::open` opens the slave with it, both atomically. XNU sets
+  `FD_CLOEXEC` on every `shm_open` descriptor, as POSIX requires, and rejects
+  an explicit `O_CLOEXEC`, so `shm::open` removes that flag.
 - **Source compatibility.** A ported module keeps the Linux public names and
   signatures of everything it ports. The examples that use only ported
   modules build for both targets.
@@ -116,14 +132,25 @@ Rust application
 | `fd` | Ported | `AT_FDCWD` is `-2`; closing calls libSystem `close` |
 | `io` | Ported | No `ReadWriteFlags`, `preadv2`, `pwritev2` or `sync_file_range`; a vectored call with no segments fails with `EINVAL` |
 | `pipe` | Ported | `pipe2`; `PIPE_BUF` is 512; no packet mode or splice family |
-| `fs` | Ported subset | The module documentation lists the absent items and behavior differences; D2 adds the ownership family (`fchown`, `chownat`, `chown`, `lchown`) |
+| `fs` | Ported subset | The module documentation lists the absent items and behavior differences; D2 adds the ownership family (`fchown`, `chownat`, `chown`, `lchown`); D3 adds `canonicalize` and `canonicalize_into` with Darwin's 1024-byte `PATH_MAX` and 32-link bound |
 | `process` | Ported subset | `posix_spawn` children with the CRAB-2 `Child` contract unchanged; no `fork_raw`, `pidfd_open`, `getrlimit_for`, filesystem IDs, saved-ID triples or `kernel_brk` |
 | `signal` | Ported subset | Darwin numbers and 32-bit `sigset_t`; masks, actions, alternate stacks, `sigsuspend`, `raise`; no realtime signals, `sigwaitinfo`, `sigqueue`, thread-ID delivery or signal descriptors |
-| `time` | Ported subset | Darwin clocks, `nanosleep`, interval timers, UTC calendar; no `clock_nanosleep`, CPU or descriptor clocks, POSIX timers, timer descriptors or `LocalCalendar` |
+| `time` | Ported subset | Darwin clocks, `nanosleep`, interval timers, UTC calendar and, from D3, `LocalCalendar`; no `clock_nanosleep`, CPU or descriptor clocks, POSIX timers or timer descriptors |
 | `rand` | Ported subset | `getentropy`, `RandomState`; no `getrandom` |
 | `net` | Ported subset | Sockets, addresses and messages with `sa_len`; flags set after creation; no `accept4`, batched messages, `netdevice` or four Linux socket options |
 | `netdb` | Ported subset | `from_bytes` parsers; no `from_system` loaders |
-| All other modules | Absent | Using one is a compile-time error; `users` and `resolver` stay absent through D3 |
+| `termios` | Ported | libSystem `tcgetattr` family and `ttyname_r`; Darwin `termios` layout, twenty special codes and numeric speeds; a master answers terminal requests only once its slave has been opened |
+| `pty` | Ported | `posix_openpt`, `grantpt`, `unlockpt`, `ptsname_r`; the slave opens by name; `TIOCSCTTY` cannot steal |
+| `mm` | Ported subset | `mmap`, `munmap`, `mprotect`, `mlock`, `munlock`, `msync`, `madvise`, `posix_madvise`, `mincore` with 16 KiB pages; no `LinuxDontNeed`, `mremap`, `mlock2`, `mlockall` (XNU returns `ENOSYS`) or `remap_file_pages`; `memfd` stays absent from `fs` |
+| `shm` | Ported | `shm_open` and `shm_unlink`; 30-byte names after the slash; descriptors always close-on-exec; objects are sized once and used through `mmap` |
+| `timezone` | Ported | No OS calls; parses every TZif file under `/var/db/timezone/zoneinfo` and `/etc/localtime` |
+| `ipc` | Absent | POSIX message queues, which macOS lacks; the facade has no SysV IPC interface to port |
+| `users`, `resolver` | Absent | CRAB-7 decision 4: Open Directory and mDNSResponder own accounts and DNS policy on macOS |
+| `event` | Absent | `eventfd`, epoll and the `poll` family over `crabc-core`; a kqueue module would need its own proposal |
+| `ioctl`, `mount`, `system`, `thread`, `sync`, `param` | Absent | Linux mechanisms: ioctl request protocols, mount, `uname`/`sysinfo` records, thread IDs and affinity, futexes, the auxiliary vector |
+| `fenv`, `pattern`, `text` | Absent | Their implementations live in `crabc-core`, which macOS does not build |
+| `memory`, `stdio` | Absent | Not classified by CRAB-7 and without Darwin behavior tests |
+| `cfile`, `dl`, `runtime_thread` | Absent | They bind crabc's private `RuntimeV1` table in crabc's libc, which macOS processes lack |
 
 Each module's documentation lists its Darwin behavior differences and
 absent items with the reason for each.
@@ -138,8 +165,18 @@ of new files, `/private/tmp`, privileged `chroot`, `futimens` normalization,
 the interval-timer cap, datagram truncation counts, accepted-socket
 `O_NONBLOCK`, `posix_spawn` descriptor inheritance and failure teardown, and
 signal delivery and waits that Linux observes through `/proc`, `signalfd` or
-`sigqueue`. Tests that need a raw wait, thread-directed signal or identity
-oracle declare the one libSystem function they use or run `/usr/bin/id`.
+`sigqueue`; and, from D3, Darwin pseudoterminal names, `_POSIX_VDISABLE`
+special codes, the zero input speed, master requests before the slave
+opens, `/dev/null` terminal errors, the refused steal, 16 KiB pages,
+`mincore` spans, `msync` and `posix_madvise` range checks, refused
+writable-executable mappings, temporary files in place of `memfd`,
+`shm_open` names, flags and sizing, and Darwin's canonicalization bounds.
+Tests that need a raw fork, wait, thread-directed signal or identity oracle
+declare the one libSystem function they use or run `/usr/bin/id`, and the
+system zoneinfo tests compare offsets with `/bin/date`. New D3 tests that
+run on both targets check raw-mode data flow on a pseudoterminal, a
+protection fault in a re-executed child (`SIGSEGV` on Linux, `SIGBUS` on
+Darwin), the exact symbolic-link limit and an exact-fit `ttyname` buffer.
 `compat/crabc-rs/coverage.toml` has no Darwin column. It is a frozen D25
 input whose SHA-256 `compat/x86_64/aarch64_frozen_baseline.json` pins, so a
 schema change would be rejected.
