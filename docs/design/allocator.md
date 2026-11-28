@@ -523,7 +523,13 @@ release CAS, or the clear-once CAS faults, and that thread waits in a SIGSEGV
 handler while another thread frees or searches. Neither side's source changes.
 The static-main freer and reader each hold the main Heap's short lock only to
 form their bitmap/count capability, never across the clear-once wait, so a
-reader can hold a cleared bit while a freer waits, as in C.
+reader can hold a cleared bit while a freer waits, as in C. After a full
+unmapped or OS-list abandonment every step before the release CAS writes the
+page's own metadata, so `native_arena_unown_retry` and
+`compat/allocator/m2_arena_unown_retry_aarch64.c` pause that CAS with a
+hardware store watchpoint instead: a forked tracer arms it on the owner
+thread's `xthread_free` word, and foreign frees land while the owner is
+stopped before its first store there.
 
 ### Thread attach and owner exit
 

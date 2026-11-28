@@ -194,6 +194,7 @@ pub mod __crabc_runtime {
         native_runtime_unabandon_busy_wait_test_audit,
         native_runtime_main_heap_abandoned_count_test_audit,
         native_runtime_live_client_slice_pcommitted_test_audit,
+        native_runtime_live_client_thread_free_test_audit,
         native_runtime_live_client_page_geometry_test_audit, NativeRuntimeLiveClientPageGeometryAudit,
         native_runtime_process_options_test_audit, NativeRuntimeProcessOptionsAudit,
         native_runtime_process_done_retained_live_page_test_audit,

@@ -499,15 +499,15 @@ of the fragment's bounded definitions. `allocator-m2` runs:
 - the lifecycle, destruction and reservation-warning differentials against the
   aggregate's `aarch64-unknown-linux-musl` test binary (the record refuses any
   other Rust product);
-- the eight x86-inventory direct arena receivers and the ten arm-admitted
+- the eight x86-inventory direct arena receivers and the fifteen arm-admitted
   receivers below, whose physical C and Rust transcripts the aggregate
   re-parses under `target/compat/allocator/aarch64/`.
 
 The receivers take their architecture from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a
 direct x86 invocation keeps its historical paths and messages.
 
-The AArch64 fragment adds fourteen checks to the x86 inventory, each a
-pinned-C/Rust receiver that ran natively on arm. All fourteen are pending on x86
+The AArch64 fragment adds fifteen checks to the x86 inventory, each a
+pinned-C/Rust receiver that ran natively on arm. All fifteen are pending on x86
 until a native x86 run admits them into the x86 arenas record, whose manifest
 and inventory are unchanged. Nine are existing receivers:
 
@@ -544,7 +544,7 @@ and inventory are unchanged. Nine are existing receivers:
   which the x86 M5 gate also runs) compares the `mi_abandoned_page_try_reclaim`
   decisions on free under its seven option profiles.
 
-Five further receivers are new with this component and run only on AArch64
+Six further receivers are new with this component and run only on AArch64
 until a native x86 run admits them:
 
 - `arena-page-abandonment-c-rust-differential`
@@ -580,6 +580,22 @@ until a native x86 run admits them:
   freer then owns the page. Every pause names the exact bitmap word or page
   head on both sides, and repeated runs of each side under CPU load produce
   the same 77 values.
+- `arena-unown-retry-c-rust-differential`
+  (`m2_arena_unown_retry_aarch64.{c,py}` and the `native_arena_unown_retry`
+  integration test) pauses the `mi_abandoned_page_unown` release CAS after a
+  full unmapped or an OS-list abandonment, where every step before the CAS
+  writes only the page's own metadata. A forked tracer arms one AArch64
+  hardware store watchpoint (`NT_ARM_HW_WATCH`) on the owner thread's page
+  `xthread_free` word, so the owner stops before that CAS with its owner bit
+  held while foreign frees land; the tracer then disarms and detaches. A
+  full small page at owner exit, an OS singleton and an OS-backed medium page
+  under `disallow_arena_alloc=1` whose every block was freed take the
+  all-free arm; the medium page the allocation path abandons full and an
+  OS-backed page with a live block release ownership and stay unmapped or
+  listed. 25 runs of each side, plain and under 16 busy threads, produce the
+  same 81 values. The fixture refuses other targets at compile time: an x86
+  admission needs a debug-register tracer, and x86 data breakpoints trap after
+  the access rather than before it.
 - `arena-purge-rotation-c-rust-differential`
   (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
   eight arenas with disabled-delay, immediate-delay, preloading and
@@ -595,13 +611,9 @@ until a native x86 run admits them:
 
 Pinned-C-only primitive receipts and Rust-only retained counts use the VM
 direct-receiver record; the aggregate re-parses every physical transcript.
-The component stays partial. The unown retry after a full unmapped or
-OS-list abandonment stays open, because every source step between that
-collection and the release CAS writes only the page's own metadata (or the
-Heap's OS-list lock), so a page-protection pause cannot isolate it.
-Large-page and huge-page reservation success, NUMA placement and the
-16 KiB and 64 KiB base-page geometries stay open because this VM cannot
-supply them.
+The component stays partial: large-page and huge-page reservation success,
+NUMA placement and the 16 KiB and 64 KiB base-page geometries stay open
+because this VM cannot supply them.
 
 ### Bitmap component
 

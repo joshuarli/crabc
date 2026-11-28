@@ -6922,6 +6922,26 @@ pub unsafe fn native_runtime_abandonment_words_test_audit(
     })
 }
 
+/// The address of the `xthread_free` head of one exact live native client's
+/// page, whatever its memory kind. It is a copied identity for a hardware
+/// watchpoint witness, never a Page or thread-free capability.
+///
+/// # Safety
+///
+/// As [`native_runtime_live_client_page_test_audit`].
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_thread_free_test_audit(client: core::ptr::NonNull<u8>) -> Option<usize> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller's exact-live-client proof, as for the page audit.
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
+    Some(crate::types::Page::xthread_free_address_at(page))
+}
+
 /// Copies the active process subprocess's `pages_unabandon_busy_wait` total.
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]

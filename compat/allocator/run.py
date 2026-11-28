@@ -939,6 +939,48 @@ def _m2_aarch64_arena_abandonment_interleaving_trace() -> dict[str, int]:
 
 
 M2_AARCH64_ARENA_ABANDONMENT_INTERLEAVING_TRACE = _m2_aarch64_arena_abandonment_interleaving_trace()
+
+
+def _m2_aarch64_arena_unown_retry_trace() -> dict[str, int]:
+    """Pinned relations of `m2_arena_unown_retry_aarch64.c` on 4 KiB AArch64.
+
+    A hardware store watchpoint stops the owner at its first store to the
+    page's `xthread_free` word, the `mi_abandoned_page_unown` release CAS,
+    with the owner bit held and the list empty. Foreign frees publish onto
+    the owned list and the retried CAS collects them. A full small page
+    abandoned unmapped at owner exit, an OS singleton and an OS-backed medium
+    page whose every block was freed take the all-free arm and free the page;
+    the medium page that the generic allocation path abandons full, and an
+    OS-backed page with a block still live, release ownership with an empty
+    list and stay unmapped or listed until their last free.
+    """
+
+    def paused(arena: int, blocks: int) -> dict[str, int]:
+        return {
+            "arena": arena, "blocks": blocks, "pause_head": 1, "pause_trap": 1, "pause.owned": 1,
+            "pause.pending": 0, "pushed.owned": 1, "pushed.pending": 1, "hits": 1,
+        }
+
+    def span(stage: str, page: int, free: int, committed: int, purge: int) -> dict[str, int]:
+        values = {"page": page, "abandoned": 0, "free": free, "committed": committed, "purge": purge}
+        return {f"{stage}.{field}": value for field, value in values.items()}
+
+    released = {"exit.owned": 0, "exit.pending": 0}
+    listed_then_freed = {"pause.listed": 1, "exit.listed": 0}
+    rows: dict[str, dict[str, int]] = {
+        "full": {**paused(1, 8), **span("pause", 1, 0, 1, 0), **span("exit", 0, 1, 1, 1)},
+        "full_live": {
+            **paused(1, 42), **span("pause", 1, 0, 8, 0), **span("exit", 1, 0, 8, 0), **released,
+            **span("last", 0, 8, 8, 8),
+        },
+        "os_singleton": {**paused(0, 1), **listed_then_freed},
+        "os": {**paused(0, 1), **listed_then_freed},
+        "os_live": {**paused(0, 2), "pause.listed": 1, "exit.listed": 1, **released, "last.listed": 0},
+    }
+    return {f"{name}.{field}": value for name, fields in rows.items() for field, value in fields.items()}
+
+
+M2_AARCH64_ARENA_UNOWN_RETRY_TRACE = _m2_aarch64_arena_unown_retry_trace()
 # Their records use the direct-receiver format of the VM component: shared
 # relations on both sides, plus a pinned-C-only primitive receipt or a
 # Rust-only retained count where the receiver reports one.
@@ -1175,6 +1217,19 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "rust_only": {},
         "c_receipt": None,
         "scope": "pinned-c-rust-page-protection-paused-remote-free-before-the-unown-head-load-and-release-cas-and-clear-once-unabandon-wait-for-a-concurrent-arena-reader",
+    },
+    "arena-unown-retry-c-rust-differential": {
+        "artifact": "m2-arena-unown-retry",
+        "kind": "c-rust-arena-abandonment-differential",
+        "target": "compat/allocator/m2_arena_unown_retry_aarch64.py",
+        "fixture": "compat/allocator/m2_arena_unown_retry_aarch64.c",
+        "rust_test": "native_arena_unown_retry::unown_retry_after_a_remote_free_matches_the_pinned_source",
+        "trace_prefix": "m2.arena_unown_retry.",
+        "common": M2_AARCH64_ARENA_UNOWN_RETRY_TRACE,
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-hardware-watchpoint-paused-unown-release-cas-retry-after-remote-free-for-full-unmapped-and-os-list-pages-with-all-free-and-live-arms",
     },
 }
 # The huge-progress receiver writes a matched C/Rust report. It substitutes
