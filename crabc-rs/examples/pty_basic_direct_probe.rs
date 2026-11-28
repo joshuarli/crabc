@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the x86 PTY ownership and naming seam.
 //!
 //! The probe opens an owned master/slave pair, resolves the slave into

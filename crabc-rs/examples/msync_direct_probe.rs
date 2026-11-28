@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native `msync` seam.
 
 #![no_std]

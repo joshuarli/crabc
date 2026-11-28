@@ -1,10 +1,15 @@
-#![cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
+use core::ffi::CStr;
+use core::ffi::c_void;
 
-use core::ffi::{c_void, CStr};
+use crabc_rs::{io, mm};
+#[cfg(target_os = "linux")]
+use crabc_rs::OwnedFd;
 
-use crabc_rs::{io, mm, OwnedFd};
-
+#[cfg(target_os = "linux")]
 const PAGE_SIZE: usize = 4096;
+#[cfg(target_os = "macos")]
+const PAGE_SIZE: usize = 16384;
 const SPARSE_OFFSET: u64 = 4 * 1024 * 1024 * 1024;
 
 struct Mapping {
@@ -42,6 +47,7 @@ impl Mapping {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn resize(&mut self, new_length: usize, flags: mm::MremapFlags) {
         let successor = unsafe { mm::mremap(self.pointer, self.length, new_length, flags) }
             .expect("resize x86-64 mapping");
@@ -62,6 +68,7 @@ impl Drop for Mapping {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn anonymous_file() -> OwnedFd {
     let name = CStr::from_bytes_with_nul(b"crabc-rs-x86-64-mm\0")
         .expect("the fixed memfd name is NUL-terminated");
@@ -74,6 +81,18 @@ fn anonymous_file() -> OwnedFd {
     unsafe { OwnedFd::from_raw_fd(raw) }
 }
 
+/// Darwin has no `memfd`; a sized, already-unlinked-on-drop temporary file
+/// stands in for the sparse mapping fixture.
+#[cfg(target_os = "macos")]
+fn anonymous_file() -> crabc_rs::fs::NamedTempFile {
+    let file = crabc_rs::fs::create_temp_file("/tmp", "crabc-rs-darwin-mm-")
+        .expect("create mapping fixture file");
+    crabc_rs::fs::ftruncate(&file, SPARSE_OFFSET + PAGE_SIZE as u64)
+        .expect("size sparse mapping fixture file");
+    file
+}
+
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mapping_flags_match_the_linux_abi() {
     assert_eq!(mm::ProtFlags::empty().bits(), 0x0);
@@ -119,6 +138,88 @@ fn x86_64_msync_accepts_linux_sync_modes_for_anonymous_mapping() {
     assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x5a);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn mapping_flags_match_the_darwin_abi() {
+    assert_eq!(mm::ProtFlags::empty().bits(), 0x0);
+    assert_eq!(mm::ProtFlags::READ.bits(), 0x1);
+    assert_eq!(mm::ProtFlags::WRITE.bits(), 0x2);
+    assert_eq!(mm::ProtFlags::EXEC.bits(), 0x4);
+    assert_eq!(mm::MprotectFlags::empty().bits(), 0x0);
+    assert_eq!(mm::MapFlags::SHARED.bits(), 0x1);
+    assert_eq!(mm::MapFlags::PRIVATE.bits(), 0x2);
+    assert_eq!(mm::MsyncFlags::ASYNC.bits(), 0x1);
+    assert_eq!(mm::MsyncFlags::INVALIDATE.bits(), 0x2);
+    assert_eq!(mm::MsyncFlags::SYNC.bits(), 0x10);
+    assert_eq!(mm::Advice::Normal as u32, 0);
+    assert_eq!(mm::Advice::Random as u32, 1);
+    assert_eq!(mm::Advice::Sequential as u32, 2);
+    assert_eq!(mm::Advice::WillNeed as u32, 3);
+    assert_eq!(mm::PosixAdvice::Normal as u32, 0);
+    assert_eq!(mm::PosixAdvice::Random as u32, 1);
+    assert_eq!(mm::PosixAdvice::Sequential as u32, 2);
+    assert_eq!(mm::PosixAdvice::WillNeed as u32, 3);
+    assert_eq!(mm::PosixAdvice::DontNeed as u32, 4);
+    assert_eq!(mm::MINCORE_PAGE_SIZE, PAGE_SIZE);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_msync_rejects_zero_length_and_madvise_accepts_it() {
+    let mapping = Mapping::anonymous();
+
+    // SAFETY: the mapping is valid and page-aligned; XNU validates the empty
+    // range without touching it.
+    assert_eq!(
+        unsafe { mm::msync(mapping.pointer, 0, mm::MsyncFlags::empty()) },
+        Err(crabc_rs::Errno::INVAL),
+    );
+    // SAFETY: as above, for an empty normal advisory.
+    unsafe { mm::madvise(mapping.pointer, 0, mm::Advice::Normal) }
+        .expect("zero-length Darwin madvise is a no-op");
+    // SAFETY: as above; MS_SYNC and MS_ASYNC together are contradictory.
+    assert_eq!(
+        unsafe {
+            mm::msync(mapping.pointer, mapping.length, mm::MsyncFlags::SYNC | mm::MsyncFlags::ASYNC)
+        },
+        Err(crabc_rs::Errno::INVAL),
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_refuses_writable_executable_mappings() {
+    // SAFETY: a null hint asks for a fresh mapping; the call is expected to
+    // fail without creating one.
+    assert_eq!(
+        unsafe {
+            mm::mmap_anonymous(
+                core::ptr::null_mut(),
+                PAGE_SIZE,
+                mm::ProtFlags::READ | mm::ProtFlags::WRITE | mm::ProtFlags::EXEC,
+                mm::MapFlags::PRIVATE,
+            )
+        },
+        Err(crabc_rs::Errno::ACCESS),
+    );
+    let mapping = Mapping::anonymous();
+    // SAFETY: the owned mapping stays valid, and the refused change leaves
+    // its protection untouched.
+    assert_eq!(
+        unsafe {
+            mm::mprotect(
+                mapping.pointer,
+                mapping.length,
+                mm::MprotectFlags::READ | mm::MprotectFlags::WRITE | mm::MprotectFlags::EXEC,
+            )
+        },
+        Err(crabc_rs::Errno::ACCESS),
+    );
+    // SAFETY: the mapping is still writable after the refused change.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+}
+
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_msync_and_madvise_accept_zero_length_as_linux_noops() {
     let mapping = Mapping::anonymous();
@@ -133,6 +234,7 @@ fn x86_64_msync_and_madvise_accept_zero_length_as_linux_noops() {
         .expect("zero-length x86-64 madvise is a no-op");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_madvise_linux_dontneed_discards_anonymous_page_contents() {
     let mapping = Mapping::anonymous();
@@ -148,6 +250,7 @@ fn x86_64_madvise_linux_dontneed_discards_anonymous_page_contents() {
     assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_posix_madvise_dontneed_preserves_anonymous_page_contents() {
     let mapping = Mapping::anonymous();
@@ -171,6 +274,35 @@ fn x86_64_posix_madvise_dontneed_preserves_anonymous_page_contents() {
     assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x5a);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_posix_madvise_dontneed_preserves_contents_and_validates_the_range() {
+    let mapping = Mapping::anonymous();
+    // SAFETY: The mapping owns a writable page until Drop unmaps it.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+
+    // SAFETY: the advisory covers exactly the owned page.
+    unsafe { mm::posix_madvise(mapping.pointer, mapping.length, mm::PosixAdvice::DontNeed) }
+        .expect("apply POSIX DONTNEED to an owned page");
+    // SAFETY: the page stays mapped and readable.
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x5a);
+
+    // libSystem passes DONTNEED to XNU, which validates the range: the page
+    // at 16 KiB lies in the unmapped zero segment of every Darwin process.
+    // SAFETY: this error-only fixture is never accessed; XNU only looks the
+    // range up.
+    assert_eq!(
+        unsafe {
+            mm::posix_madvise(
+                core::ptr::without_provenance_mut(PAGE_SIZE),
+                PAGE_SIZE,
+                mm::PosixAdvice::DontNeed,
+            )
+        },
+        Err(crabc_rs::Errno::NOMEM),
+    );
+}
+
 #[test]
 fn x86_64_mincore_reports_residency_and_preserves_extra_output() {
     let mapping = {
@@ -191,6 +323,7 @@ fn x86_64_mincore_reports_residency_and_preserves_extra_output() {
 
     // Discard both pages, then fault only the first one before querying.
     // SAFETY: The complete two-page mapping remains owned throughout.
+    #[cfg(target_os = "linux")]
     unsafe { mm::madvise(mapping.pointer, mapping.length, mm::Advice::LinuxDontNeed) }
         .expect("discard pages before x86-64 residency query");
     // SAFETY: The first page is mapped writable and remains so until Drop.
@@ -247,6 +380,7 @@ fn x86_64_mlock_and_munlock_balance_a_mapped_page() {
         .expect("unlock x86-64 mapped page through direct munlock");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mlock2_onfault_and_munlock_balance_a_mapped_page() {
     let mapping = Mapping::anonymous();
@@ -268,6 +402,7 @@ fn x86_64_mlock2_onfault_and_munlock_balance_a_mapped_page() {
         .expect("unlock x86-64 on-fault page");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mlock2_rejects_unknown_flags() {
     let mapping = Mapping::anonymous();
@@ -300,6 +435,7 @@ fn x86_64_mlock_and_munlock_report_overflow_without_errno_translation() {
     assert_eq!(error, crabc_rs::Errno::INVAL);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_maymove_preserves_contents_and_expands_the_owned_range() {
     let mut mapping = Mapping::anonymous();
@@ -316,6 +452,7 @@ fn x86_64_mremap_maymove_preserves_contents_and_expands_the_owned_range() {
     assert_eq!(unsafe { mapping.pointer.cast::<u8>().add(PAGE_SIZE).read() }, 0xa5);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_without_maymove_can_shrink_in_place() {
     let mut mapping = Mapping::anonymous();
@@ -334,6 +471,7 @@ fn x86_64_mremap_without_maymove_can_shrink_in_place() {
     assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x11);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_fixed_replaces_destination_and_invalidates_both_inputs() {
     let mut source = Mapping::anonymous();
@@ -372,6 +510,7 @@ fn x86_64_mremap_fixed_replaces_destination_and_invalidates_both_inputs() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_rejects_flags_outside_the_closed_facade_contract() {
     let mapping = Mapping::anonymous();
@@ -552,6 +691,7 @@ fn x86_64_file_mapping_cow_shared_visibility_and_closed_descriptor_lifetime() {
     drop(file);
     // SAFETY: The mappings retain the backing object. No references or typed
     // contents survive discard, and subsequent accesses are volatile bytes.
+    #[cfg(target_os = "linux")]
     unsafe {
         mm::madvise(private.pointer, private.length, mm::Advice::LinuxDontNeed)
             .expect("discard private file COW page");
@@ -560,8 +700,17 @@ fn x86_64_file_mapping_cow_shared_visibility_and_closed_descriptor_lifetime() {
         shared.pointer.cast::<u8>().add(2).write_volatile(b'C');
         assert_eq!(observer.pointer.cast::<u8>().add(2).read_volatile(), b'C');
     }
+    // SAFETY: the mappings retain the unlinked backing file after its last
+    // descriptor closed; accesses are volatile bytes inside owned pages.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        assert_eq!(private.pointer.cast::<u8>().read_volatile(), b'P');
+        shared.pointer.cast::<u8>().add(2).write_volatile(b'C');
+        assert_eq!(observer.pointer.cast::<u8>().add(2).read_volatile(), b'C');
+    }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_retains_complete_prefix_across_growth_and_shrink() {
     let mut mapping = Mapping::anonymous();
@@ -591,6 +740,7 @@ fn x86_64_mremap_retains_complete_prefix_across_growth_and_shrink() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_failed_fixed_remap_without_maymove_preserves_both_owners() {
     let source = Mapping::anonymous();
@@ -610,6 +760,7 @@ fn x86_64_failed_fixed_remap_without_maymove_preserves_both_owners() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_zero_old_length_retains_shared_source_after_alias_unmap() {
     // SAFETY: A fresh complete shared anonymous page has no prior aliases.
@@ -647,6 +798,7 @@ fn x86_64_mremap_zero_old_length_retains_shared_source_after_alias_unmap() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_mremap_fixed_zero_old_length_replaces_destination_and_retains_shared_source() {
     // SAFETY: A fresh complete shared anonymous page has no prior aliases.
@@ -688,6 +840,7 @@ fn x86_64_mremap_fixed_zero_old_length_replaces_destination_and_retains_shared_s
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_madvise_rounds_length_and_discards_only_selected_pages() {
     let mut mapping = Mapping::anonymous();

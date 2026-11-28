@@ -1,9 +1,13 @@
-#![cfg(target_os = "linux")]
 //! Behavioral evidence for the native process-break and VM-policy seam.
 
-use crabc_rs::{mm, process, Errno};
+use crabc_rs::mm;
+#[cfg(target_os = "linux")]
+use crabc_rs::{process, Errno};
 
+#[cfg(target_os = "linux")]
 const PAGE_SIZE: usize = 4096;
+#[cfg(target_os = "macos")]
+const PAGE_SIZE: usize = 16384;
 
 fn mapped_page() -> *mut crabc_rs::ffi::c_void {
     unsafe {
@@ -17,6 +21,7 @@ fn mapped_page() -> *mut crabc_rs::ffi::c_void {
     .expect("map one anonymous page through the direct VM seam")
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn native_kernel_brk_query_can_be_replayed_without_allocator_bookkeeping() {
     let current = unsafe { process::kernel_brk(core::ptr::null_mut()) }
@@ -31,6 +36,7 @@ fn native_kernel_brk_query_can_be_replayed_without_allocator_bookkeeping() {
     assert_eq!(replayed, current);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn native_mlockall_and_munlockall_preserve_process_scope() {
     let locked = mm::mlockall(mm::MlockAllFlags::CURRENT);
@@ -60,7 +66,8 @@ fn native_posix_madvise_uses_the_non_discarding_policy_vocabulary() {
 
     // musl's Linux POSIX_MADV_DONTNEED implementation is deliberately a
     // no-op. It must not inherit Linux MADV_DONTNEED's page-discarding
-    // behavior, which would turn this read into zero.
+    // behavior, which would turn this read into zero. Darwin's
+    // MADV_DONTNEED keeps page contents.
     unsafe { mm::posix_madvise(mapping, PAGE_SIZE, mm::PosixAdvice::DontNeed) }
         .expect("POSIX DONTNEED is an advisory no-op on Linux");
     assert_eq!(unsafe { byte.read() }, 0x5a);
@@ -68,6 +75,7 @@ fn native_posix_madvise_uses_the_non_discarding_policy_vocabulary() {
     unsafe { mm::munmap(mapping, PAGE_SIZE) }.expect("unmap advised mapping");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn native_remap_file_pages_keeps_legacy_kernel_errors_typed() {
     let mapping = mapped_page();

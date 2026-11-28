@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the owned POSIX shared-memory descriptor seam.
 
 #![no_std]

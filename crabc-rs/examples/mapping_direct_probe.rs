@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the closed native mapping ownership seam.
 
 #![no_std]

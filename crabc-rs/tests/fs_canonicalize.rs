@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -7,14 +6,35 @@ use std::path::PathBuf;
 use crabc_rs::fs as native_fs;
 use crabc_rs::Errno;
 
+#[cfg(target_os = "linux")]
+const TMP: &str = "/tmp";
+// macOS's /tmp is a symbolic link to /private/tmp.
+#[cfg(target_os = "macos")]
+const TMP: &str = "/private/tmp";
+
+#[cfg(target_os = "linux")]
+const SYMLINK_LIMIT: usize = 40;
+#[cfg(target_os = "macos")]
+const SYMLINK_LIMIT: usize = 32;
+
 fn fixture_root() -> PathBuf {
     let root = PathBuf::from(format!(
-        "/tmp/crabc-rs-native-canonicalize-{}",
+        "{TMP}/crabc-rs-native-canonicalize-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("real/child")).expect("create canonicalize fixture");
     fs::write(root.join("real/child/file"), b"fixture").expect("write canonicalize fixture");
+    root
+}
+
+fn private_root(tag: &str) -> PathBuf {
+    let root = PathBuf::from(format!(
+        "{TMP}/crabc-rs-native-canonicalize-{tag}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create private canonicalize fixture");
     root
 }
 
@@ -65,6 +85,8 @@ fn canonicalize_relative_paths_are_anchored_to_the_physical_current_directory() 
     );
 }
 
+// APFS refuses names that are not UTF-8.
+#[cfg(target_os = "linux")]
 #[test]
 fn canonicalize_preserves_non_utf8_path_bytes_and_absolute_links() {
     let root = fixture_root();
@@ -119,4 +141,99 @@ fn canonicalize_rejects_nul_and_reports_caller_buffer_capacity() {
 
     let empty = CString::new("").expect("empty CString");
     assert_eq!(native_fs::canonicalize(empty), Err(Errno::NOENT));
+}
+
+#[test]
+fn canonicalize_follows_exactly_the_platform_symlink_limit() {
+    let root = private_root("limit");
+    fs::write(root.join("target"), b"target").expect("write link-chain target");
+
+    // Each chain has `length` links ending at `target`.
+    let chain = |name: &str, length: usize| {
+        for index in 0..length {
+            let next = if index + 1 == length {
+                "target".to_owned()
+            } else {
+                format!("{name}{}", index + 1)
+            };
+            std::os::unix::fs::symlink(next, root.join(format!("{name}{index}")))
+                .expect("create link-chain member");
+        }
+        root.join(format!("{name}0"))
+    };
+
+    let within = chain("within", SYMLINK_LIMIT);
+    assert_eq!(
+        canonical(within.as_os_str().as_bytes()),
+        root.join("target").as_os_str().as_bytes(),
+        "a chain of exactly the platform limit resolves",
+    );
+    let beyond = chain("beyond", SYMLINK_LIMIT + 1);
+    assert_eq!(
+        native_fs::canonicalize(beyond.as_os_str().as_bytes()),
+        Err(Errno::LOOP),
+        "one link beyond the platform limit is a loop",
+    );
+    cleanup(&root);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn canonicalize_resolves_darwin_system_links_and_keeps_component_spelling() {
+    assert_eq!(native_fs::CANONICAL_PATH_MAX, 1024, "Darwin PATH_MAX");
+    assert_eq!(canonical(b"/tmp"), b"/private/tmp");
+    assert_eq!(canonical(b"/var/../etc/./hosts"), b"/private/etc/hosts");
+
+    let root = private_root("spelling");
+    fs::create_dir(root.join("Mixed")).expect("create mixed-case directory");
+    let other_spelling = root.join("MIXED");
+    if fs::metadata(&other_spelling).is_ok() {
+        // On a case-insensitive volume both spellings name one directory,
+        // and the result keeps the caller's spelling.
+        assert_eq!(
+            canonical(other_spelling.as_os_str().as_bytes()),
+            other_spelling.as_os_str().as_bytes(),
+        );
+    }
+    cleanup(&root);
+}
+
+#[cfg(target_os = "macos")]
+const DEEP_CWD_CHILD: &str = "CRABC_RS_CANONICALIZE_DEEP_CWD_CHILD";
+
+#[cfg(target_os = "macos")]
+#[test]
+fn canonicalize_reports_a_working_directory_beyond_path_max_as_too_long() {
+    if let Some(root) = std::env::var_os(DEEP_CWD_CHILD) {
+        std::env::set_current_dir(&root).expect("enter the fixture root");
+        let component = "d".repeat(200);
+        for _ in 0..native_fs::CANONICAL_PATH_MAX / component.len() + 1 {
+            fs::create_dir(&component).expect("create one deeper directory");
+            std::env::set_current_dir(&component).expect("enter one deeper directory");
+        }
+        assert_eq!(native_fs::canonicalize(&b"."[..]), Err(Errno::NAMETOOLONG));
+        assert_eq!(
+            canonical(root.as_bytes()),
+            root.as_bytes(),
+            "an absolute path needs no working directory",
+        );
+        return;
+    }
+
+    let root = private_root("deep-cwd");
+    let output = std::process::Command::new(std::env::current_exe().expect("locate test binary"))
+        .args([
+            "--exact",
+            "canonicalize_reports_a_working_directory_beyond_path_max_as_too_long",
+            "--nocapture",
+        ])
+        .env(DEEP_CWD_CHILD, &root)
+        .output()
+        .expect("run deep working-directory child");
+    assert!(
+        output.status.success(),
+        "deep working-directory child failed:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    cleanup(&root);
 }

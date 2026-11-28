@@ -1,10 +1,12 @@
-#![cfg(target_os = "linux")]
-
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
 
-use std::ffi::{CString, OsString};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::ffi::CString;
+#[cfg(target_os = "linux")]
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStrExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 use crabc_rs::fs as native_fs;
@@ -50,8 +52,13 @@ fn fresh_fixture_root() -> PathBuf {
         .expect("system clock after Unix epoch")
         .as_nanos();
 
+    // macOS's temporary directory sits behind the /var -> private/var link.
+    #[cfg(target_os = "linux")]
+    let temp_dir = std::env::temp_dir();
+    #[cfg(target_os = "macos")]
+    let temp_dir = std::fs::canonicalize(std::env::temp_dir()).expect("resolve temporary directory");
     for serial in 0_u32..1024 {
-        let candidate = std::env::temp_dir().join(format!(
+        let candidate = temp_dir.join(format!(
             "crabc-x86-canonicalize-{process_id}-{nonce}-{serial}"
         ));
         match std::fs::create_dir(&candidate) {
@@ -96,7 +103,11 @@ fn x86_64_canonicalize_into_is_physical_byte_preserving_and_noalloc() {
         Err(Errno::NOTDIR),
     );
 
+    #[cfg(target_os = "linux")]
     let raw_name = OsString::from_vec(b"raw-\xff".to_vec());
+    // APFS refuses names that are not UTF-8.
+    #[cfg(target_os = "macos")]
+    let raw_name = "raw-\u{e9}";
     let raw_path = fixture.root().join("real/child").join(raw_name);
     std::fs::write(&raw_path, b"raw non-UTF-8 fixture")
         .expect("write non-UTF-8 canonicalization fixture");
@@ -203,5 +214,8 @@ fn x86_64_canonicalize_accepts_an_existing_c_string_input() {
     let mut output = [MaybeUninit::uninit(); native_fs::CANONICAL_PATH_MAX];
     let (initialized, _) = native_fs::canonicalize_into(path, &mut output)
         .expect("canonicalize direct C string input");
+    #[cfg(target_os = "linux")]
     assert_eq!(initialized, b"/tmp");
+    #[cfg(target_os = "macos")]
+    assert_eq!(initialized, b"/private/tmp");
 }

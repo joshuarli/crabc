@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native terminal queue-control quartet.
 //!
 //! The PTY is disposable, so flow-control mutations do not escape the probe

@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 
 use crabc_rs::{fs, pipe, pty, termios, Errno};
@@ -16,7 +15,10 @@ fn ttyname_returns_the_validated_slave_path_and_reuses_storage() {
 
     let first = termios::ttyname(&slave, b"stale-name".to_vec()).expect("name PTY slave fd");
     assert_eq!(first.as_bytes(), expected.as_bytes());
+    #[cfg(target_os = "linux")]
     assert!(first.as_bytes().starts_with(b"/dev/pts/"));
+    #[cfg(target_os = "macos")]
+    assert!(first.as_bytes().starts_with(b"/dev/ttys"));
 
     // A second call with the first result's allocation exercises the exact
     // Rustix reuse contract rather than relying on a fresh vector each time.
@@ -48,4 +50,23 @@ fn ttyname_rejects_a_non_terminal_descriptor() {
         termios::ttyname(&reader, Vec::new()).unwrap_err(),
         Errno::NOTTY,
     );
+}
+
+#[test]
+fn ttyname_into_succeeds_only_with_room_for_the_name_and_its_nul() {
+    let (_master, slave) = pty_pair();
+    let expected = termios::ttyname(&slave, Vec::new()).expect("name PTY slave fd");
+    let length = expected.as_bytes().len();
+
+    for capacity in 1..=length {
+        let mut storage = vec![MaybeUninit::uninit(); capacity];
+        assert_eq!(
+            termios::ttyname_into(&slave, &mut storage).unwrap_err(),
+            Errno::RANGE,
+            "a {capacity}-byte buffer cannot hold the {length}-byte name and its NUL",
+        );
+    }
+    let mut storage = vec![MaybeUninit::uninit(); length + 1];
+    let name = termios::ttyname_into(&slave, &mut storage).expect("exact-fit ttyname buffer");
+    assert_eq!(name.to_bytes_with_nul(), expected.as_bytes_with_nul());
 }

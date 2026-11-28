@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Linux regression coverage for the complete native terminal slice.
 //!
 //! The session-changing check runs only in a raw-fork child.  The parent test
@@ -8,8 +7,60 @@
 
 use core::mem::MaybeUninit;
 
+#[cfg(target_os = "linux")]
 use crabc_core::process as raw_process;
 use crabc_rs::{fs, pipe, pty, termios, Errno};
+
+/// The raw fork, wait and session calls the Linux tests take from
+/// `crabc-core`, declared from libSystem with the same shapes.
+#[cfg(target_os = "macos")]
+mod raw_process {
+    use crabc_rs::Errno;
+
+    mod sys {
+        unsafe extern "C" {
+            pub(super) fn fork() -> i32;
+            pub(super) fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+            pub(super) fn setsid() -> i32;
+        }
+    }
+
+    fn checked(result: i32) -> Result<i32, Errno> {
+        if result == -1 {
+            let raw = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            Err(Errno::from_raw(raw).unwrap_or(Errno::IO))
+        } else {
+            Ok(result)
+        }
+    }
+
+    pub fn fork_raw() -> Result<i32, Errno> {
+        // SAFETY: every forked child in these tests makes only
+        // allocation-free calls before `_exit`.
+        checked(unsafe { sys::fork() })
+    }
+
+    pub unsafe fn wait4_raw(pid: i32, status: *mut i32, options: i32) -> Result<i32, Errno> {
+        // SAFETY: the caller supplies writable status storage.
+        checked(unsafe { sys::waitpid(pid, status, options) })
+    }
+
+    #[allow(dead_code)]
+    pub fn setsid() -> Result<i32, Errno> {
+        // SAFETY: `setsid` has no memory arguments.
+        checked(unsafe { sys::setsid() })
+    }
+
+    #[allow(dead_code)]
+    pub fn getpid() -> i32 {
+        crabc_rs::process::getpid().as_raw_pid()
+    }
+
+    #[allow(dead_code)]
+    pub fn exit_immediately(status: i32) -> ! {
+        crabc_rs::process::exit_immediately(status)
+    }
+}
 
 fn flags() -> pty::OpenptFlags {
     pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC
@@ -56,7 +107,11 @@ fn x86_64_terminal_attributes_queue_special_codes_and_window_size_round_trip() {
     termios::tcsetattr(pair.slave(), termios::OptionalActions::Now, &changed)
         .expect("apply independent B0 input speed");
     let observed = termios::tcgetattr(pair.slave()).expect("re-read B0 input speed");
+    #[cfg(target_os = "linux")]
     assert_eq!(observed.input_speed(), 0);
+    // Darwin reports the output rate for a zero input rate, as POSIX describes.
+    #[cfg(target_os = "macos")]
+    assert_eq!(observed.input_speed(), 9_600);
     assert_eq!(observed.output_speed(), 9_600);
 
     // The remaining update actions have distinct Linux ioctl request words.
@@ -103,7 +158,10 @@ fn x86_64_terminal_name_and_exclusive_mode_are_typed_and_bounded() {
     let pair = pair();
     let mut storage = [MaybeUninit::uninit(); 128];
     let name = termios::ttyname_into(pair.slave(), &mut storage).expect("name PTY slave");
+    #[cfg(target_os = "linux")]
     assert!(name.to_bytes().starts_with(b"/dev/pts/"));
+    #[cfg(target_os = "macos")]
+    assert!(name.to_bytes().starts_with(b"/dev/ttys"));
 
     termios::ioctl_tiocexcl(pair.slave()).expect("enable PTY exclusive mode");
     match fs::open(

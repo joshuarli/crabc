@@ -1,9 +1,11 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::mm;
 
 #[test]
 fn native_msync_accepts_linux_sync_modes_for_anonymous_mapping() {
+    #[cfg(target_os = "linux")]
     const PAGE_SIZE: usize = 4096;
+    #[cfg(target_os = "macos")]
+    const PAGE_SIZE: usize = 16384;
 
     let mapping = unsafe {
         mm::mmap_anonymous(

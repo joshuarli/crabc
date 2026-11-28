@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the direct `termios::ttyname` seam.
 //!
 //! The probe creates a PTY using direct Linux operations, then resolves the

@@ -1,10 +1,11 @@
-#![cfg(target_os = "linux")]
-
 use core::ffi::c_void;
 
 use crabc_rs::{fs, io, mm, Errno};
 
+#[cfg(target_os = "linux")]
 const PAGE_SIZE: usize = 4096;
+#[cfg(target_os = "macos")]
+const PAGE_SIZE: usize = 16384;
 
 struct Mapping {
     pointer: *mut c_void,
@@ -87,11 +88,16 @@ fn x86_64_memory_mapping_preserves_protection_and_unique_unmap_lifetime() {
 /// vocabulary without selecting a C file-mapping ABI.
 #[test]
 fn x86_64_memory_mapping_file_backed_boundary_and_direct_errors_are_precise() {
+    #[cfg(target_os = "linux")]
     let file = fs::memfd_create(
         b"crabc-rs-x86-memory-mapping",
         fs::MemfdFlags::CLOEXEC,
     )
     .expect("create file-backed mapping fixture");
+    // Darwin has no memfd; a temporary file removed on drop stands in.
+    #[cfg(target_os = "macos")]
+    let file = fs::create_temp_file("/tmp", "crabc-rs-darwin-memory-mapping-")
+        .expect("create file-backed mapping fixture");
     fs::ftruncate(&file, PAGE_SIZE as u64).expect("size mapping fixture file");
     let pointer = unsafe {
         mm::mmap(

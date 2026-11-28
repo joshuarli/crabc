@@ -1,7 +1,9 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::{mm, Errno};
 
+#[cfg(target_os = "linux")]
 const PAGE_SIZE: usize = 4096;
+#[cfg(target_os = "macos")]
+const PAGE_SIZE: usize = 16384;
 
 fn mapped_page() -> *mut crabc_rs::ffi::c_void {
     unsafe {
@@ -27,6 +29,7 @@ fn native_mlock_and_munlock_balance_a_mapped_page() {
     unsafe { mm::munmap(mapping, PAGE_SIZE) }.expect("unmap unlocked page");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn native_mlock_with_onfault_and_munlock_balance_a_mapped_page() {
     let mapping = mapped_page();
@@ -55,6 +58,7 @@ fn native_mlock_syscall_reports_overflow_without_errno_translation() {
     assert_eq!(error, Errno::INVAL);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn native_mlock2_syscall_reports_unknown_flags() {
     let mapping = mapped_page();

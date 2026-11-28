@@ -1,6 +1,12 @@
-#![cfg(target_os = "linux")]
 use crabc_rs::{fs, pty, termios, Errno};
 
+// Darwin's null device answers terminal requests with ENODEV.
+#[cfg(target_os = "linux")]
+const NULL_DEVICE_TERMINAL_ERROR: Errno = Errno::NOTTY;
+#[cfg(target_os = "macos")]
+const NULL_DEVICE_TERMINAL_ERROR: Errno = Errno::NODEV;
+
+#[cfg(target_os = "linux")]
 fn pty_master() -> crabc_rs::OwnedFd {
     let master =
         pty::openpt(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
@@ -12,7 +18,15 @@ fn pty_master() -> crabc_rs::OwnedFd {
 
 #[test]
 fn terminal_queue_operations_use_typed_actions_on_a_pty() {
+    #[cfg(target_os = "linux")]
     let master = pty_master();
+    // A Darwin master rejects terminal requests until its slave is opened.
+    #[cfg(target_os = "macos")]
+    let (master, _slave) = pty::PtyPair::open(
+        pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC,
+    )
+    .expect("open disposable PTY pair")
+    .into_parts();
 
     for queue in [
         termios::QueueSelector::IFlush,
@@ -47,7 +61,7 @@ fn terminal_queue_operations_report_notty_for_non_terminals() {
         termios::QueueSelector::OFlush,
         termios::QueueSelector::IOFlush,
     ] {
-        assert_eq!(termios::tcflush(&null, queue), Err(Errno::NOTTY));
+        assert_eq!(termios::tcflush(&null, queue), Err(NULL_DEVICE_TERMINAL_ERROR));
     }
     for action in [
         termios::Action::OOff,
@@ -55,8 +69,8 @@ fn terminal_queue_operations_report_notty_for_non_terminals() {
         termios::Action::IOff,
         termios::Action::IOn,
     ] {
-        assert_eq!(termios::tcflow(&null, action), Err(Errno::NOTTY));
+        assert_eq!(termios::tcflow(&null, action), Err(NULL_DEVICE_TERMINAL_ERROR));
     }
-    assert_eq!(termios::tcdrain(&null), Err(Errno::NOTTY));
-    assert_eq!(termios::tcsendbreak(&null), Err(Errno::NOTTY));
+    assert_eq!(termios::tcdrain(&null), Err(NULL_DEVICE_TERMINAL_ERROR));
+    assert_eq!(termios::tcsendbreak(&null), Err(NULL_DEVICE_TERMINAL_ERROR));
 }

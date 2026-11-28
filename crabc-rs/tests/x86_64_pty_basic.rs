@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 //! Linux evidence for the private PTY ownership and naming seam.
 
 
@@ -30,7 +29,11 @@ fn x86_64_grantpt_validates_a_non_pty_descriptor() {
     // Linux devpts grants access when a PTY master is allocated. The private
     // Rust operation still validates its descriptor through TIOCGPTN, unlike
     // musl's C grantpt no-op wrapper, so it cannot manufacture success here.
+    #[cfg(target_os = "linux")]
     assert_eq!(pty::grantpt(null), Err(Errno::NOTTY));
+    // Darwin's null device answers the grant request with ENODEV.
+    #[cfg(target_os = "macos")]
+    assert_eq!(pty::grantpt(null), Err(Errno::NODEV));
 }
 
 #[test]
@@ -40,7 +43,10 @@ fn x86_64_pair_owns_both_descriptors_and_resolves_slave_name() {
     let mut storage = [MaybeUninit::uninit(); 32];
     let borrowed = pty::ptsname_into(pair.master(), &mut storage)
         .expect("resolve PTY name into caller storage");
+    #[cfg(target_os = "linux")]
     assert!(borrowed.to_bytes().starts_with(b"/dev/pts/"));
+    #[cfg(target_os = "macos")]
+    assert!(borrowed.to_bytes().starts_with(b"/dev/ttys"));
 
     #[cfg(feature = "alloc")]
     {
@@ -79,4 +85,17 @@ fn x86_64_slave_output_reaches_its_owned_master() {
         1
     );
     assert_eq!(received, *b"x");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_master_operations_reject_descriptors_that_are_not_masters() {
+    let (reader, _writer) = crabc_rs::pipe::pipe().expect("create a non-terminal descriptor");
+    let pair = pty::PtyPair::open(flags()).expect("open owned PTY pair");
+    for descriptor in [crabc_rs::AsFd::as_fd(&reader), pair.slave()] {
+        assert_eq!(pty::grantpt(descriptor), Err(Errno::NOTTY));
+        assert_eq!(pty::unlockpt(descriptor), Err(Errno::NOTTY));
+        let mut storage = [MaybeUninit::uninit(); 128];
+        assert_eq!(pty::ptsname_into(descriptor, &mut storage), Err(Errno::NOTTY));
+    }
 }
