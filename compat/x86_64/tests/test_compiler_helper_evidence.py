@@ -95,10 +95,11 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             product = Path(temporary)
-            manifest = {"schema": 1, "format": driver.COMBINED_FORMAT}
+            import owned_posix_product_evidence as products
+            manifest = {"schema": 1, "format": products.COMBINED_SYSROOT_FORMAT}
             embedded_path = product / driver.COMBINED_PRODUCT_MANIFEST
             embedded_path.parent.mkdir(parents=True)
-            embedded = {"schema": 1, "format": driver.FORMAT, "build_profile": "release"}
+            embedded = {"schema": 1, "format": products.DYNAMIC_PRODUCT_FORMAT, "build_profile": "release"}
             embedded_path.write_text(EVIDENCE.canonical_json(embedded), encoding="utf-8")
 
             self.assertEqual(
@@ -109,6 +110,37 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             embedded_path.write_text(EVIDENCE.canonical_json(embedded), encoding="utf-8")
             with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "allocator profile"):
                 EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, manifest)
+
+    def test_dynamic_product_profile_rejects_foreign_architecture_formats(self) -> None:
+        import owned_posix_product_evidence as products
+        import crabc_cc_owned_dynamic as driver
+
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            product = Path(temporary)
+            path = product / driver.COMBINED_PRODUCT_MANIFEST
+            path.parent.mkdir(parents=True)
+            for native, foreign in (("x86-64", "aarch64"), ("aarch64", "x86-64")):
+                native_dynamic = f"crabc-{native}-owned-dynamic-sysroot-v1"
+                native_combined = f"crabc-{native}-owned-sysroot-v1"
+                foreign_dynamic = f"crabc-{foreign}-owned-dynamic-sysroot-v1"
+                foreign_combined = f"crabc-{foreign}-owned-sysroot-v1"
+                with self.subTest(native=native), \
+                        mock.patch.object(products, "DYNAMIC_PRODUCT_FORMAT", native_dynamic), \
+                        mock.patch.object(products, "COMBINED_SYSROOT_FORMAT", native_combined):
+                    embedded = {"format": native_dynamic, "build_profile": "release"}
+                    path.write_text(EVIDENCE.canonical_json(embedded))
+                    self.assertEqual(EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, embedded), "release")
+                    self.assertEqual(EVIDENCE.dynamic_product_profile_from_admitted_manifest(
+                        product, {"format": native_combined}), "release")
+                    for format_name in (foreign_dynamic, foreign_combined):
+                        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "product format"):
+                            EVIDENCE.dynamic_product_profile_from_admitted_manifest(
+                                product, {"format": format_name, "build_profile": "release"})
+                    path.write_text(EVIDENCE.canonical_json({"format": foreign_dynamic, "build_profile": "release"}))
+                    with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "product format"):
+                        EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, {"format": native_combined})
 
     def _debug_dynamic_product(self, root: Path) -> Path:
         product = root / "debug-product"

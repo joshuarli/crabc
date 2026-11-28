@@ -137,14 +137,14 @@ def allocator_popcount_witness_for_profile(profile: object) -> str:
 def dynamic_product_profile_from_admitted_manifest(product: Path, manifest: Mapping[str, Any]) -> str:
     """Resolve a validated dynamic profile from a standalone or combined tree."""
     import crabc_cc_owned_dynamic as driver
+    import owned_posix_product_evidence as products
 
     require(type(manifest) is dict, "compiler-helper installed dynamic manifest differs")
-    if manifest.get("format") == driver.COMBINED_FORMAT:
+    if manifest.get("format") == products.COMBINED_SYSROOT_FORMAT:
         manifest = _read_json(Path(product) / driver.COMBINED_PRODUCT_MANIFEST,
                               "compiler-helper embedded dynamic manifest")
-    else:
-        require(manifest.get("format") == driver.FORMAT,
-                "compiler-helper installed dynamic product format differs")
+    require(manifest.get("format") == products.DYNAMIC_PRODUCT_FORMAT,
+            "compiler-helper installed dynamic product format differs")
     profile = manifest.get("build_profile")
     allocator_popcount_witness_for_profile(profile)
     return profile

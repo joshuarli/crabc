@@ -98,7 +98,7 @@ def loader_dynamic_elf(*, section_headers: bool = True, post_null: bool = False,
     load_offset, strings_offset, dynamic_offset = 256, 320, 448
     load_address = 0x400000
     strings = b"\0" if self_relocation_only else b"\0libforeign.so\0/bad\0"
-    owned_interpreter = b"/lib/ld-crabc-x86_64.so.1\0"
+    owned_interpreter = evidence.INTERPRETER.encode() + b"\0"
     string_address = load_address + strings_offset - load_offset
     if string_table_address is not None:
         string_address = string_table_address
@@ -816,7 +816,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         attach = str(self.dynamic / "usr/lib/crabc-dynamic-attach.o")
         crti = str(self.dynamic / "usr/lib/crti.o")
         attach_index, crti_index = command.index(attach), command.index(crti)
-        command[attach_index], command[crti_index] = crti, attach
+        if attach_index < crti_index:
+            command[attach_index], command[crti_index] = crti, attach
         self.write_json(receipt, record)
         manifest = self.dynamic / "share/crabc/manifest.json"
         with mock.patch.object(evidence, "_dynamic_profile", return_value=evidence.NativeRuntimeProfile.COMPATIBILITY), \
@@ -853,18 +854,21 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         workload_objects = (self.workload,) if workloads is None else workloads
         direct = [
             runtime / "crti.o", runtime / "libc.so", runtime / "crtn.o",
-            runtime / entry, runtime / "crabc-dynamic-attach.o",
+            runtime / entry,
+            *([runtime / "crabc-dynamic-attach.o"] if evidence.ARCH == "x86_64" or linkage == "non-pie" else []),
         ]
         inputs = [*direct, *workload_objects, runtime / "libcrabc-builtins.a"]
         link = [
-            str(self.linker), *( ["-pie"] if linkage == "pie" else []), "--hash-style=sysv",
+            (self.compiler_tools["linker"]["path"] if evidence.ARCH == "aarch64" else str(self.linker)), *( ["-pie"] if linkage == "pie" else []), "--hash-style=sysv",
             "--eh-frame-hdr", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
             "--exclude-libs=libcrabc-builtins.a",
             *(["--export-dynamic"] if export_dynamic else []),
             *evidence.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
             "--dynamic-linker", profile.interpreter.replace("x86_64", evidence.ARCH), str(runtime / entry),
-            str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"),
+            *([str(runtime / "crabc-dynamic-attach.o")] if evidence.ARCH == "x86_64" else []),
+            str(runtime / "crti.o"),
+            *([str(runtime / "crabc-dynamic-attach.o")] if evidence.ARCH == "aarch64" and linkage == "non-pie" else []),
             *(str(workload) for workload in workload_objects),
             str(runtime / "libcrabc-builtins.a"), str(runtime / "libc.so"), str(runtime / "crtn.o"),
             "-o", str(self.executable),
@@ -885,7 +889,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "input_receipts": [{"path": str(path), "sha256": digest(path)} for path in inputs],
             "resolved_linker": (dict(self.compiler_tools["linker"]) if evidence.ARCH == "aarch64" else {"path": str(self.linker), "sha256": digest(self.linker)}),
             "link_command": link,
-            "link_trace": [str(path) for path in [runtime / entry, runtime / "crabc-dynamic-attach.o", runtime / "crti.o", *workload_objects, runtime / "libcrabc-builtins.a", runtime / "libc.so", runtime / "crtn.o"]],
+            "link_trace": [str(path) for path in [runtime / entry, *([runtime / "crabc-dynamic-attach.o"] if evidence.ARCH == "x86_64" else []), runtime / "crti.o", *([runtime / "crabc-dynamic-attach.o"] if evidence.ARCH == "aarch64" and linkage == "non-pie" else []), *workload_objects, runtime / "libcrabc-builtins.a", runtime / "libc.so", runtime / "crtn.o"]],
             "campaign_complete": False,
         })
         return receipt
@@ -1215,13 +1219,20 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         os.chmod(other, 0o755)
         record["resolved_linker"] = {"path": str(other), "sha256": digest(other)}
         self.write_json(receipt, record)
-        with self.assertRaisesRegex(evidence.ProductEvidenceError, "pinned mold"):
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "pinned mold|source image manifest"):
             self.validate("static", receipt)
 
         receipt = self.static_receipt("static-pie")
-        os.chmod(self.linker, 0o644)
-        with self.assertRaisesRegex(evidence.ProductEvidenceError, "executable"):
-            self.validate("static-pie", receipt)
+        if evidence.ARCH == "aarch64":
+            record = json.loads(receipt.read_text())
+            record["resolved_linker"]["sha256"] = "0" * 64
+            self.write_json(receipt, record)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "source image manifest"):
+                self.validate("static-pie", receipt)
+        else:
+            os.chmod(self.linker, 0o644)
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "executable"):
+                self.validate("static-pie", receipt)
 
     def test_foreign_runtime_roster_fails(self) -> None:
         receipt = self.dynamic_receipt()
@@ -1293,7 +1304,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         (root / "lib/extra-loader.so").symlink_to(f"ld-crabc-{evidence.ARCH}.so.1")
         path = root / "share/crabc/manifest.json"
         manifest = json.loads(path.read_text())
-        manifest["symlinks"]["lib/extra-loader.so"] = "ld-crabc-x86_64.so.1"
+        manifest["symlinks"]["lib/extra-loader.so"] = f"ld-crabc-{evidence.ARCH}.so.1"
         self.write_json(path, manifest)
         for validate in (evidence._validate_static_product, evidence._validate_dynamic_product):
             with self.subTest(validate=validate.__name__), self.assertRaises(evidence.ProductEvidenceError):
@@ -1541,7 +1552,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
     def test_stale_runtime_and_manifest_fail(self) -> None:
         receipt = self.dynamic_receipt()
-        (self.dynamic / "usr/lib/libc.so").write_bytes(b"new owned libc\n")
+        runtime = "usr/lib/libcrabc-builtins.a" if evidence.ARCH == "aarch64" else "usr/lib/libc.so"
+        (self.dynamic / runtime).write_bytes(b"new owned runtime\n")
         self.refresh_dynamic_manifest()
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "manifest hash|runtime input"):
             self.validate("pie", receipt)
