@@ -849,7 +849,8 @@ def _load_target_fragment(path: Path) -> dict[str, Any]:
 
     The AArch64 fragment records every check in its own partial-fragment
     branch matrix; its check roster must equal the x86 inventory this
-    producer executes, so neither target can run a different matrix.
+    producer executes, so neither target can run a different matrix, followed
+    only by the receivers the aggregate adds for that target.
     """
 
     try:
@@ -861,7 +862,8 @@ def _load_target_fragment(path: Path) -> dict[str, Any]:
     except (run.HarnessError, OSError, json.JSONDecodeError) as error:
         raise EvidenceError(f"{ARCH_LABEL} initialization M2 fragment is invalid: {error}") from error
     checks = fragment["component"]["checks"]
-    if [check["id"] for check in checks] != [check_id for check_id, _, _, _ in _EXPECTED_CHECKS]:
+    added = list(run.M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS) if ARCH == "aarch64" else []
+    if [check["id"] for check in checks] != [check_id for check_id, _, _, _ in _EXPECTED_CHECKS] + added:
         raise EvidenceError(f"{ARCH_LABEL} initialization M2 fixed check roster changed")
     return fragment
 

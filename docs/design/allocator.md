@@ -776,6 +776,12 @@ timeout, reservation failure, and `mbind` failure (`prim.c:630-645`).
   short-write behavior. The runtime adapter enters the descriptor-local
   diagnostic callback boundary before taking the FILE lock, so a refused or
   nested scope makes no `fputs` delivery.
+- Allocator-site error reports are incomplete. `subproc_main_heaps.rs`
+  `heap_theap` keeps the linked Theap after a refused regular slot table, as
+  `mi_heap_init_theap` does, but drops the source
+  `_mi_error_message(EFAULT, "unable to allocate thread local variables\n")`
+  (`threadlocal.c:136`); the AArch64 slot-failure receiver records C's one
+  report and Rust's none.
 - Final statistics: `RuntimeProcessStorage::finish_selected_default_release_process_after_user_atexit`
   (`runtime_lifecycle.rs`) evaluates the signed `show_stats || verbose` condition
   after its state checks and before its retaining merges. A source-disabled
