@@ -548,7 +548,8 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                 command_path = work / "libcrabc-builtins.a.commands.json"
                 command_path.write_text("{}\n")
                 names = ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt",
-                         "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs")
+                         "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs",
+                         "src/aarch64_binary128.rs")
                 provenance = {
                     "archive": {"members": [EVIDENCE.ARCHIVE_MEMBER], "sha256": archive_identity["sha256"],
                                 "undefined_symbols": [], "defined_symbols": (ROOT / "builtins/aarch64-helper-exports.txt").read_text().splitlines()},

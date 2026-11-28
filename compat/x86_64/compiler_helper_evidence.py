@@ -2062,7 +2062,8 @@ def _provenance(path: Path, contract: Mapping[str, Any], archive_identity: Mappi
                 and upstream.get("prebuilt_compiler_builtins_input") is False,
                 "ARM source-built compiler helpers differ")
         source_files = ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt",
-                        "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs")
+                        "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs",
+                        "src/aarch64_binary128.rs")
         expected_files = [{"path": name, "sha256": digest(ROOT / "builtins" / name)} for name in source_files]
         require(type(source) is dict and source.get("languages") == ["Rust"] and source.get("files") == expected_files,
                 "ARM helper source provenance differs")
