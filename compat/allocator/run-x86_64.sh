@@ -532,7 +532,7 @@ esac
 configure_execution_budget
 if [ "$ARCH" = aarch64 ]; then
     case "$command" in
-        image|allocator-unit|allocator-native-integration|allocator-m1|allocator-m1-read) ;;
+        image|allocator-unit|allocator-native-integration|allocator-m1|allocator-m1-read|allocator-m2) ;;
         *) fail "allocator command $command is not qualified on aarch64" ;;
     esac
 fi

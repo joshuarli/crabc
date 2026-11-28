@@ -11,7 +11,8 @@ import run as harness
 
 
 FIXTURE = Path(__file__).with_name("m2_second_arena_reset_failure_x86_64.c")
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-second-arena-reset-advice"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-second-arena-reset-advice"
 PROFILES = (
     ("warning-eio", 0, 1, 2, 8, 8, 0, 1),
     ("retry-eagain", 1, 2, 3, 8, 8, 8, 0),
@@ -68,7 +69,7 @@ def expected_trace(profile: tuple[str, int, int, int, int, int, int, int]) -> di
 
 
 def run(offline: bool, source_only: bool, rust_test_binary: Path | None = None) -> Path:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)

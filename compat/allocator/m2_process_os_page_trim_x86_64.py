@@ -16,7 +16,8 @@ import run as harness
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = source_receiver.FIXTURE
 TARGET = "os::tests::emit_process_os_page_suffix_trim_trace"
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-process-os-page-trim"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-process-os-page-trim"
 SHARED = (*source_receiver.COMMON, *source_receiver.STATS, *source_receiver.WARNINGS)
 RUST_EXTRA = ("suffix_still_live",)
 
@@ -54,7 +55,7 @@ def compare(c: dict[str, int], rust: dict[str, int]) -> dict[str, Any]:
 
 
 def run(*, offline: bool, rust_test_binary: Path | None = None) -> dict[str, Any]:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     before = harness.m2_memory_substrate_source_state()
     pin = harness.load_pin()
@@ -71,8 +72,8 @@ def run(*, offline: bool, rust_test_binary: Path | None = None) -> dict[str, Any
         harness.write_json(ARTIFACTS / "c-run.json", c_run)
         harness.require_success(c_run, "process-owned OS-page pinned C receiver")
     if rust_test_binary is None:
-        program = harness._x86_64_unit_test_program(harness._m2_x86_64_vm_rust_execution(),
-            harness.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
+        program = harness._x86_64_unit_test_program(harness._m2_x86_64_vm_rust_execution(ARCH),
+            harness.m2_memory_substrate_cargo_target(ARCH),
             gate_name="process-owned OS-page trim receiver")
         rust_test_binary = program["path"]
     rust_command = [str(rust_test_binary), TARGET, "--exact", "--test-threads=1", "--nocapture"]

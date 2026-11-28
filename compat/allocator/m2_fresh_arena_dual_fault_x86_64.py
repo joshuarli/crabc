@@ -13,7 +13,8 @@ import run as harness
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix(".c")
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-fresh-arena-dual-fault"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-fresh-arena-dual-fault"
 TEST = "arena::tests::emit_m2_fresh_arena_dual_fault_c_rust_trace"
 FIELDS = (
     "refused", "no_memory_id", "registry_before", "failed_registry",
@@ -94,7 +95,7 @@ def rust_receiver() -> tuple[dict[str, int], dict]:
 
 
 def run(offline: bool, c_only: bool) -> dict:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     c, c_commands = c_oracle(offline)
     rust, rust_commands = ({}, {}) if c_only else rust_receiver()
     required_ones = {

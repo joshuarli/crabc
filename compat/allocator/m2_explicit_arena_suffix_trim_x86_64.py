@@ -12,7 +12,8 @@ import run as harness
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_explicit_arena_suffix_trim_x86_64.c"
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-explicit-arena-suffix-trim"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-explicit-arena-suffix-trim"
 TEST = "process_arena::tests::emit_m2_explicit_arena_suffix_trim_c_rust_trace"
 FIELDS = (
     "size", "alignment", "prefix", "suffix", "reserve_success", "memory_exact",
@@ -73,7 +74,7 @@ def c_oracle(*, offline: bool) -> tuple[dict[str, int], dict[str, Any]]:
 
 def rust_receiver() -> tuple[dict[str, int], dict[str, Any]]:
     command = [
-        "cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+        "cargo", "test", "--locked", "--target", f"{ARCH}-unknown-linux-musl",
         "-p", "crabc-mimalloc", "--lib", "--no-default-features", "--no-run",
         "--message-format=json",
     ]

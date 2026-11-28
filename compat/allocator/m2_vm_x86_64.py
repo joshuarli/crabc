@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix(".c")
 ARENA_OWNED_FIXTURE = ROOT / "compat/allocator/m2_arena_owned_x86_64.c"
 SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
+ARCHITECTURES = ("x86_64", "aarch64")
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
 ALIGNED_HINT_PROFILE_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_BEGIN"
@@ -748,8 +749,11 @@ def _require_string_list(value: object, description: str, *, allow_empty: bool) 
     return list(value)
 
 
-def load_fragment(path: Path) -> dict[str, Any]:
+def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
     """Load and validate the immutable component fragment before execution."""
+
+    if architecture not in ARCHITECTURES:
+        raise _error(f"architecture {architecture} is unsupported")
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -759,7 +763,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
         raise _error("root must be an object")
     if set(raw) != {"component", "format", "schema", "target", "upstream"}:
         raise _error("root keys changed")
-    if raw.get("format") != 1 or raw.get("schema") != SCHEMA:
+    if raw.get("format") != 1 or raw.get("schema") != f"crabc-mimalloc-{architecture}-m2-component-evidence":
         raise _error("schema identity changed")
     upstream = raw.get("upstream")
     if not isinstance(upstream, dict) or set(upstream) != {
@@ -770,11 +774,11 @@ def load_fragment(path: Path) -> dict[str, Any]:
         raise _error("upstream version changed")
     target = raw.get("target")
     if not isinstance(target, dict) or target != {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "endianness": "little",
         "kernel_baseline": "5.10",
         "os": "linux",
-        "rust_target": "x86_64-unknown-linux-musl",
+        "rust_target": f"{architecture}-unknown-linux-musl",
     }:
         raise _error("target changed")
     component = raw.get("component")
@@ -1483,28 +1487,34 @@ def run_evidence(
     offline: bool,
     test_program: Mapping[str, Any],
     contract_fragment: Path,
-    arena_owned_check: Mapping[str, Any],
+    arena_owned_check: Mapping[str, Any] | None,
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run bounded VM C/Rust relations with the aggregate's native test binary.
 
     The reset-advice reader uses that same binary for three isolated exact
     tests, so each process starts with the source's initial advice state.
+    The process-arena purge trace belongs to the arenas component; a gate
+    that does not execute that component passes no check and runs no trace.
     """
 
-    harness.require_native_x86_64()
-    if not harness._m2_x86_64_vm_test_program_is_bound(test_program):
-        raise harness.HarnessError("native x86 M2 VM Rust test-program provenance changed")
-    fragment = load_fragment(contract_fragment)
+    harness.require_native_evidence(architecture)
+    if not harness._m2_x86_64_vm_test_program_is_bound(test_program, architecture):
+        raise harness.HarnessError(f"native {architecture} M2 VM Rust test-program provenance changed")
+    fragment = load_fragment(contract_fragment, architecture)
     check = _trace_check(fragment, test_program)
     profile_check = _aligned_hint_profile_check(fragment, test_program)
     aligned_overmap_check = _aligned_overmap_cleanup_check(fragment, test_program)
-    arena_owned_check = _arena_owned_trace_check(arena_owned_check, test_program)
+    if arena_owned_check is None and architecture == "x86_64":
+        raise harness.HarnessError("native x86 M2 VM evidence requires the process-arena purge check")
+    if arena_owned_check is not None:
+        arena_owned_check = _arena_owned_trace_check(arena_owned_check, test_program)
     pin = harness.load_pin()
     upstream = fragment["upstream"]
     if upstream["revision"] != pin["revision"] or upstream["archive_sha256"] != pin["sha256"]:
         raise harness.HarnessError("native x86 M2 VM fragment pin differs from the allocator pin")
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-vm-primitives"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-vm-primitives"
     artifacts.mkdir(parents=True, exist_ok=True)
     compiler = harness.require_tool("musl-gcc")
     with harness.temporary_directory(prefix="crabc-mimalloc-m2-vm-source-") as temporary:
@@ -1542,43 +1552,46 @@ def run_evidence(
         harness.require_success(c_run, "pinned C native x86 M2 VM oracle")
         c_trace = parse_trace(str(c_run["stdout"]), source="pinned C")
 
-        arena_owned_binary = artifacts / "m2-arena-owned-oracle"
-        arena_owned_command = [
-            compiler,
-            "-std=c11",
-            "-fPIC",
-            "-ftls-model=initial-exec",
-            "-DMI_SHARED_LIB",
-            "-DMI_SHARED_LIB_EXPORT",
-            "-DMI_LIBC_MUSL=1",
-            "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
-            "-I",
-            str(source / "include"),
-            "-I",
-            str(source / "src"),
-            *harness.CONFIGURATION_PROFILES["release"],
-            # `static.c` is included by this fixture and is the single pinned
-            # translation unit for every allocator definition it exercises.
-            str(ARENA_OWNED_FIXTURE),
-            "-pthread",
-            "-o",
-            str(arena_owned_binary),
-        ]
-        arena_owned_build = harness.command_record(
-            arena_owned_command, cwd=source, timeout_seconds=300
-        )
-        harness.require_success(
-            arena_owned_build, "pinned C native x86 M2 process-arena purge oracle build"
-        )
-        arena_owned_run = harness.command_record(
-            [str(arena_owned_binary)], cwd=source, timeout_seconds=180
-        )
-        harness.require_success(
-            arena_owned_run, "pinned C native x86 M2 process-arena purge oracle"
-        )
-        c_arena_owned_trace = parse_arena_owned_purge_trace(
-            str(arena_owned_run["stdout"]), source="pinned C"
-        )
+        arena_owned_command: list[str] | None = None
+        c_arena_owned_trace: tuple[int, ...] | None = None
+        if arena_owned_check is not None:
+            arena_owned_binary = artifacts / "m2-arena-owned-oracle"
+            arena_owned_command = [
+                compiler,
+                "-std=c11",
+                "-fPIC",
+                "-ftls-model=initial-exec",
+                "-DMI_SHARED_LIB",
+                "-DMI_SHARED_LIB_EXPORT",
+                "-DMI_LIBC_MUSL=1",
+                "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                "-I",
+                str(source / "include"),
+                "-I",
+                str(source / "src"),
+                *harness.CONFIGURATION_PROFILES["release"],
+                # `static.c` is included by this fixture and is the single pinned
+                # translation unit for every allocator definition it exercises.
+                str(ARENA_OWNED_FIXTURE),
+                "-pthread",
+                "-o",
+                str(arena_owned_binary),
+            ]
+            arena_owned_build = harness.command_record(
+                arena_owned_command, cwd=source, timeout_seconds=300
+            )
+            harness.require_success(
+                arena_owned_build, "pinned C native x86 M2 process-arena purge oracle build"
+            )
+            arena_owned_run = harness.command_record(
+                [str(arena_owned_binary)], cwd=source, timeout_seconds=180
+            )
+            harness.require_success(
+                arena_owned_run, "pinned C native x86 M2 process-arena purge oracle"
+            )
+            c_arena_owned_trace = parse_arena_owned_purge_trace(
+                str(arena_owned_run["stdout"]), source="pinned C"
+            )
 
         # This child-reaping regression is intentionally a separate fixture
         # harness, not another upstream VM trace value. Its empty record must
@@ -1688,24 +1701,35 @@ def run_evidence(
         raise harness.HarnessError("native x86 M2 VM Rust witness binary changed during execution")
     rust_trace = parse_trace(rust_output, source="Rust")
     comparison = _compare(c_trace, rust_trace, harness)
-    arena_owned_rust, arena_owned_rust_output = harness._x86_64_run_exact_program_check(
-        test_program,
-        arena_owned_check,
-        nocapture=True,
-        gate_name="native x86 M2 process-arena purge",
-    )
-    arena_owned_rust_command = arena_owned_rust["command"]
-    arena_owned_rust_count = arena_owned_rust["passed_test_count"]
-    if arena_owned_rust_command[0] != str(rust_binary):
-        raise harness.HarnessError(
-            "native x86 M2 process-arena Rust witness binary changed during execution"
+    arena_owned_report: dict[str, Any] = {}
+    if arena_owned_check is not None:
+        assert arena_owned_command is not None and c_arena_owned_trace is not None
+        arena_owned_rust, arena_owned_rust_output = harness._x86_64_run_exact_program_check(
+            test_program,
+            arena_owned_check,
+            nocapture=True,
+            gate_name="native x86 M2 process-arena purge",
         )
-    rust_arena_owned_trace = parse_arena_owned_purge_trace(
-        arena_owned_rust_output, source="Rust"
-    )
-    arena_owned_comparison = _compare_arena_owned_purge_trace(
-        c_arena_owned_trace, rust_arena_owned_trace, harness
-    )
+        arena_owned_rust_command = arena_owned_rust["command"]
+        if arena_owned_rust_command[0] != str(rust_binary):
+            raise harness.HarnessError(
+                "native x86 M2 process-arena Rust witness binary changed during execution"
+            )
+        rust_arena_owned_trace = parse_arena_owned_purge_trace(
+            arena_owned_rust_output, source="Rust"
+        )
+        arena_owned_report = {
+            "arena_owned_c_command": arena_owned_command,
+            "arena_owned_comparison": _compare_arena_owned_purge_trace(
+                c_arena_owned_trace, rust_arena_owned_trace, harness
+            ),
+            "arena_owned_fixture": harness.artifact_record(ARENA_OWNED_FIXTURE),
+            "arena_owned_rust_command": arena_owned_rust_command,
+            "arena_owned_rust_passed_test_count": arena_owned_rust["passed_test_count"],
+            "arena_owned_trace_sha256": hashlib.sha256(
+                json.dumps(c_arena_owned_trace, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        }
     profile_rust, profile_rust_output = harness._x86_64_run_exact_program_check(
         test_program,
         profile_check,
@@ -1752,7 +1776,7 @@ def run_evidence(
     )
     harness.require_success(reset_advice_run, "regular-arena reset-advice C/Rust matrix")
     reset_advice_path = (
-        harness.ARTIFACT_ROOT / "x86_64/m2-second-arena-reset-advice/evidence.json"
+        harness.ARTIFACT_ROOT / architecture / "m2-second-arena-reset-advice/evidence.json"
     )
     reset_advice_evidence = harness.read_json(reset_advice_path)
     expected_reset_tests = [
@@ -1778,7 +1802,7 @@ def run_evidence(
     )
     harness.require_success(legacy_trim_run, "legacy OS-page suffix-trim C/Rust receiver")
     legacy_trim_evidence = harness.read_json(
-        harness.ARTIFACT_ROOT / "x86_64/m2-legacy-os-page-trim/evidence.json"
+        harness.ARTIFACT_ROOT / architecture / "m2-legacy-os-page-trim/evidence.json"
     )
     if (
         legacy_trim_evidence.get("status") != "passed"
@@ -1799,7 +1823,7 @@ def run_evidence(
     )
     harness.require_success(process_trim_run, "process OS-page suffix-trim C/Rust receiver")
     process_trim_evidence = harness.read_json(
-        harness.ARTIFACT_ROOT / "x86_64/m2-process-os-page-trim/evidence.json"
+        harness.ARTIFACT_ROOT / architecture / "m2-process-os-page-trim/evidence.json"
     )
     if (
         process_trim_evidence.get("status") != "passed"
@@ -1824,7 +1848,7 @@ def run_evidence(
     )
     harness.require_success(block_commit_run, "process OS-page block-commit C/Rust receiver")
     block_commit_evidence = harness.read_json(
-        harness.ARTIFACT_ROOT / "x86_64/m2-process-os-page-block-commit/evidence.json"
+        harness.ARTIFACT_ROOT / architecture / "m2-process-os-page-block-commit/evidence.json"
     )
     if (
         block_commit_evidence.get("status") != "passed"
@@ -1850,20 +1874,13 @@ def run_evidence(
         "aligned_overmap_rust_trace_sha256": hashlib.sha256(
             json.dumps(rust_aligned_overmap_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).hexdigest(),
-        "arena_owned_c_command": arena_owned_command,
-        "arena_owned_comparison": arena_owned_comparison,
-        "arena_owned_fixture": harness.artifact_record(ARENA_OWNED_FIXTURE),
-        "arena_owned_rust_command": arena_owned_rust_command,
-        "arena_owned_rust_passed_test_count": arena_owned_rust_count,
-        "arena_owned_trace_sha256": hashlib.sha256(
-            json.dumps(c_arena_owned_trace, separators=(",", ":")).encode("utf-8")
-        ).hexdigest(),
+        **arena_owned_report,
         "aligned_hint_profile_c_commands": profile_commands,
         "aligned_hint_profile_comparison": profile_comparison,
         "aligned_hint_profile_rust_command": profile_rust_command,
         "aligned_hint_profile_rust_passed_test_count": profile_rust_count,
         "aligned_hint_profile_trace_sha256": hashlib.sha256(profile_trace_payload).hexdigest(),
-        "architecture": "x86_64",
+        "architecture": architecture,
         "c_command": command,
         "c_source_files": source_files,
         "compared_value_count": comparison["compared_value_count"],
@@ -1904,7 +1921,7 @@ def run_evidence(
         "rust_execution": dict(test_program["execution"]),
         "rust_passed_test_count": rust_count,
         "rust_test_binary": harness.artifact_record(rust_binary),
-        "schema": "crabc-mimalloc-x86_64-m2-vm-primitives-evidence",
+        "schema": f"crabc-mimalloc-{architecture}-m2-vm-primitives-evidence",
         "source_anchors": source_anchors,
         "status": "passed",
         "trace_sha256": hashlib.sha256(trace_payload).hexdigest(),

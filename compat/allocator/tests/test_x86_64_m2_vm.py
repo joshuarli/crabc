@@ -832,6 +832,61 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(len(vm["remaining_conditions"]), 5)
         self.assertEqual(summary["milestone"]["status"], "partial")
 
+    def test_arm_contract_executes_its_own_vm_fragment_and_imports_no_x86_status(self):
+        pin = RUNNER.load_pin()
+        summary = RUNNER.validate_aarch64_m2_memory_substrate_contract(
+            RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT), pin
+        )
+        self.assertEqual(summary["target"]["rust_target"], "aarch64-unknown-linux-musl")
+        self.assertEqual(summary["execution"], RUNNER._m2_x86_64_vm_rust_execution("aarch64"))
+        vm = summary["components"][0]
+        self.assertEqual(vm["evidence_fragment"], {"path": RUNNER.relative(RUNNER.M2_AARCH64_VM_FRAGMENT)})
+        self.assertEqual(vm["native_status"], "partial")
+        self.assertEqual(
+            [(component["id"], component["native_status"], component["checks"])
+             for component in summary["components"][1:]],
+            [(component_id, "not-executed", [])
+             for component_id in RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS[1:]],
+        )
+        self.assertEqual(summary["milestone"]["status"], "partial")
+
+        contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
+        contract["components"][0]["evidence_fragment"]["path"] = RUNNER.relative(RUNNER.M2_X86_64_VM_FRAGMENT)
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_aarch64_m2_memory_substrate_contract(contract, pin)
+        contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
+        contract["components"][1] = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)["components"][1]
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_aarch64_m2_memory_substrate_contract(contract, pin)
+        contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
+        contract["milestone"]["status"] = "complete"
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_aarch64_m2_memory_substrate_contract(contract, pin)
+        producer = RUNNER._m2_x86_64_vm_producer()
+        with self.assertRaises(ValueError):
+            producer.load_fragment(RUNNER.M2_X86_64_VM_FRAGMENT, "aarch64")
+        with self.assertRaises(ValueError):
+            producer.load_fragment(RUNNER.M2_AARCH64_VM_FRAGMENT, "x86_64")
+
+    def test_arm_vm_receipt_requires_arm_commands_and_binary(self):
+        summary = RUNNER.validate_aarch64_m2_memory_substrate_contract(
+            RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin()
+        )
+        x86_receipt = self.vm_evidence(self.summary())
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, x86_receipt, architecture="aarch64")
+        arm_receipt = json.loads(
+            json.dumps(x86_receipt, default=str)
+            .replace("x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl")
+            .replace("/x86_64/", "/aarch64/")
+            .replace("crabc-mimalloc-x86_64-m2-vm-primitives-evidence",
+                     "crabc-mimalloc-aarch64-m2-vm-primitives-evidence")
+        )
+        arm_receipt["architecture"] = "aarch64"
+        arm_receipt["nonclaims"] = summary["components"][0]["remaining_conditions"]
+        records = RUNNER._m2_x86_64_vm_check_records(summary, arm_receipt, architecture="aarch64")
+        self.assertTrue(all("aarch64-unknown-linux-musl" in record["command"][0] for record in records[:3]))
+
     def test_vm_fragment_reference_and_partial_status_fail_closed(self):
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
         contract["components"][0]["evidence_fragment"]["path"] = "compat/allocator/other.fragment.json"

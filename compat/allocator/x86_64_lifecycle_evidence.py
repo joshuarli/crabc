@@ -35,10 +35,17 @@ from typing import Any, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TARGET = "x86_64-unknown-linux-musl"
-REPORT = ROOT / "compat/reports/allocator/x86_64/lifecycle-concurrency.json"
+# The private launcher exports its native architecture to every container;
+# a direct invocation keeps the historical x86-64 lane and its host guard.
+ARCHITECTURE = os.environ.get("CRABC_ALLOCATOR_EVIDENCE_ARCH", "x86_64")
+if ARCHITECTURE not in {"x86_64", "aarch64"}:
+    raise SystemExit(f"unsupported allocator evidence architecture: {ARCHITECTURE}")
+HOST_ARCHITECTURE_ALIASES = {"x86_64": ("x86_64", "amd64"), "aarch64": ("aarch64", "arm64")}[ARCHITECTURE]
+ARCHITECTURE_LABEL = {"x86_64": "x86-64", "aarch64": "AArch64"}[ARCHITECTURE]
+TARGET = f"{ARCHITECTURE}-unknown-linux-musl"
+REPORT = ROOT / f"compat/reports/allocator/{ARCHITECTURE}/lifecycle-concurrency.json"
 RUNTIME_FIRST_ARENA_REPORT = (
-    ROOT / "compat/reports/allocator/x86_64/lifecycle-runtime-process-policy-first-arena.json"
+    ROOT / f"compat/reports/allocator/{ARCHITECTURE}/lifecycle-runtime-process-policy-first-arena.json"
 )
 LOCKFILE = ROOT / "Cargo.lock"
 INITIAL_TLD_NUMA_FIXTURE = ROOT / "compat/allocator/x86_64_initial_tld_numa_oracle.c"
@@ -410,7 +417,7 @@ TEST_LANES = (
 )
 
 EXCLUSIONS = (
-    "No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs x86-64 runtime support is exercised or claimed.",
+    f"No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs {ARCHITECTURE_LABEL} runtime support is exercised or claimed.",
     "No complete process or pthread/TLS callback lifecycle is exercised or claimed.",
     "No general allocation/free routing, cross-thread client API, owner-exit traversal, adoption, or whole-allocator stress regime is exercised or claimed.",
     "The Loom lane mirrors the xthread_id identity CAS and one arena bitmap bit with source orderings; it does not execute arena search, queue traversal, reclaim-on-free, compiler TLS, or fault injection.",
@@ -418,7 +425,7 @@ EXCLUSIONS = (
 )
 
 RUNTIME_FIRST_ARENA_EXCLUSIONS = (
-    "No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs x86-64 runtime support is exercised or claimed.",
+    f"No public mi_*, malloc-family, crabc-libc, dynamic-linker, or crabc-rs {ARCHITECTURE_LABEL} runtime support is exercised or claimed.",
     "No complete process or pthread/TLS callback lifecycle is exercised or claimed.",
     "No general allocation/free routing, cross-thread client API, owner-exit traversal, adoption, or whole-allocator stress regime is exercised or claimed.",
     "The direct C oracles cover only pinned init.c/arena.c/os.c's configured ticket-zero TLD and one ordinary regular first-arena NUMA relation, plus two clean mimalloc_allow_thp source images' retained configuration bits after normal process initialization; they do not qualify host multi-node placement, THP hardware mode, huge-page behavior, or general allocator lifecycle parity.",
@@ -847,7 +854,7 @@ def run_initial_tld_numa_c_oracle() -> dict[str, Any]:
     try:
         archive = harness.fetch_archive(pin, offline=True)
         compiler = harness.require_tool("musl-gcc")
-        artifacts = harness.ARTIFACT_ROOT / "x86_64/initial-tld-numa"
+        artifacts = harness.ARTIFACT_ROOT / ARCHITECTURE / "initial-tld-numa"
         artifacts.mkdir(parents=True, exist_ok=True)
         binary = artifacts / "initial-tld-numa-oracle"
 
@@ -974,7 +981,7 @@ def run_runtime_thp_configuration_c_oracle() -> dict[str, Any]:
     try:
         archive = harness.fetch_archive(pin, offline=True)
         compiler = harness.require_tool("musl-gcc")
-        artifacts = harness.ARTIFACT_ROOT / "x86_64/runtime-thp-configuration"
+        artifacts = harness.ARTIFACT_ROOT / ARCHITECTURE / "runtime-thp-configuration"
         artifacts.mkdir(parents=True, exist_ok=True)
         images: list[dict[str, Any]] = []
         with harness.temporary_directory(
@@ -1088,20 +1095,25 @@ def run(command: Sequence[str], *, env: Mapping[str, str] | None = None) -> str:
 
 
 def require_native_x86_64() -> dict[str, str]:
-    """Require host attestation and the matching Linux/x86-64 guest."""
+    """Require host attestation and the matching native Linux guest.
+
+    The name is retained for its existing callers; the selected launcher
+    architecture decides which native host and guest are accepted.
+    """
 
     execution_mode = os.environ.get("CRABC_EXECUTION_MODE")
     host_architecture = os.environ.get("CRABC_HOST_ARCH")
-    if execution_mode != "native" or host_architecture not in {"x86_64", "amd64"}:
+    if execution_mode != "native" or host_architecture not in HOST_ARCHITECTURE_ALIASES:
         raise EvidenceError(
-            "x86-64 lifecycle evidence requires canonical native provenance: "
-            "CRABC_EXECUTION_MODE=native and CRABC_HOST_ARCH=x86_64 (or amd64)"
+            f"{ARCHITECTURE_LABEL} lifecycle evidence requires canonical native provenance: "
+            f"CRABC_EXECUTION_MODE=native and CRABC_HOST_ARCH={HOST_ARCHITECTURE_ALIASES[0]} "
+            f"(or {HOST_ARCHITECTURE_ALIASES[1]})"
         )
     system = platform.system()
     machine = platform.machine().lower()
-    if system != "Linux" or machine not in {"x86_64", "amd64"}:
+    if system != "Linux" or machine not in HOST_ARCHITECTURE_ALIASES:
         raise EvidenceError(
-            "x86-64 lifecycle evidence requires the native Linux/x86-64 development image; "
+            f"{ARCHITECTURE_LABEL} lifecycle evidence requires the native Linux/{ARCHITECTURE_LABEL} development image; "
             f"observed {system}/{platform.machine()}"
         )
     return {"execution_mode": "native", "host_architecture": host_architecture}
@@ -1115,7 +1127,7 @@ def toolchain_record(cargo: str, rustc: str) -> dict[str, str]:
     if host_match is None or host_match.group("target") != TARGET:
         observed = host_match.group("target") if host_match is not None else "<missing>"
         raise EvidenceError(
-            f"x86-64 lifecycle evidence requires rustc host {TARGET}, observed {observed}"
+            f"{ARCHITECTURE_LABEL} lifecycle evidence requires rustc host {TARGET}, observed {observed}"
         )
     cargo_version = run([cargo, "--version"]).strip()
     release = next(
@@ -1287,11 +1299,11 @@ def report_from_results(
     observed = sum(int(lane["observed"]["passed"]) for lane in lanes)
     report: dict[str, Any] = {
         "format": 1,
-        "kind": "mimalloc-x86_64-bounded-lifecycle-concurrency-evidence",
-        "profile": "linux-x86_64-private-engine-lifecycle-concurrency-foundation",
+        "kind": f"mimalloc-{ARCHITECTURE}-bounded-lifecycle-concurrency-evidence",
+        "profile": f"linux-{ARCHITECTURE}-private-engine-lifecycle-concurrency-foundation",
         "status": "passed",
         "target": {
-            "architecture": "x86_64",
+            "architecture": ARCHITECTURE,
             "endianness": "little",
             "rust_target": TARGET,
             "system": "linux",
@@ -1345,22 +1357,22 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError(f"lifecycle report schema drifted: {sorted(set(report) ^ required)}")
     if report["format"] != 1 or report["status"] != "passed":
         raise EvidenceError("lifecycle report must record a passed format-1 result")
-    if report["kind"] != "mimalloc-x86_64-bounded-lifecycle-concurrency-evidence":
+    if report["kind"] != f"mimalloc-{ARCHITECTURE}-bounded-lifecycle-concurrency-evidence":
         raise EvidenceError("lifecycle report kind drifted")
-    if report["profile"] != "linux-x86_64-private-engine-lifecycle-concurrency-foundation":
+    if report["profile"] != f"linux-{ARCHITECTURE}-private-engine-lifecycle-concurrency-foundation":
         raise EvidenceError("lifecycle report profile drifted")
     if report["target"] != {
-        "architecture": "x86_64",
+        "architecture": ARCHITECTURE,
         "endianness": "little",
         "rust_target": TARGET,
         "system": "linux",
     }:
         raise EvidenceError("lifecycle report target drifted")
     if report["native_execution_provenance"] not in (
-        {"execution_mode": "native", "host_architecture": "x86_64"},
-        {"execution_mode": "native", "host_architecture": "amd64"},
+        *({"execution_mode": "native", "host_architecture": alias}
+          for alias in HOST_ARCHITECTURE_ALIASES),
     ):
-        raise EvidenceError("lifecycle report lacks canonical native x86-64 provenance")
+        raise EvidenceError(f"lifecycle report lacks canonical native {ARCHITECTURE_LABEL} provenance")
     scope = report["scope"]
     if not isinstance(scope, Mapping) or scope.get("public_runtime_support") is not False:
         raise EvidenceError("lifecycle report must preserve the non-public runtime boundary")
@@ -1666,20 +1678,20 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
         or report.get("status") != "passed"
     ):
         raise EvidenceError("runtime first-arena report must record a passed format-4 result")
-    if report.get("kind") != "mimalloc-x86_64-runtime-first-arena-policy-evidence":
+    if report.get("kind") != f"mimalloc-{ARCHITECTURE}-runtime-first-arena-policy-evidence":
         raise EvidenceError("runtime first-arena report kind drifted")
-    if report.get("profile") != "linux-x86_64-private-engine-runtime-first-arena-policy-witness":
+    if report.get("profile") != f"linux-{ARCHITECTURE}-private-engine-runtime-first-arena-policy-witness":
         raise EvidenceError("runtime first-arena report profile drifted")
     if report.get("target") != {
-        "architecture": "x86_64",
+        "architecture": ARCHITECTURE,
         "endianness": "little",
         "rust_target": TARGET,
         "system": "linux",
     }:
         raise EvidenceError("runtime first-arena report target drifted")
     if report.get("native_execution_provenance") not in (
-        {"execution_mode": "native", "host_architecture": "x86_64"},
-        {"execution_mode": "native", "host_architecture": "amd64"},
+        *({"execution_mode": "native", "host_architecture": alias}
+          for alias in HOST_ARCHITECTURE_ALIASES),
     ):
         raise EvidenceError("runtime first-arena report lacks canonical native provenance")
     candidate_source = report.get("candidate_source")
@@ -1893,11 +1905,11 @@ def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]
 
     report: dict[str, Any] = {
         "format": 4,
-        "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
-        "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
+        "kind": f"mimalloc-{ARCHITECTURE}-runtime-first-arena-policy-evidence",
+        "profile": f"linux-{ARCHITECTURE}-private-engine-runtime-first-arena-policy-witness",
         "status": "passed",
         "target": {
-            "architecture": "x86_64",
+            "architecture": ARCHITECTURE,
             "endianness": "little",
             "rust_target": TARGET,
             "system": "linux",

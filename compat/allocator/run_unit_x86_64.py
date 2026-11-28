@@ -31,8 +31,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if len(arguments) != 1 or TEST_NAME.fullmatch(arguments[0]) is None:
         print("ERROR: expected one fully qualified Rust test name", file=sys.stderr)
         return 2
+    architecture = os.environ.get("CRABC_ALLOCATOR_EVIDENCE_ARCH", "x86_64")
+    if architecture not in {"x86_64", "aarch64"}:
+        print(f"ERROR: unsupported allocator evidence architecture: {architecture}", file=sys.stderr)
+        return 2
     command = [
-        "cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+        "cargo", "test", "--locked", "--target", f"{architecture}-unknown-linux-musl",
         "-p", "crabc-mimalloc", "--lib", "--no-default-features", arguments[0],
         "--", "--exact", "--nocapture", "--test-threads=1",
     ]

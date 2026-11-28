@@ -13,7 +13,8 @@ from x86_64_lifecycle_evidence import RUNTIME_THP_CONFIGURATION_C_ORACLE_LINK_SO
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_external_os_reset_retry_x86_64.c"
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-external-os-reset-retry"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-external-os-reset-retry"
 TEST = "os::tests::emit_m2_external_os_reset_retry_process_trace"
 PROFILES = ("one-eagain", "two-eagain")
 FIELDS = (
@@ -98,7 +99,7 @@ def c_oracle(*, offline: bool) -> tuple[dict[str, dict[str, int]], dict[str, Any
 
 def rust_receiver() -> tuple[dict[str, dict[str, int]], dict[str, Any]]:
     command = [
-        "cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+        "cargo", "test", "--locked", "--target", f"{ARCH}-unknown-linux-musl",
         "-p", "crabc-mimalloc", "--lib", "--no-default-features", "--no-run",
         "--message-format=json",
     ]
