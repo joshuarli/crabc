@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 `dl` facade operations for the installed-product differential.
 //!
 //! `compat/x86_64/runtime_private_facades_loader.c` calls each entry below,

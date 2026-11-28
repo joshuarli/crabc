@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std probe for the x86 resolver and hosts boundary.
 //!
 //! It checks only caller-provided host data and numeric resolver behavior. It

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::fs::{self, Mode, OFlags, SeekFrom};
 use crabc_rs::io;
 use crabc_rs::{BorrowedFd, Errno};

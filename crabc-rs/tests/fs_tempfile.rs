@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::fs::{self, FileType, Mode, OFlags, TempFile};
 use crabc_rs::io;
 use crabc_rs::Errno;

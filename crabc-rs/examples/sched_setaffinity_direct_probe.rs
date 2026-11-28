@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native CPU-affinity mutation seam.
 
 #![no_std]

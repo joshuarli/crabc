@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std probe for the direct futex synchronization seam.
 
 #![no_std]

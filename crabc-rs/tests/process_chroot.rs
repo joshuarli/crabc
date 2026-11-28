@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::{process, Errno};
 
 #[test]

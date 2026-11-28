@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use crabc_rs::process::{self, Pid, PidfdFlags};
 use crabc_rs::Errno;

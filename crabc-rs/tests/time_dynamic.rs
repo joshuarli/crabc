@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::pipe;
 use crabc_rs::time::{clock_gettime_dynamic, ClockId, DynamicClockId, NANOS_PER_SECOND};
 use crabc_rs::{AsFd, Errno};

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 `runtime_thread` facade scenario for the installed product.
 //!
 //! `compat/x86_64/runtime_private_facades_thread.c` drives this archive and

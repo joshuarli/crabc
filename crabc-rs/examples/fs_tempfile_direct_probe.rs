@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native anonymous temporary-file seam.
 //!
 //! A filesystem without Linux `O_TMPFILE` support is an explicit capability

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native `F_GET_SEALS` seam.
 
 #![no_std]

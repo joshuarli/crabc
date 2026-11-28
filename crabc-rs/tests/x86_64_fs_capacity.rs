@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use std::fs::File;
 use std::mem::{align_of, offset_of, size_of};

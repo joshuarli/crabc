@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for native process umask and resource-limit mutation.
 
 #![no_std]

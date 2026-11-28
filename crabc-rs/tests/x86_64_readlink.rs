@@ -83,6 +83,7 @@ fn x86_64_readlinkat_truncates_a_short_output_buffer() {
     assert!(untouched.is_empty());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_readlinkat_rejects_a_zero_length_output_buffer() {
     let (_cleanup, directory) = fixture_root();
@@ -92,6 +93,20 @@ fn x86_64_readlinkat_rejects_a_zero_length_output_buffer() {
         Ok(_) => panic!("a zero-length readlinkat buffer must be rejected"),
         Err(error) => assert_eq!(error, Errno::INVAL),
     }
+}
+
+// libSystem's `readlinkat` accepts a zero-length buffer and reports an empty
+// prefix, where Linux rejects it.
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_readlinkat_reports_an_empty_prefix_for_a_zero_length_buffer() {
+    let (_cleanup, directory) = fixture_root();
+    let mut storage = [MaybeUninit::<u8>::uninit(); 0];
+
+    let (target, untouched) = fs::readlinkat_raw(borrow(&directory), "symbolic", &mut storage)
+        .expect("a zero-length readlinkat buffer is accepted");
+    assert!(target.is_empty());
+    assert!(untouched.is_empty());
 }
 
 #[test]

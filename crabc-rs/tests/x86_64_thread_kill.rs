@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 

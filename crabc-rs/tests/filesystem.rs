@@ -2,9 +2,10 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_rs::fs::{
-    self, AtFlags, FileType, FlockOperation, Mode, OFlags, RawDir, RenameFlags, ResolveFlags,
-    Timespec, Timestamps, XattrFlags, CWD,
+    self, AtFlags, FileType, FlockOperation, Mode, OFlags, RenameFlags, Timespec, Timestamps, CWD,
 };
+#[cfg(target_os = "linux")]
+use crabc_rs::fs::{RawDir, ResolveFlags, XattrFlags};
 use crabc_rs::fs::{LinkAtFlags, TimestampAtFlags, UnlinkAtFlags};
 use crabc_rs::{Errno, Result};
 
@@ -28,6 +29,7 @@ fn with_scratch_directory<T>(run: impl FnOnce(&str) -> Result<T>) -> T {
     result
 }
 
+#[cfg(target_os = "linux")]
 fn xattr_list_contains(list: &[u8], name: &[u8]) -> bool {
     list.split(|byte| *byte == 0).any(|entry| entry == name)
 }
@@ -207,6 +209,7 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
         fs::fchmod(&file, Mode::RWXU).expect("restore permissions after chmod");
 
         fs::symlinkat("record", &directory, "symbolic").expect("create symbolic link");
+        #[cfg(target_os = "linux")]
         assert_eq!(
             fs::chmodat(
                 &directory,
@@ -217,6 +220,15 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
             .unwrap_err(),
             Errno::OPNOTSUPP,
         );
+        #[cfg(target_os = "macos")]
+        {
+            fs::chmodat(&directory, "symbolic", Mode::RUSR, AtFlags::SYMLINK_NOFOLLOW)
+                .expect("Darwin changes a symbolic link's own mode");
+            let link = fs::statat(&directory, "symbolic", AtFlags::SYMLINK_NOFOLLOW).unwrap();
+            assert_eq!(FileType::from_raw_mode(link.st_mode), FileType::Symlink);
+            assert_eq!(link.st_mode & 0o777, 0o400);
+            assert_eq!(fs::fstat(&file).unwrap().st_mode & 0o777, 0o700);
+        }
         // Linux's AT_EACCESS belongs to access checks, not permission changes.
         let access_flags = AtFlags::from_bits_retain(0x200);
         assert_eq!(
@@ -262,6 +274,7 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
     });
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn raw_dir_preserves_record_lifetimes_alignment_and_long_names() {
     with_scratch_directory(|root| {
@@ -368,6 +381,7 @@ fn advisory_locks_use_direct_flock_and_fcntl_contracts() {
     });
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn openat2_and_nofollow_preserve_linux_path_resolution_rules() {
     with_scratch_directory(|root| {
@@ -430,6 +444,7 @@ fn openat2_and_nofollow_preserve_linux_path_resolution_rules() {
     });
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn extended_attributes_preserve_path_link_fd_and_buffer_contracts() {
     with_scratch_directory(|root| {

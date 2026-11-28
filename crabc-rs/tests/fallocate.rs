@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_rs::fs::{self, FallocateFlags, Mode, OFlags, SeekFrom};

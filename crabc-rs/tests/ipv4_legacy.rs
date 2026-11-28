@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::net::{
     ipv4_local_number, ipv4_network_number, make_ipv4_address, parse_ipv4_legacy,
     parse_ipv4_network_number, Ipv4Addr,

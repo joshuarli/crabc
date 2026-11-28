@@ -28,10 +28,15 @@ fn positioned_vectored_io_preserves_file_position_and_segment_order() {
     fs::seek(&file, SeekFrom::Start(2)).expect("set shared file position");
 
     let no_writes: [io::IoSlice<'static>; 0] = [];
+    #[cfg(target_os = "linux")]
     assert_eq!(
         io::pwritev(&file, &no_writes, 4).expect("empty positional writev"),
         0
     );
+    // XNU rejects a vectored call with no segments (`iovcnt == 0`) as
+    // invalid, where Linux transfers zero bytes.
+    #[cfg(target_os = "macos")]
+    assert_eq!(io::pwritev(&file, &no_writes, 4), Err(crabc_rs::Errno::INVAL));
     assert_eq!(fs::tell(&file).expect("position after empty pwritev"), 2);
 
     let writes = [
@@ -118,10 +123,15 @@ fn positioned_vectored_io_preserves_file_position_and_segment_order() {
     );
 
     let mut no_reads: [io::IoSliceMut<'static>; 0] = [];
+    #[cfg(target_os = "linux")]
     assert_eq!(
         io::preadv(&file, &mut no_reads, 4).expect("empty positional readv"),
         0
     );
+    // XNU rejects a vectored call with no segments (`iovcnt == 0`) as
+    // invalid, where Linux transfers zero bytes.
+    #[cfg(target_os = "macos")]
+    assert_eq!(io::preadv(&file, &mut no_reads, 4), Err(crabc_rs::Errno::INVAL));
     assert_eq!(fs::tell(&file).expect("position after empty preadv"), 2);
 
     let mut invalid_read = [0_u8; 1];

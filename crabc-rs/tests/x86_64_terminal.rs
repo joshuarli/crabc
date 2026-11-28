@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Linux regression coverage for the complete native terminal slice.
 //!
 //! The session-changing check runs only in a raw-fork child.  The parent test

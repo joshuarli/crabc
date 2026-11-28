@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Linux evidence for the private PTY ownership and naming seam.
 
 

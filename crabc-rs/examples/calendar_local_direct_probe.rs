@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for explicit local-calendar conversion.
 //!
 //! The probe supplies both the UTC instant and immutable POSIX timezone rules;

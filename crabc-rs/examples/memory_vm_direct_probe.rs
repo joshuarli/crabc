@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the process-break and VM-policy seam.
 
 #![no_std]

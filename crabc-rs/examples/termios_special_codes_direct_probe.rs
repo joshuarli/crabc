@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the bounded Linux `termios` special-code slice.
 //!
 //! This source is intentionally self-contained until the architecture

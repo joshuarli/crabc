@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 

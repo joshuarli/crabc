@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::fenv::{self, Environment, EnvironmentGuard, ExceptionFlags, RoundingMode};
 
 struct Restore(Environment);

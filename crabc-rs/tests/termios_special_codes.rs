@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::{pty, termios};
 
 fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free assembly probe for the signal/process direct boundary.
 //!
 //! The archive makes the native Linux/AArch64 signal, fork, exec, and wait

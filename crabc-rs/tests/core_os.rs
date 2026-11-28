@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 
 use crabc_rs::{event, io, mm, net, pipe, rand, time};

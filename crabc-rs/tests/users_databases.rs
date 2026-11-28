@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::process::{Gid, Uid};
 use crabc_rs::users::{Database, DatabaseError, GroupDatabase, UserDatabase};
 

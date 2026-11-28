@@ -19,7 +19,12 @@ fn vectored_pipe_io_preserves_order_and_reports_short_reads() {
     let (reader, writer) = pipe::pipe().expect("create vectored-I/O pipe");
 
     let no_writes: [io::IoSlice<'static>; 0] = [];
+    #[cfg(target_os = "linux")]
     assert_eq!(io::writev(&writer, &no_writes).expect("empty writev"), 0);
+    // XNU rejects a vectored call with no segments (`iovcnt == 0`) as
+    // invalid, where Linux transfers zero bytes.
+    #[cfg(target_os = "macos")]
+    assert_eq!(io::writev(&writer, &no_writes), Err(crabc_rs::Errno::INVAL));
 
     let writes = [
         io::IoSlice::new(b""),
@@ -33,7 +38,10 @@ fn vectored_pipe_io_preserves_order_and_reports_short_reads() {
     );
 
     let mut no_reads: [io::IoSliceMut<'static>; 0] = [];
+    #[cfg(target_os = "linux")]
     assert_eq!(io::readv(&reader, &mut no_reads).expect("empty readv"), 0);
+    #[cfg(target_os = "macos")]
+    assert_eq!(io::readv(&reader, &mut no_reads), Err(crabc_rs::Errno::INVAL));
 
     let mut first = [0xcc; 4];
     let mut second = [0xdd; 6];

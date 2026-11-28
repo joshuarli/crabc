@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native `sync_file_range` seam.
 
 #![no_std]

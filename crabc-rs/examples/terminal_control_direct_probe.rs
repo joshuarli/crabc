@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the borrowed terminal-control ioctl slice.
 //!
 //! The controlling-terminal transition occurs only in a forked child. The

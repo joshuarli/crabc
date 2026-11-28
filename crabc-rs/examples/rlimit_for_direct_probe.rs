@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native targeted resource-limit query.
 
 #![no_std]

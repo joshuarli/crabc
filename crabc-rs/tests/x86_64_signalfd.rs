@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::mem::{size_of, MaybeUninit};
 use crabc_rs::{event, io, pipe, signal, time::Timespec, AsFd, Errno};

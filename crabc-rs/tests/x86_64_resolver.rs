@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 regression for the alloc-backed resolver and hosts snapshot.
 //!
 //! Every DNS exchange uses one local loopback fixture. The test admits the

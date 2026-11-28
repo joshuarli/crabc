@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::ffi::{c_void, CStr};
 

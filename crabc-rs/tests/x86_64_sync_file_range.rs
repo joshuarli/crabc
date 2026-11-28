@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, IntoRawFd};

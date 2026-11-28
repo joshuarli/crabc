@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native Linux priority query.
 //!
 //! This source is intentionally unregistered until the architecture harness

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use crabc_rs::event::{self, EventfdFlags};
 use crabc_rs::io::{self, FdFlags};

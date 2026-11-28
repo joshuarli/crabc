@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Behavioral evidence for the native process-break and VM-policy seam.
 
 use crabc_rs::{mm, process, Errno};

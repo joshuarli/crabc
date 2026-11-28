@@ -3,12 +3,35 @@ use core::cell::Cell;
 
 use crabc_rs::{fs, io, pipe, AsFd, BorrowedFd, Errno, OwnedFd};
 
+#[cfg(target_os = "linux")]
 fn anonymous_regular_file() -> OwnedFd {
     fs::memfd_create(
         "crabc-x86-64-ftruncate",
         fs::MemfdFlags::CLOEXEC | fs::MemfdFlags::ALLOW_SEALING,
     )
     .expect("create anonymous regular file")
+}
+
+// Darwin has no memory files; an unlinked temporary file is the closest
+// anonymous regular file.
+#[cfg(target_os = "macos")]
+fn anonymous_regular_file() -> OwnedFd {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+    let path = format!(
+        "/tmp/crabc-x86-64-ftruncate-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed),
+    );
+    let file = fs::open(
+        path.as_str(),
+        fs::OFlags::RDWR | fs::OFlags::CREATE | fs::OFlags::EXCL | fs::OFlags::CLOEXEC,
+        fs::Mode::RUSR | fs::Mode::WUSR,
+    )
+    .expect("create anonymous regular file");
+    fs::unlink(path.as_str()).expect("unlink anonymous regular file");
+    file
 }
 
 struct TrackingFd<'fd> {

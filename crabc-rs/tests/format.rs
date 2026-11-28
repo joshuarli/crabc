@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::fmt::Write as _;
 
 use crabc_rs::stdio::{format_to, BoundedFormatter, FormatResult};

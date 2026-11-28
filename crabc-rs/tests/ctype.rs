@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::text::{
     is_alnum, is_alpha, is_ascii, is_blank, is_cntrl, is_digit, is_graph, is_lower, is_print,
     is_punct, is_space, is_upper, is_xdigit, to_ascii, to_lower, to_upper, AsciiClass,

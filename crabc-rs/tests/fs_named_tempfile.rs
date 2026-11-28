@@ -6,6 +6,11 @@ use crabc_rs::fs::{self as native_fs, Mode, NamedTempFile, OFlags};
 use crabc_rs::io;
 use crabc_rs::Errno;
 
+#[cfg(target_os = "linux")]
+const DIRECTORY_HANDLE: OFlags = OFlags::PATH;
+#[cfg(target_os = "macos")]
+const DIRECTORY_HANDLE: OFlags = OFlags::SEARCH;
+
 fn full_path(file: &NamedTempFile) -> Vec<u8> {
     let mut path = b"/tmp/".to_vec();
     path.extend_from_slice(file.name());
@@ -40,7 +45,7 @@ fn named_tempfile_is_exclusive_private_cloexec_and_drop_unlinks() {
 fn named_tempfile_parent_descriptor_survives_cwd_changes_and_remove_is_explicit() {
     let parent = native_fs::open(
         "/tmp",
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        DIRECTORY_HANDLE | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .expect("open named temporary parent directory");

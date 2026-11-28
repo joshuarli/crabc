@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::num::NonZeroU32;
 
 use crabc_rs::{io, net};

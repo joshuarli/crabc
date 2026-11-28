@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the direct x86 mount error seam.
 //!
 //! The probe passes checked non-null byte strings and null data through the

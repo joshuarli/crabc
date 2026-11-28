@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 
 use crabc_rs::fs::Timespec;

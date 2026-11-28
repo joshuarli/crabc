@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native getpeername seam.
 //!
 //! The probe exercises a connected IPv4 endpoint and checks the typed result

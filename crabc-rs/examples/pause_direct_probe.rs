@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native signal-only wait seam.
 //!
 //! Calling the exported function blocks until a signal interrupts it. The

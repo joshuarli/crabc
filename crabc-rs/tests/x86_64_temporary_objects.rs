@@ -4,12 +4,29 @@ use std::env;
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
-use crabc_rs::fs::{self, FileType, Mode, OFlags, TempFile, UnlinkAtFlags};
+use crabc_rs::fs::{self, FileType, Mode, OFlags, UnlinkAtFlags};
+#[cfg(target_os = "linux")]
+use crabc_rs::fs::TempFile;
 use crabc_rs::io;
 use crabc_rs::Errno;
 
 const NAMED_PREFIX: &[u8] = b"crabc-x86-named-";
 const DIRECTORY_PREFIX: &[u8] = b"crabc-x86-dir-";
+
+#[cfg(target_os = "linux")]
+const DIRECTORY_HANDLE: OFlags = OFlags::PATH;
+#[cfg(target_os = "macos")]
+const DIRECTORY_HANDLE: OFlags = OFlags::SEARCH;
+
+#[cfg(target_os = "linux")]
+const BYTE_PREFIX: &[u8] = b"crabc-x86-\xff-";
+#[cfg(target_os = "linux")]
+const BYTE_PATH_PREFIX: &[u8] = b"/tmp/crabc-x86-\xff-";
+// APFS stores names as UTF-8 and rejects other byte sequences.
+#[cfg(target_os = "macos")]
+const BYTE_PREFIX: &[u8] = "crabc-x86-\u{e9}-".as_bytes();
+#[cfg(target_os = "macos")]
+const BYTE_PATH_PREFIX: &[u8] = "/tmp/crabc-x86-\u{e9}-".as_bytes();
 
 fn is_lower_hex(bytes: &[u8]) -> bool {
     bytes
@@ -61,7 +78,7 @@ fn named_tempfile_is_private_cloexec_and_drop_unlinks() {
 fn named_tempfile_uses_retained_parent_for_explicit_remove_and_persistence() {
     let parent = fs::open(
         "/tmp",
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        DIRECTORY_HANDLE | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .expect("open temporary parent");
@@ -104,10 +121,12 @@ fn named_tempfile_rejects_unstable_or_invalid_inputs_before_creation() {
     ));
 }
 
+#[cfg(target_os = "linux")]
 fn open_anonymous_temp_file() -> Result<TempFile, Errno> {
     TempFile::open("/tmp", Mode::RUSR | Mode::WUSR)
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn anonymous_tempfile_is_cloexec_unlinked_and_read_write() {
     let file = match open_anonymous_temp_file() {
@@ -133,11 +152,12 @@ fn anonymous_tempfile_is_cloexec_unlinked_and_read_write() {
     assert_eq!(&contents, b"anonymous");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn anonymous_tempfile_accepts_descriptor_relative_directory_or_reports_unsupported() {
     let parent = fs::open(
         "/tmp",
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        DIRECTORY_HANDLE | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .expect("open anonymous-temp parent");
@@ -158,15 +178,15 @@ fn anonymous_tempfile_accepts_descriptor_relative_directory_or_reports_unsupport
 #[test]
 fn temporary_directories_are_private_byte_preserving_and_descriptor_relative() {
     let mut first = [0_u8; 256];
-    let first_len = fs::create_temp_dir_into("/tmp", &b"crabc-x86-\xff-"[..], &mut first)
+    let first_len = fs::create_temp_dir_into("/tmp", BYTE_PREFIX, &mut first)
         .expect("create first temporary directory");
     let mut second = [0_u8; 256];
-    let second_len = fs::create_temp_dir_into("/tmp", &b"crabc-x86-\xff-"[..], &mut second)
+    let second_len = fs::create_temp_dir_into("/tmp", BYTE_PREFIX, &mut second)
         .expect("create second temporary directory");
-    assert!(first[..first_len].starts_with(b"/tmp/crabc-x86-\xff-"));
+    assert!(first[..first_len].starts_with(BYTE_PATH_PREFIX));
     assert_eq!(
         first_len,
-        b"/tmp/crabc-x86-\xff-".len() + fs::TEMP_DIR_RANDOM_BYTES * 2
+        BYTE_PATH_PREFIX.len() + fs::TEMP_DIR_RANDOM_BYTES * 2
     );
     assert!(is_lower_hex(&first[first_len - fs::TEMP_DIR_RANDOM_BYTES * 2..first_len]));
     assert_ne!(
@@ -185,7 +205,7 @@ fn temporary_directories_are_private_byte_preserving_and_descriptor_relative() {
 
     let parent = fs::open(
         "/tmp",
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        DIRECTORY_HANDLE | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .expect("open temporary directory parent");
@@ -235,7 +255,7 @@ fn allocation_backed_temporary_directory_forms_own_byte_paths() {
 
     let parent = fs::open(
         "/tmp",
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        DIRECTORY_HANDLE | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .expect("open allocation-backed temporary directory parent");

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 use std::io::ErrorKind;
 use std::net::UdpSocket;

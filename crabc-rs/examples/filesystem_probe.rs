@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free assembly probe for the direct filesystem boundary.
 //!
 //! This no-std static library monomorphizes representative filesystem

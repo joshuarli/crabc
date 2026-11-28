@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::num::NonZeroU64;
 
 use crabc_rs::fs::{Advice, Mode, OFlags};

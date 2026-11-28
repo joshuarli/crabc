@@ -6,6 +6,11 @@ use std::path::Path;
 use crabc_rs::fs as native_fs;
 use crabc_rs::Errno;
 
+#[cfg(target_os = "linux")]
+const DIRECTORY_HANDLE: native_fs::OFlags = native_fs::OFlags::PATH;
+#[cfg(target_os = "macos")]
+const DIRECTORY_HANDLE: native_fs::OFlags = native_fs::OFlags::SEARCH;
+
 fn remove(path: &[u8]) {
     let _ = fs::remove_dir(Path::new(std::ffi::OsStr::from_bytes(path)));
 }
@@ -37,14 +42,31 @@ fn creates_private_unique_directories_with_random_suffixes() {
 #[test]
 fn caller_owned_and_descriptor_relative_forms_preserve_byte_prefixes() {
     let mut full = [0u8; 256];
-    let length = native_fs::create_temp_dir_into("/tmp", &b"crabc-\xff-"[..], &mut full)
-        .expect("create non-UTF8 temporary directory");
-    assert!(full[..length].starts_with(b"/tmp/crabc-\xff-"));
-    remove(&full[..length]);
+    #[cfg(target_os = "linux")]
+    {
+        let length = native_fs::create_temp_dir_into("/tmp", &b"crabc-\xff-"[..], &mut full)
+            .expect("create non-UTF8 temporary directory");
+        assert!(full[..length].starts_with(b"/tmp/crabc-\xff-"));
+        remove(&full[..length]);
+    }
+    // APFS stores names as UTF-8 and rejects other byte sequences, so the
+    // byte-preservation check uses a non-ASCII UTF-8 prefix on Darwin.
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(
+            native_fs::create_temp_dir_into("/tmp", &b"crabc-\xff-"[..], &mut full),
+            Err(Errno::ILSEQ)
+        );
+        let prefix = "crabc-\u{e9}-".as_bytes();
+        let length = native_fs::create_temp_dir_into("/tmp", prefix, &mut full)
+            .expect("create non-ASCII temporary directory");
+        assert!(full[..length].starts_with(b"/tmp/crabc-\xc3\xa9-"));
+        remove(&full[..length]);
+    }
 
     let parent = native_fs::open(
         "/tmp",
-        native_fs::OFlags::PATH | native_fs::OFlags::DIRECTORY,
+        DIRECTORY_HANDLE | native_fs::OFlags::DIRECTORY,
         native_fs::Mode::empty(),
     )
     .expect("open temporary parent");

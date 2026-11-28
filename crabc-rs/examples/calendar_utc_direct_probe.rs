@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the UTC calendar conversion seam.
 
 #![no_std]

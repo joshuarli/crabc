@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use std::sync::mpsc;
 use std::thread as std_thread;
 use std::time::Duration;

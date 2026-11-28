@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use std::io::Write;
 use std::net::TcpStream;
 use std::os::unix::net::{UnixListener, UnixStream};

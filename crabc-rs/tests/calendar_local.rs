@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::time::{CalendarTime, LocalCalendar, UnixTime};
 use crabc_rs::timezone::TimeZone;
 

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::cmp::Ordering;
 
 use crabc_rs::path::{basename_bytes, dirname_bytes};

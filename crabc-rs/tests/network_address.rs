@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::net::{NetworkU16, NetworkU32};
 
 #[test]

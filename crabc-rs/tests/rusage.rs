@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::process::{self, ResourceUsage, ResourceUsageTarget};
 
 fn time_key(time: crabc_rs::process::ResourceUsageTime) -> (i64, i64) {

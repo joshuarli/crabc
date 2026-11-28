@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native byte-string/stateful seam.
 
 #![no_std]

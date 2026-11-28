@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std probe for the native resolver/netdb boundary.
 //!
 //! The probe exercises owned numeric resolution, caller-provided netdb parsing,

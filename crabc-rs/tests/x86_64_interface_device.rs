@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 regression for the bounded Linux interface-device facade.
 //!
 //! The assertions intentionally use loopback and cross-operation consistency

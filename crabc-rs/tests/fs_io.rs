@@ -56,6 +56,7 @@ fn seek_tell_sync_and_truncate_use_the_direct_file_descriptor_seams() {
         5
     );
     fs::fsync(&file).expect("flush file data and metadata");
+    #[cfg(target_os = "linux")]
     fs::fdatasync(&file).expect("flush file data");
 
     drop(file);

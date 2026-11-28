@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::fs::{self, Mode, OFlags};
 use crabc_rs::process;
 use crabc_rs::{Errno, OwnedFd, Result};

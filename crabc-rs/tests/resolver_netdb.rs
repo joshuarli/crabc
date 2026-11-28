@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::net::{AddressFamily, SocketType};
 use crabc_rs::netdb::{HostDatabase, ProtocolDatabase, ServiceDatabase, ServiceProtocol};
 use crabc_rs::resolver::{

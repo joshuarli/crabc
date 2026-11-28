@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the complete x86 native terminal seam.
 //!
 //! This probe exercises typed terminal state, queues, exclusivity, tty naming,

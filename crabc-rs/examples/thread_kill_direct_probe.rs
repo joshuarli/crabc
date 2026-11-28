@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for direct same-process thread signal delivery.
 
 #![no_std]

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 

@@ -1,6 +1,8 @@
 
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, IntoRawFd};
+use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+use std::os::fd::IntoRawFd;
 use std::process::{Child, ChildStdout, Command, Stdio};
 
 use crabc_rs::{fs, io, BorrowedFd, Errno};
@@ -177,6 +179,7 @@ fn x86_64_flock_nonblocking_contention_uses_an_independent_open_file_description
         .expect("release reacquired exclusive flock");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_flock_raw_invalid_operation_and_closed_descriptor_errors_are_direct() {
     let (file, _path, _cleanup) = flock_fixture();

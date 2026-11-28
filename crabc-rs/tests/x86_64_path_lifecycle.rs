@@ -1,8 +1,12 @@
 
 use std::os::fd::AsRawFd;
 
-use crabc_rs::fs::{self as cfs, AtFlags, ChownFlags, FileType, Mode, OFlags, UnlinkAtFlags};
-use crabc_rs::{process::Uid, BorrowedFd};
+use crabc_rs::fs::{self as cfs, AtFlags, FileType, Mode, OFlags, UnlinkAtFlags};
+#[cfg(target_os = "linux")]
+use crabc_rs::fs::ChownFlags;
+#[cfg(target_os = "linux")]
+use crabc_rs::process::Uid;
+use crabc_rs::BorrowedFd;
 
 fn mode(bits: u32) -> Mode {
     Mode::from_bits(bits).expect("valid mode bits")
@@ -43,21 +47,25 @@ fn x86_64_path_lifecycle_is_descriptor_relative_and_typed() {
     assert_eq!(cfs::lstat(nested_value.as_str()).unwrap().file_type(), FileType::RegularFile);
     cfs::fchmod(&file, mode(0o600)).expect("fchmod");
     cfs::chmodat(nested_borrow(), "value", mode(0o640), AtFlags::empty()).expect("chmodat");
-    cfs::fchown(&file, None, None).expect("fchown no-change");
-    cfs::chownat(nested_borrow(), "value", None, None, ChownFlags::empty()).expect("chownat no-change");
-    cfs::chown(nested_value.as_str(), None, None).expect("chown no-change");
-    cfs::lchown(nested_value.as_str(), None, None).expect("lchown no-change");
-    assert_eq!(
-        cfs::chownat(
-            nested_borrow(),
-            "value",
-            Some(Uid::from_raw(u32::MAX)),
-            None,
-            ChownFlags::empty(),
-        )
-        .unwrap_err(),
-        crabc_rs::Errno::INVAL
-    );
+    #[cfg(target_os = "linux")]
+    {
+        cfs::fchown(&file, None, None).expect("fchown no-change");
+        cfs::chownat(nested_borrow(), "value", None, None, ChownFlags::empty())
+            .expect("chownat no-change");
+        cfs::chown(nested_value.as_str(), None, None).expect("chown no-change");
+        cfs::lchown(nested_value.as_str(), None, None).expect("lchown no-change");
+        assert_eq!(
+            cfs::chownat(
+                nested_borrow(),
+                "value",
+                Some(Uid::from_raw(u32::MAX)),
+                None,
+                ChownFlags::empty(),
+            )
+            .unwrap_err(),
+            crabc_rs::Errno::INVAL
+        );
+    }
     cfs::truncate(nested_value.as_str(), 17).expect("truncate");
     drop(file);
 
@@ -69,6 +77,7 @@ fn x86_64_path_lifecycle_is_descriptor_relative_and_typed() {
     std::os::unix::fs::symlink("value", format!("{root}/nested/link")).expect("symlink fixture");
     assert_eq!(cfs::statat(nested_borrow(), "link", AtFlags::empty()).unwrap().file_type(), FileType::RegularFile);
     assert_eq!(cfs::statat(nested_borrow(), "link", AtFlags::SYMLINK_NOFOLLOW).unwrap().file_type(), FileType::Symlink);
+    #[cfg(target_os = "linux")]
     assert_eq!(
         cfs::chmodat(
             nested_borrow(),
@@ -79,6 +88,15 @@ fn x86_64_path_lifecycle_is_descriptor_relative_and_typed() {
         .unwrap_err(),
         crabc_rs::Errno::OPNOTSUPP
     );
+    #[cfg(target_os = "macos")]
+    {
+        cfs::chmodat(nested_borrow(), "link", mode(0o600), AtFlags::SYMLINK_NOFOLLOW)
+            .expect("Darwin changes a symbolic link's own mode");
+        assert_eq!(
+            cfs::statat(nested_borrow(), "link", AtFlags::SYMLINK_NOFOLLOW).unwrap().st_mode & 0o777,
+            0o600
+        );
+    }
 
     assert_eq!(cfs::openat(nested_borrow(), "missing", OFlags::RDONLY, mode(0)).unwrap_err(), crabc_rs::Errno::NOENT);
     assert_eq!(cfs::mknodat(nested_borrow(), "bad", FileType::Unknown, mode(0), cfs::FIFO_DEVICE).unwrap_err(), crabc_rs::Errno::INVAL);

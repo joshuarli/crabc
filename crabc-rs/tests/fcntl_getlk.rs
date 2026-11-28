@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 #![cfg(not(target_arch = "x86_64"))]
 // x86 coverage: x86_64_fcntl_getlk.rs:x86_64_fcntl_getlk_matches_the_linux_flock_record_and_unlocked_query, x86_64_fcntl_getlk_reports_a_conflicting_record_lock, x86_64_fcntl_getlk_rejects_undefined_input_and_unrepresentable_offsets.
 

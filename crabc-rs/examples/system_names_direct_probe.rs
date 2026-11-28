@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for owned Linux system-name observation.
 //!
 //! The native API deliberately reaches `uname` and exposes its owned CStr

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 `cfile` facade interpreter for the installed-product
 //! differential.
 //!

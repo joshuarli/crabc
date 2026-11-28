@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Runtime proof for the bounded native dynamic-loader slice.
 //!
 //! The archive is linked into a C fixture and runs under crabc's `libldso`.

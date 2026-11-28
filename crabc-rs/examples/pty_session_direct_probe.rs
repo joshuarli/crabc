@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free proof for the owned PTY/session native slice.
 //!
 //! The probe opens an owned master/slave pair, resolves the slave name into

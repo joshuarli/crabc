@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free proof for direct, owned conventional account snapshots.
 //!
 //! The probe loads `/etc/passwd` and `/etc/group` through crabc's descriptor

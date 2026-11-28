@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::mem::{align_of, size_of};
 use std::sync::mpsc;
 use std::thread as std_thread;

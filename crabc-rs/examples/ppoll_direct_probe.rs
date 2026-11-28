@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the typed signal-mask-aware `ppoll` facade.
 //!
 //! The source is intentionally unregistered in the focused slice. It keeps

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native C11 UTC timespec seam.
 
 #![no_std]

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the filesystem-statistics seam.
 //!
 //! The probe is intentionally kept as a separate source file so the harness

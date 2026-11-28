@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::arch::global_asm;
 use core::mem::MaybeUninit;

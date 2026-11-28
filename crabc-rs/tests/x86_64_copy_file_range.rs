@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::cell::Cell;
 use std::os::fd::{AsRawFd, IntoRawFd};

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 //! Native Linux contract for the narrow direct mount error boundary.
 //!

@@ -167,6 +167,7 @@ fn x86_64_statat_rejects_interior_nuls_overlong_no_alloc_paths_and_unknown_flags
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_statat_accepts_non_utf8_byte_pathnames() {
     let mut root = std::env::temp_dir();
@@ -184,6 +185,46 @@ fn x86_64_statat_accepts_non_utf8_byte_pathnames() {
 
     let observed = fs::statat(borrow(&directory), &name[..], fs::AtFlags::empty())
         .expect("stat non-UTF-8 byte path");
+    assert_eq!(observed.st_size, 5);
+    assert_eq!(observed.st_mode & 0o170000, 0o100000);
+}
+
+// APFS stores names as UTF-8: it refuses to create a non-UTF-8 name and finds
+// no entry for one, while a non-ASCII UTF-8 name round-trips byte for byte.
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_statat_byte_pathnames_follow_apfs_utf8_names() {
+    let mut root = std::env::temp_dir();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_nanos();
+    root.push(format!("crabc-darwin-statat-bytes-{}-{nonce}", std::process::id()));
+    std_fs::create_dir(&root).expect("create byte-path fixture directory");
+    let _cleanup = RemoveDirectoryOnDrop(root.clone());
+    let directory = File::open(&root).expect("open byte-path fixture directory");
+
+    let invalid = b"record-\xff";
+    assert_eq!(
+        fs::openat(
+            borrow(&directory),
+            &invalid[..],
+            fs::OFlags::WRONLY | fs::OFlags::CREATE | fs::OFlags::EXCL,
+            fs::Mode::RUSR | fs::Mode::WUSR,
+        )
+        .unwrap_err(),
+        Errno::ILSEQ,
+    );
+    assert_eq!(
+        fs::statat(borrow(&directory), &invalid[..], fs::AtFlags::empty()).unwrap_err(),
+        Errno::NOENT,
+    );
+
+    let name = "record-\u{e9}".as_bytes();
+    std_fs::write(root.join(std::ffi::OsStr::from_bytes(name)), b"bytes")
+        .expect("create non-ASCII fixture file");
+    let observed = fs::statat(borrow(&directory), name, fs::AtFlags::empty())
+        .expect("stat non-ASCII byte path");
     assert_eq!(observed.st_size, 5);
     assert_eq!(observed.st_mode & 0o170000, 0o100000);
 }

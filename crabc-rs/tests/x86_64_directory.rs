@@ -7,7 +7,15 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
 use crabc_rs::fs::{self, Dir, Mode, OFlags, CWD};
-use crabc_rs::{io, BorrowedFd, Errno};
+use crabc_rs::{io, BorrowedFd};
+#[cfg(target_os = "linux")]
+use crabc_rs::Errno;
+
+#[cfg(target_os = "linux")]
+const BYTE_NAME: &[u8] = b"entry-\xff";
+// APFS stores names as UTF-8 and rejects other byte sequences.
+#[cfg(target_os = "macos")]
+const BYTE_NAME: &[u8] = "entry-\u{e9}".as_bytes();
 
 struct RemoveDirectoryOnDrop(PathBuf);
 
@@ -29,7 +37,7 @@ fn fixture() -> (RemoveDirectoryOnDrop, String, File, Vec<u8>) {
     ));
     std_fs::create_dir(&root).expect("create directory-stream fixture directory");
     let cleanup = RemoveDirectoryOnDrop(root.clone());
-    let byte_name = b"entry-\xff".to_vec();
+    let byte_name = BYTE_NAME.to_vec();
     std_fs::write(root.join(OsString::from_vec(byte_name.clone())), b"entry")
         .expect("create non-UTF-8 fixture entry");
     let directory = File::open(&root).expect("open directory-stream fixture");
@@ -94,6 +102,7 @@ fn x86_64_dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_dir_reports_small_buffer_error_once_and_then_stops() {
     let (_cleanup, root, _directory, _byte_name) = fixture();

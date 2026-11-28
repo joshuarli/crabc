@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::thread;
 
 const LINUX_CPU_SETSIZE: usize = 1024;

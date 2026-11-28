@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::time::Duration;

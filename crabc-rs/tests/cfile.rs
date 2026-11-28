@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 #![cfg(feature = "runtime-stdio")]
 
 use core::ffi::{c_char, c_int, c_void};

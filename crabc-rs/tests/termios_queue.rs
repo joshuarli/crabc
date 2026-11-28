@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::{fs, pty, termios, Errno};
 
 fn pty_master() -> crabc_rs::OwnedFd {

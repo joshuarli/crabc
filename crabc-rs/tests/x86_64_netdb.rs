@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 regression for owned conventional netdb snapshots.
 //!
 //! These tests use caller bytes and read-only conventional-file smoke checks.

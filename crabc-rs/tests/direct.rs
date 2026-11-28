@@ -16,18 +16,32 @@ fn openat_and_io_use_the_direct_typed_seam() {
     assert_eq!(io::write(&sink, payload).expect("write directly"), 12,);
     drop(sink);
 
-    let source = fs::openat(
-        CWD,
-        cstr(b"/proc/self/cmdline\0"),
-        OFlags::RDONLY,
-        Mode::empty(),
-    )
-    .expect("open a deterministic process-owned Linux file");
-    let mut buffer = [MaybeUninit::<u8>::uninit(); 128];
-    let (bytes, _) = io::read(&source, &mut buffer).expect("read directly");
-    assert!(!bytes.is_empty(), "the test process has a command line");
+    #[cfg(target_os = "linux")]
+    {
+        let source = fs::openat(
+            CWD,
+            cstr(b"/proc/self/cmdline\0"),
+            OFlags::RDONLY,
+            Mode::empty(),
+        )
+        .expect("open a deterministic process-owned Linux file");
+        let mut buffer = [MaybeUninit::<u8>::uninit(); 128];
+        let (bytes, _) = io::read(&source, &mut buffer).expect("read directly");
+        assert!(!bytes.is_empty(), "the test process has a command line");
 
-    assert_ne!(bytes[0], 0, "the first cmdline byte is the executable path");
+        assert_ne!(bytes[0], 0, "the first cmdline byte is the executable path");
+    }
+    // Darwin has no procfs; the test executable is the deterministic
+    // process-owned file, and its first word is the 64-bit Mach-O magic.
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::env::current_exe().expect("locate the test executable");
+        let source = fs::openat(CWD, executable.as_path(), OFlags::RDONLY, Mode::empty())
+            .expect("open the test executable");
+        let mut buffer = [MaybeUninit::<u8>::uninit(); 4];
+        let (bytes, _) = io::read(&source, &mut buffer).expect("read directly");
+        assert_eq!(bytes, 0xfeed_facf_u32.to_le_bytes());
+    }
 
     let error = fs::openat(
         CWD,

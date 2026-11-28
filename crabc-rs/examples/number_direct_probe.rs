@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the explicit integer parser seam.
 
 #![no_std]

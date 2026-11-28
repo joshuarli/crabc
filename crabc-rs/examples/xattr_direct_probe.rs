@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the complete x86 xattr facade.
 //!
 //! The canonical x86 runner builds this static library but does not execute

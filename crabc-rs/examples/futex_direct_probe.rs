@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the direct Linux/AArch64 futex wait/wake seam.
 
 #![no_std]

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::time::Duration;
 use std::sync::mpsc;

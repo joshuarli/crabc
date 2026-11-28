@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native Linux `fcntl(F_GETLK)` query seam.
 
 #![no_std]

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free assembly probe for the process/system direct boundary.
 //!
 //! This no-std archive makes every syscall seam reachable without routing

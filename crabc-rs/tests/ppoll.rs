@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 #![cfg(not(target_arch = "x86_64"))]
 // x86 coverage: x86_64_poll.rs:x86_64_ppoll_temporarily_installs_mask_and_restores_previous_mask and x86_64_poll_observes_pipe_readiness_and_preserves_requested_events.
 

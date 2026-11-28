@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the direct terminal-exclusive-mode ioctls.
 
 #![no_std]

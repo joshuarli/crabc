@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for logical current-directory naming.
 //!
 //! The probe supplies an explicit absolute `PWD` snapshot. The implementation

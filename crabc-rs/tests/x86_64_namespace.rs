@@ -137,13 +137,20 @@ fn x86_64_namespace_lifecycle_is_descriptor_relative() {
         .unwrap_err(),
         crabc_rs::Errno::INVAL,
     );
+    // An unadmitted rename flag is rejected before the call. Linux's
+    // `RENAME_WHITEOUT` is 0x4; on Darwin 0x4 is the admitted `RENAME_EXCL`,
+    // and the unadmitted flag is `RENAME_SECLUDE`, 0x1.
+    #[cfg(target_os = "linux")]
+    let unadmitted = RenameFlags::from_bits_retain(0x4);
+    #[cfg(target_os = "macos")]
+    let unadmitted = RenameFlags::from_bits_retain(0x1);
     assert_eq!(
         fs::renameat_with(
             borrow(&directory),
             "replaced",
             borrow(&directory),
             "noreplace",
-            RenameFlags::from_bits_retain(0x4),
+            unadmitted,
         )
         .unwrap_err(),
         crabc_rs::Errno::INVAL,

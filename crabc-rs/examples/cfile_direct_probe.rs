@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Runtime proof for 's owned native buffered memory-stream boundary.
 //!
 //! This archive is linked into a C fixture running under crabc's loader. It

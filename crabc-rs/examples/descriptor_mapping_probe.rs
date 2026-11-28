@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free assembly probe for the direct Linux/AArch64 boundary.
 //!
 //! The archive reaches descriptor positioning/durability, epoll, timerfd, and

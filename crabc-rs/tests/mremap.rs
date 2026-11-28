@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::{mm, Errno};
 
 const PAGE_SIZE: usize = mm::MINCORE_PAGE_SIZE;

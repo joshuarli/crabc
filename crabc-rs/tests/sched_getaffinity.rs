@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::process::Pid;
 use crabc_rs::thread::{self, CpuSet};
 use crabc_rs::Errno;

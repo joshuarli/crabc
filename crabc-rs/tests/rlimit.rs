@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::process::Mode;
 use crabc_rs::process::{self, Resource, Rlimit};
 use crabc_rs::Errno;

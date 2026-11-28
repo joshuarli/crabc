@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the calling-thread credential slice.
 //!
 //! The no-change calls retain Linux's direct setresuid/setresgid syscall

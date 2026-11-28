@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for batched message and urgent-mark operations.
 
 #![no_std]

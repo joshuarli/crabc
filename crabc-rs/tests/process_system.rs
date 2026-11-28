@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::{fs, mount, param, process, pty, shm, system, termios, thread, Errno};
 
 #[test]

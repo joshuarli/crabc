@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use std::fs::{self as std_fs, File};
 use std::mem::MaybeUninit;

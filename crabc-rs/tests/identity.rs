@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::process;
 
 fn proc_status_ids() -> ([u32; 4], [u32; 4]) {

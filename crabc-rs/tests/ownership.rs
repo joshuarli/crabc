@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::fs::{self as stdfs, OpenOptions};
 use std::os::unix::fs::{symlink, MetadataExt};

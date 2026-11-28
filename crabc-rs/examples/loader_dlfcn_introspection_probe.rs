@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Runtime proof for copied loaded-image and per-handle metadata.
 
 #![no_std]

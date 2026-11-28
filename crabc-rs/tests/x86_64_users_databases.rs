@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 #![cfg(feature = "alloc")]
 
 //! Native x86-64 contract for strict, owned conventional account snapshots.

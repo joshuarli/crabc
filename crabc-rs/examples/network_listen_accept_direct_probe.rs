@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native listen/accept seam.
 //!
 //! The listener is deliberately nonblocking so the probe can exercise both

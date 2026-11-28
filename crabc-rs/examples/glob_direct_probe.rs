@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the allocation-enabled native glob boundary.
 //!
 //! The probe supplies an explicit `/tmp` directory descriptor and asks for a

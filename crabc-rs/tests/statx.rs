@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 const STATX_FLAGS: crabc_rs::fs::StatxAtFlags = crabc_rs::fs::StatxAtFlags::empty();
 
 use crabc_rs::fs::{self, StatxFlags, CWD};

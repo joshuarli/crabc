@@ -1,6 +1,9 @@
 
-use crabc_rs::{fs, io, pipe, Errno};
+#[cfg(target_os = "linux")]
+use crabc_rs::Errno;
+use crabc_rs::{fs, io, pipe};
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_fcntl_status_flags_match_the_native_abi() {
     assert_eq!(fs::OFlags::ACCMODE.bits(), 0x0020_0003);
@@ -93,6 +96,7 @@ fn x86_64_fcntl_status_flags_share_open_file_description_and_restore() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn x86_64_fcntl_status_flags_reject_closed_descriptor() {
     let (reader, _writer) = pipe::pipe().expect("create EBADF fixture");

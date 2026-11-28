@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use crabc_rs::fs::{self, Mode, OFlags};
 use crabc_rs::io::{self, SyncFileRangeFlags};
 use crabc_rs::{AsFd, Errno};

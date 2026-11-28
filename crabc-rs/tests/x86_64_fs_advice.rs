@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::num::NonZeroU64;
 use std::io::{Seek, SeekFrom, Write};

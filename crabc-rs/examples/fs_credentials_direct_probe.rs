@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for the native filesystem-credential seams.
 //!
 //! The query forms retain Linux's direct setfsuid/setfsgid syscall words while

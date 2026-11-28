@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 
 use core::cell::Cell;
 use core::mem::{align_of, size_of};

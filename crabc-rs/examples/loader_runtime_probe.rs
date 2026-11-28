@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Runtime proof for the native runtime-loader boundary.
 //!
 //! This archive is linked into a C fixture that runs under crabc's `libldso`.

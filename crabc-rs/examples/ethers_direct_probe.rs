@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for bounded ethers parsing and IPv6 constants.
 
 #![no_std]

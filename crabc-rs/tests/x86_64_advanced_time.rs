@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Native x86-64 regression for advanced clock IDs and owned POSIX timers.
 //!
 //! This selects direct typed Linux records only. It deliberately never sets

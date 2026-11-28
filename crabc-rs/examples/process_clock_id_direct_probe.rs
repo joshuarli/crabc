@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Link-free no-std proof for process CPU clock-ID resolution.
 
 #![no_std]
