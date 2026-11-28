@@ -5,12 +5,54 @@
 //! legacy file-page remapping. It also exposes bounded mapping
 //! synchronization, advice, and residency operations, but not the
 //! broader AArch64 VM policy surface.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem. [`ProtFlags`], [`MprotectFlags`],
+//! [`MapFlags`] and [`PosixAdvice`] have the same values on both targets;
+//! [`MsyncFlags`], [`Advice`] and [`MINCORE_PAGE_SIZE`] carry Darwin's. It
+//! ports [`mmap`], [`mmap_anonymous`], [`munmap`], [`mprotect`], [`mlock`],
+//! [`munlock`], [`msync`], [`madvise`], [`posix_madvise`] and [`mincore`].
+//! Behavior that differs from Linux:
+//!
+//! - Pages are 16 KiB, and [`MINCORE_PAGE_SIZE`] is 16384.
+//! - Apple Silicon refuses a mapping or protection that is both writable and
+//!   executable with [`crate::Errno::ACCESS`].
+//! - [`msync`] with a zero length fails with [`crate::Errno::INVAL`] instead
+//!   of succeeding as a no-op.
+//! - [`posix_madvise`] passes [`PosixAdvice::DontNeed`] to libSystem, whose
+//!   `MADV_DONTNEED` keeps page contents, so it validates the range instead
+//!   of being a no-op.
+//! - [`mincore`] accepts an unaligned `ptr`, rounds the span to whole pages,
+//!   and sizes its output by that span.
+//! - A protection fault raises `SIGBUS` where Linux raises `SIGSEGV`.
+//!
+//! These items are absent on Darwin:
+//!
+//! - `Advice::LinuxDontNeed`: Darwin's `MADV_DONTNEED` keeps page contents,
+//!   so no Darwin advice discards them.
+//! - `mremap`, `mremap_fixed` and `MremapFlags`: XNU has no `mremap`.
+//! - `mlock_with` and `MlockFlags`: libSystem has no `mlock2`.
+//! - `mlockall`, `munlockall` and `MlockAllFlags`: XNU's `mlockall` and
+//!   `munlockall` always fail with `ENOSYS`.
+//! - `remap_file_pages`: a Linux-only interface.
 
 use bitflags::bitflags;
 
 use crate::ffi::c_void;
 use crate::{AsFd, Result};
+#[cfg(target_os = "linux")]
+use crabc_core::mm as os;
+#[cfg(target_os = "macos")]
+use crate::darwin::mm as os;
 
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::mm::{mincore, Advice, MsyncFlags, MINCORE_PAGE_SIZE};
+#[cfg(target_os = "macos")]
+use crate::darwin::mm::MAP_ANONYMOUS;
+
+#[cfg(target_os = "linux")]
 const MAP_ANONYMOUS: u32 = 0x20;
 const SUPPORTED_PROTECTION_BITS: u32 =
     ProtFlags::READ.bits() | ProtFlags::WRITE.bits() | ProtFlags::EXEC.bits();
@@ -62,6 +104,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// The bounded `MREMAP_*` flags accepted by [`mremap`] and
     /// [`mremap_fixed`].
@@ -79,6 +122,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux/x86-64 `MLOCK_*` flags for [`mlock_with`].
     #[repr(transparent)]
@@ -91,6 +135,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `MCL_*` flags accepted by [`mlockall`].
     ///
@@ -109,6 +154,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux/x86-64 `MS_*` flags for [`msync`].
     #[repr(transparent)]
@@ -145,6 +191,7 @@ pub enum PosixAdvice {
     DontNeed = 4,
 }
 
+#[cfg(target_os = "linux")]
 /// Closed Linux `madvise` policies exposed by this native facade.
 ///
 /// `LinuxDontNeed` has Linux's page-discarding behavior; it is deliberately
@@ -165,6 +212,7 @@ pub enum Advice {
     LinuxDontNeed = 4,
 }
 
+#[cfg(target_os = "linux")]
 /// The Linux/x86-64 base page size used to size a [`mincore`] output vector.
 pub const MINCORE_PAGE_SIZE: usize = 4096;
 
@@ -188,6 +236,7 @@ fn checked_map_bits(flags: MapFlags) -> Result<u32> {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn checked_mremap_flags(flags: MremapFlags) -> Result<u32> {
     let bits = flags.bits();
@@ -228,7 +277,7 @@ pub unsafe fn mmap<Fd: AsFd>(
     // SAFETY: The caller owns the mapping and pointer-provenance contract;
     // `fd` remains borrowed for the duration of the kernel call.
     unsafe {
-        crabc_core::mm::mmap_raw(
+        os::mmap_raw(
             ptr.cast(),
             len,
             prot,
@@ -261,7 +310,7 @@ pub unsafe fn mmap_anonymous(
     let flags = checked_map_bits(flags)?;
     // SAFETY: The caller owns the mapping and pointer-provenance contract.
     unsafe {
-        crabc_core::mm::mmap_raw(
+        os::mmap_raw(
             ptr.cast(),
             len,
             prot,
@@ -283,9 +332,10 @@ pub unsafe fn mmap_anonymous(
 #[inline]
 pub unsafe fn munmap(ptr: *mut c_void, len: usize) -> Result<()> {
     // SAFETY: The caller owns the mapping-lifetime contract.
-    unsafe { crabc_core::mm::munmap_raw(ptr.cast(), len) }
+    unsafe { os::munmap_raw(ptr.cast(), len) }
 }
 
+#[cfg(target_os = "linux")]
 /// Resizes or moves a Linux/x86-64 mapping.
 ///
 /// This is the direct Rust counterpart of the ordinary Rustix `mremap`
@@ -327,6 +377,7 @@ pub unsafe fn mremap(
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Resizes or moves a Linux/x86-64 mapping to a caller-selected address.
 ///
 /// This is the fixed-address counterpart of [`mremap`]. The fixed-address
@@ -385,7 +436,7 @@ pub unsafe fn mremap_fixed(
 pub unsafe fn mprotect(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Result<()> {
     let flags = checked_protection_bits(flags.bits())?;
     // SAFETY: The caller owns the mapped-range and provenance contracts.
-    unsafe { crabc_core::mm::mprotect_raw(ptr.cast(), len, flags) }
+    unsafe { os::mprotect_raw(ptr.cast(), len, flags) }
 }
 
 /// Locks a mapped range into memory with Linux `mlock`.
@@ -409,9 +460,10 @@ pub unsafe fn mprotect(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Re
 #[inline]
 pub unsafe fn mlock(ptr: *mut c_void, len: usize) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contract.
-    unsafe { crabc_core::mm::mlock_raw(ptr.cast(), len) }
+    unsafe { os::mlock_raw(ptr.cast(), len) }
 }
 
+#[cfg(target_os = "linux")]
 /// Locks a mapped range into memory with Linux `mlock2` flags.
 ///
 /// `MlockFlags::ONFAULT` requests Linux's deferred page-locking policy. This
@@ -451,9 +503,10 @@ pub unsafe fn mlock_with(ptr: *mut c_void, len: usize, flags: MlockFlags) -> Res
 #[inline]
 pub unsafe fn munlock(ptr: *mut c_void, len: usize) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contract.
-    unsafe { crabc_core::mm::munlock_raw(ptr.cast(), len) }
+    unsafe { os::munlock_raw(ptr.cast(), len) }
 }
 
+#[cfg(target_os = "linux")]
 /// Locks all current and/or future mappings in the calling process.
 ///
 /// This operation is process-global rather than tied to one mapping. The
@@ -466,6 +519,7 @@ pub fn mlockall(flags: MlockAllFlags) -> Result<()> {
     crabc_core::mm::mlockall_raw(flags.bits())
 }
 
+#[cfg(target_os = "linux")]
 /// Removes all process-wide memory-lock policy.
 #[inline]
 pub fn munlockall() -> Result<()> {
@@ -491,7 +545,7 @@ pub fn munlockall() -> Result<()> {
 #[inline]
 pub unsafe fn msync(ptr: *mut c_void, len: usize, flags: MsyncFlags) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contracts.
-    unsafe { crabc_core::mm::msync_raw(ptr.cast(), len, flags.bits()) }
+    unsafe { os::msync_raw(ptr.cast(), len, flags.bits()) }
 }
 
 /// Gives Linux an access-pattern or page-discarding advisory for a mapping.
@@ -503,12 +557,12 @@ pub unsafe fn msync(ptr: *mut c_void, len: usize, flags: MsyncFlags) -> Result<(
 /// which remains mapped during the call. A zero length is a Linux no-op. The
 /// caller must preserve pointer provenance and must not rely on Rust references
 /// or typed contents across advice that can discard or alter pages, including
-/// [`Advice::LinuxDontNeed`]. Linux rounds a final partial page according to
+/// Linux's `Advice::LinuxDontNeed`. Linux rounds a final partial page according to
 /// its `madvise` ABI.
 #[inline]
 pub unsafe fn madvise(ptr: *mut c_void, len: usize, advice: Advice) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contract.
-    unsafe { crabc_core::mm::madvise_raw(ptr.cast(), len, advice as u32) }
+    unsafe { os::madvise_raw(ptr.cast(), len, advice as u32) }
 }
 
 /// Gives Linux the POSIX access-pattern advisory for a mapped range.
@@ -536,9 +590,10 @@ pub unsafe fn posix_madvise(
 ) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and pointer-provenance
     // contract. The typed advice is one of POSIX's five policies.
-    unsafe { crabc_core::mm::posix_madvise_raw(ptr.cast(), len, advice as u32) }
+    unsafe { os::posix_madvise_raw(ptr.cast(), len, advice as u32) }
 }
 
+#[cfg(target_os = "linux")]
 /// Remaps pages in a legacy file-backed mapping.
 ///
 /// The legacy C ABI carries protection and flags words, but the native
@@ -558,6 +613,7 @@ pub unsafe fn remap_file_pages(ptr: *mut c_void, len: usize, page_offset: usize)
     unsafe { crabc_core::mm::remap_file_pages_raw(ptr.cast(), len, page_offset) }
 }
 
+#[cfg(target_os = "linux")]
 /// Queries Linux residency for each page intersecting a mapped range.
 ///
 /// The first `ceil(len / 4096)` bytes of `residency` are the caller-owned

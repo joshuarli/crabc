@@ -11,6 +11,13 @@
 //! null timeout for ordinary/nonblocking operations or an explicit absolute
 //! `CLOCK_REALTIME` [`Timespec`] for timed operations. There is no notification,
 //! SysV IPC, semaphore, AIO, global queue registry, or C static state here.
+//!
+//! # Darwin
+//!
+//! The module is absent on macOS, so using it is a compile-time error.
+//! macOS has no POSIX message queues. The facade has no SysV IPC interface,
+//! so there is no SysV subset to port either; adding one would be a new
+//! interface rather than a port.
 
 use bitflags::bitflags;
 use core::ffi::CStr;

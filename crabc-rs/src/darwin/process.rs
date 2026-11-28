@@ -39,6 +39,12 @@ pub(crate) fn getsid(pid: i32) -> Result<i32> {
     errno::check(sys::getsid(pid))
 }
 
+/// `setsid()`, returning the new session ID.
+#[inline]
+pub(crate) fn setsid() -> Result<i32> {
+    errno::check(sys::setsid())
+}
+
 /// `chdir(path)`.
 #[inline]
 pub(crate) fn chdir(path: &CStr) -> Result<()> {

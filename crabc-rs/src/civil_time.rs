@@ -7,7 +7,6 @@
 
 use crate::{Errno, Result};
 
-#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 use crate::timezone::{OffsetInfo, TimeZone, UtcOffset};
 
@@ -211,7 +210,6 @@ impl CalendarTime {
     }
 }
 
-#[cfg(target_os = "linux")]
 /// A local civil-time view of one explicitly supplied UTC instant.
 ///
 /// `LocalCalendar` combines [`UnixTime`] with an explicitly supplied,
@@ -232,7 +230,6 @@ pub struct LocalCalendar<'zone> {
     offset: OffsetInfo<'zone>,
 }
 
-#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 impl<'zone> LocalCalendar<'zone> {
     /// Converts one UTC instant using the supplied immutable timezone rules.

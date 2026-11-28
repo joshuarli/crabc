@@ -6,13 +6,13 @@
 //! `aarch64-apple-darwin`. The constants are the SDK values for the same
 //! target.
 //!
-//! `fcntl`, `ioctl` and `openat` are declared variadic because their C
-//! prototypes are. Apple's AArch64 calling convention passes variadic
+//! `fcntl`, `ioctl`, `openat` and `shm_open` are declared variadic because
+//! their C prototypes are. Apple's AArch64 calling convention passes variadic
 //! arguments on the stack rather than in registers, so a fixed-arity
 //! declaration would place the argument where libSystem does not read it.
 //!
-//! The `posix_spawn` family, `pthread_sigmask` and `pthread_kill` return an
-//! error number instead of setting `errno`.
+//! The `posix_spawn` family, `pthread_sigmask`, `pthread_kill` and
+//! `ttyname_r` return an error number instead of setting `errno`.
 
 #![allow(non_camel_case_types)]
 
@@ -227,6 +227,95 @@ pub(crate) const FIONCLEX: c_ulong = 0x2000_6602;
 pub(crate) const FIONBIO: c_ulong = 0x8004_667e;
 pub(crate) const FIONREAD: c_ulong = 0x4004_667f;
 
+/// `PATH_MAX` from `sys/syslimits.h`: the pathname bound including its NUL.
+pub(crate) const PATH_MAX: usize = 1024;
+/// `MAXSYMLINKS` from `sys/param.h`: the symbolic links one lookup follows.
+pub(crate) const MAXSYMLINKS: usize = 32;
+/// `PSHMNAMLEN` from `sys/posix_shm.h`: the longest POSIX shared-memory name,
+/// counting a leading slash.
+pub(crate) const PSHMNAMLEN: usize = 31;
+
+pub(crate) const NCCS: usize = 20;
+pub(crate) const VEOF: usize = 0;
+pub(crate) const VEOL: usize = 1;
+pub(crate) const VEOL2: usize = 2;
+pub(crate) const VERASE: usize = 3;
+pub(crate) const VWERASE: usize = 4;
+pub(crate) const VKILL: usize = 5;
+pub(crate) const VREPRINT: usize = 6;
+pub(crate) const VINTR: usize = 8;
+pub(crate) const VQUIT: usize = 9;
+pub(crate) const VSUSP: usize = 10;
+pub(crate) const VDSUSP: usize = 11;
+pub(crate) const VSTART: usize = 12;
+pub(crate) const VSTOP: usize = 13;
+pub(crate) const VLNEXT: usize = 14;
+pub(crate) const VDISCARD: usize = 15;
+pub(crate) const VMIN: usize = 16;
+pub(crate) const VTIME: usize = 17;
+pub(crate) const VSTATUS: usize = 18;
+/// `_POSIX_VDISABLE`: a special-code byte that disables its function.
+pub(crate) const POSIX_VDISABLE: u8 = 0xff;
+
+pub(crate) const IGNBRK: c_ulong = 0x0000_0001;
+pub(crate) const BRKINT: c_ulong = 0x0000_0002;
+pub(crate) const PARMRK: c_ulong = 0x0000_0008;
+pub(crate) const ISTRIP: c_ulong = 0x0000_0020;
+pub(crate) const INLCR: c_ulong = 0x0000_0040;
+pub(crate) const IGNCR: c_ulong = 0x0000_0080;
+pub(crate) const ICRNL: c_ulong = 0x0000_0100;
+pub(crate) const IXON: c_ulong = 0x0000_0200;
+pub(crate) const OPOST: c_ulong = 0x0000_0001;
+pub(crate) const CSIZE: c_ulong = 0x0000_0300;
+pub(crate) const CS8: c_ulong = 0x0000_0300;
+pub(crate) const PARENB: c_ulong = 0x0000_1000;
+pub(crate) const ECHO: c_ulong = 0x0000_0008;
+pub(crate) const ECHONL: c_ulong = 0x0000_0010;
+pub(crate) const ISIG: c_ulong = 0x0000_0080;
+pub(crate) const ICANON: c_ulong = 0x0000_0100;
+pub(crate) const IEXTEN: c_ulong = 0x0000_0400;
+
+pub(crate) const TCSANOW: c_int = 0;
+pub(crate) const TCSADRAIN: c_int = 1;
+pub(crate) const TCSAFLUSH: c_int = 2;
+pub(crate) const TCIFLUSH: c_int = 1;
+pub(crate) const TCOFLUSH: c_int = 2;
+pub(crate) const TCIOFLUSH: c_int = 3;
+pub(crate) const TCOOFF: c_int = 1;
+pub(crate) const TCOON: c_int = 2;
+pub(crate) const TCIOFF: c_int = 3;
+pub(crate) const TCION: c_int = 4;
+
+pub(crate) const TIOCEXCL: c_ulong = 0x2000_740d;
+pub(crate) const TIOCNXCL: c_ulong = 0x2000_740e;
+pub(crate) const TIOCSCTTY: c_ulong = 0x2000_7461;
+pub(crate) const TIOCGWINSZ: c_ulong = 0x4008_7468;
+pub(crate) const TIOCSWINSZ: c_ulong = 0x8008_7467;
+/// The name buffer size of `TIOCPTYGNAME`, which `ptsname_r` fills: the
+/// longest pseudoterminal slave name plus its NUL.
+pub(crate) const PTY_NAME_CAPACITY: usize = 128;
+
+pub(crate) const PROT_READ: c_int = 0x01;
+pub(crate) const PROT_WRITE: c_int = 0x02;
+pub(crate) const PROT_EXEC: c_int = 0x04;
+pub(crate) const MAP_SHARED: c_int = 0x0001;
+pub(crate) const MAP_PRIVATE: c_int = 0x0002;
+pub(crate) const MAP_ANON: c_int = 0x1000;
+pub(crate) const MS_ASYNC: c_int = 0x0001;
+pub(crate) const MS_INVALIDATE: c_int = 0x0002;
+pub(crate) const MS_SYNC: c_int = 0x0010;
+pub(crate) const MADV_NORMAL: c_int = 0;
+pub(crate) const MADV_RANDOM: c_int = 1;
+pub(crate) const MADV_SEQUENTIAL: c_int = 2;
+pub(crate) const MADV_WILLNEED: c_int = 3;
+pub(crate) const POSIX_MADV_NORMAL: c_int = 0;
+pub(crate) const POSIX_MADV_RANDOM: c_int = 1;
+pub(crate) const POSIX_MADV_SEQUENTIAL: c_int = 2;
+pub(crate) const POSIX_MADV_WILLNEED: c_int = 3;
+pub(crate) const POSIX_MADV_DONTNEED: c_int = 4;
+/// The 16 KiB base page of an `aarch64-apple-darwin` process.
+pub(crate) const PAGE_SIZE: usize = 16384;
+
 /// `struct iovec`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -424,6 +513,29 @@ pub(crate) struct Msghdr {
     pub(crate) msg_flags: c_int,
 }
 
+/// `struct termios`. `tcflag_t` and `speed_t` are `unsigned long`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Termios {
+    pub(crate) c_iflag: c_ulong,
+    pub(crate) c_oflag: c_ulong,
+    pub(crate) c_cflag: c_ulong,
+    pub(crate) c_lflag: c_ulong,
+    pub(crate) c_cc: [u8; NCCS],
+    pub(crate) c_ispeed: c_ulong,
+    pub(crate) c_ospeed: c_ulong,
+}
+
+/// `struct winsize`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Winsize {
+    pub(crate) ws_row: u16,
+    pub(crate) ws_col: u16,
+    pub(crate) ws_xpixel: u16,
+    pub(crate) ws_ypixel: u16,
+}
+
 /// The opaque libSystem directory stream, `DIR`.
 #[repr(C)]
 pub(crate) struct Dir {
@@ -559,6 +671,21 @@ const _: () = {
     assert!(size_of::<clockid_t>() == 4 && size_of::<clock_t>() == 8 && size_of::<rlim_t>() == 8);
     assert!(size_of::<posix_spawnattr_t>() == 8 && size_of::<posix_spawn_file_actions_t>() == 8);
     assert!(size_of::<pthread_t>() == 8);
+
+    assert!(size_of::<Termios>() == 72 && align_of::<Termios>() == 8);
+    assert!(offset_of!(Termios, c_iflag) == 0);
+    assert!(offset_of!(Termios, c_oflag) == 8);
+    assert!(offset_of!(Termios, c_cflag) == 16);
+    assert!(offset_of!(Termios, c_lflag) == 24);
+    assert!(offset_of!(Termios, c_cc) == 32);
+    assert!(offset_of!(Termios, c_ispeed) == 56);
+    assert!(offset_of!(Termios, c_ospeed) == 64);
+
+    assert!(size_of::<Winsize>() == 8 && align_of::<Winsize>() == 2);
+    assert!(offset_of!(Winsize, ws_row) == 0);
+    assert!(offset_of!(Winsize, ws_col) == 2);
+    assert!(offset_of!(Winsize, ws_xpixel) == 4);
+    assert!(offset_of!(Winsize, ws_ypixel) == 6);
 
     assert!(size_of::<mode_t>() == 2 && size_of::<dev_t>() == 4 && size_of::<off_t>() == 8);
     assert!(size_of::<c_long>() == 8);
@@ -783,4 +910,47 @@ unsafe extern "C" {
     pub(crate) unsafe fn sendmsg(socket: c_int, message: *const Msghdr, flags: c_int) -> isize;
     pub(crate) unsafe fn recvmsg(socket: c_int, message: *mut Msghdr, flags: c_int) -> isize;
     pub(crate) unsafe fn sockatmark(socket: c_int) -> c_int;
+
+    pub(crate) unsafe fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
+    pub(crate) unsafe fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
+    pub(crate) unsafe fn tcdrain(fd: c_int) -> c_int;
+    pub(crate) unsafe fn tcflush(fd: c_int, queue: c_int) -> c_int;
+    pub(crate) unsafe fn tcflow(fd: c_int, action: c_int) -> c_int;
+    pub(crate) unsafe fn tcsendbreak(fd: c_int, duration: c_int) -> c_int;
+    pub(crate) unsafe fn tcgetpgrp(fd: c_int) -> pid_t;
+    pub(crate) unsafe fn tcsetpgrp(fd: c_int, pgrp: pid_t) -> c_int;
+    pub(crate) unsafe fn tcgetsid(fd: c_int) -> pid_t;
+    /// Returns an error number rather than setting `errno`.
+    pub(crate) unsafe fn ttyname_r(fd: c_int, buffer: *mut c_char, length: usize) -> c_int;
+    pub(crate) safe fn setsid() -> pid_t;
+
+    pub(crate) safe fn posix_openpt(flags: c_int) -> c_int;
+    pub(crate) unsafe fn grantpt(fd: c_int) -> c_int;
+    pub(crate) unsafe fn unlockpt(fd: c_int) -> c_int;
+    /// Unlike `ttyname_r`, reports failure as `-1` with `errno` set.
+    pub(crate) unsafe fn ptsname_r(fd: c_int, buffer: *mut c_char, length: usize) -> c_int;
+
+    pub(crate) unsafe fn mmap(
+        address: *mut c_void,
+        length: usize,
+        protection: c_int,
+        flags: c_int,
+        fd: c_int,
+        offset: off_t,
+    ) -> *mut c_void;
+    pub(crate) unsafe fn munmap(address: *mut c_void, length: usize) -> c_int;
+    pub(crate) unsafe fn mprotect(address: *mut c_void, length: usize, protection: c_int) -> c_int;
+    pub(crate) unsafe fn msync(address: *mut c_void, length: usize, flags: c_int) -> c_int;
+    pub(crate) unsafe fn madvise(address: *mut c_void, length: usize, advice: c_int) -> c_int;
+    /// Unlike POSIX, reports failure as `-1` with `errno` set.
+    pub(crate) unsafe fn posix_madvise(address: *mut c_void, length: usize, advice: c_int)
+        -> c_int;
+    pub(crate) unsafe fn mlock(address: *const c_void, length: usize) -> c_int;
+    pub(crate) unsafe fn munlock(address: *const c_void, length: usize) -> c_int;
+    pub(crate) unsafe fn mincore(address: *const c_void, length: usize, vector: *mut c_char)
+        -> c_int;
+    pub(crate) safe fn getpagesize() -> c_int;
+
+    pub(crate) unsafe fn shm_open(name: *const c_char, oflag: c_int, ...) -> c_int;
+    pub(crate) unsafe fn shm_unlink(name: *const c_char) -> c_int;
 }

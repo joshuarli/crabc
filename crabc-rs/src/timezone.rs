@@ -10,6 +10,13 @@
 //! filesystem and I/O APIs pass those bytes to [`TimeZone::from_tzif`].  A
 //! future convenience loader must retain that explicit-byte/snapshot boundary;
 //! it must not consult `TZ` or other process-global timezone state.
+//!
+//! # Darwin
+//!
+//! The module makes no OS call and is the same on macOS. macOS ships its
+//! zoneinfo as TZif version 2 files with a trailing POSIX rule under
+//! `/var/db/timezone/zoneinfo`, and `/etc/localtime` links to one of them;
+//! [`TimeZone::from_tzif`] parses each of them.
 
 use alloc::vec::Vec;
 

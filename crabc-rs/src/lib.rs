@@ -11,9 +11,10 @@
 //!
 //! On macOS/AArch64 the crate builds a libSystem backend for a subset of its
 //! modules instead: [`buffer`], [`collections`], [`fd`], [`ffi`], [`fs`],
-//! [`io`], [`net`], `netdb`, [`numeric`], [`path`], [`pipe`], [`process`],
-//! [`rand`], [`signal`] and [`time`]. The other modules are not compiled
-//! there, so using one is a compile-time error. libSystem reports
+//! [`io`], [`mm`], [`net`], `netdb`, [`numeric`], [`path`], [`pipe`],
+//! [`process`], [`pty`], [`rand`], [`shm`], [`signal`], [`termios`],
+//! [`time`] and `timezone`. The other modules are not compiled there, so
+//! using one is a compile-time error. libSystem reports
 //! failures through thread-local `errno`; the Darwin backend reads it
 //! immediately after each failing call and returns the typed [`Errno`],
 //! whose values are Darwin's.
@@ -74,7 +75,6 @@ pub mod ioctl;
 pub mod ipc;
 #[cfg(target_os = "linux")]
 pub mod memory;
-#[cfg(target_os = "linux")]
 pub mod mm;
 #[cfg(target_os = "linux")]
 pub mod mount;
@@ -97,7 +97,6 @@ pub mod path;
 pub mod pattern;
 pub mod pipe;
 pub mod process;
-#[cfg(target_os = "linux")]
 pub mod pty;
 pub mod rand;
 #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
@@ -110,7 +109,7 @@ mod raw_dir;
 pub mod resolver;
 #[cfg(all(target_os = "linux", feature = "runtime-thread"))]
 pub mod runtime_thread;
-#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod shm;
 pub mod signal;
 #[cfg(target_os = "linux")]
@@ -121,18 +120,13 @@ pub mod stdio;
 pub mod sync;
 #[cfg(target_os = "linux")]
 pub mod system;
-#[cfg(target_os = "linux")]
 pub mod termios;
 #[cfg(target_os = "linux")]
 pub mod text;
 #[cfg(target_os = "linux")]
 pub mod thread;
 pub mod time;
-#[cfg(all(
-    target_os = "linux",
-    feature = "alloc",
-    any(target_arch = "aarch64", target_arch = "x86_64")
-))]
+#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod timezone;
 #[cfg(all(
     target_os = "linux",

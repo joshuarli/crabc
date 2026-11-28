@@ -7,30 +7,73 @@
 //! transition is the explicit unsafe session/controlling-terminal handoff on
 //! the already-owned slave. It deliberately does not expose a
 //! caller-controlled `TIOCGPTPEER` open or a generic ioctl boundary.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem `posix_openpt`, `grantpt`, `unlockpt`
+//! and `ptsname_r`, and [`OpenptFlags`] carries Darwin's values. Behavior
+//! that differs from Linux:
+//!
+//! - Slave names have the form `/dev/ttysNNN`.
+//! - [`PtyPair::open`] opens the slave by its `ptsname_r` name, as Darwin has
+//!   no `TIOCGPTPEER`. Holding the master keeps that name bound to the slave.
+//! - [`grantpt`] and [`unlockpt`] on a descriptor that is not a
+//!   pseudoterminal master fail with [`crate::Errno::NODEV`] for `/dev/null`
+//!   and [`crate::Errno::NOTTY`] for other descriptors.
+//! - [`PtyPair::set_controlling_terminal`] cannot steal a terminal: XNU's
+//!   `TIOCSCTTY` takes no argument, so `steal` changes nothing and a
+//!   terminal that another session controls fails with
+//!   [`crate::Errno::PERM`], as it does on Linux for a caller without the
+//!   authority to steal.
 
+#[cfg(target_os = "linux")]
 use core::ffi::CStr;
+#[cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
+#[cfg(target_os = "linux")]
 use core::slice;
 
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(target_os = "linux", feature = "alloc"))]
 use alloc::ffi::CString;
-#[cfg(feature = "alloc")]
+#[cfg(all(target_os = "linux", feature = "alloc"))]
 use alloc::vec::Vec;
 
-use crate::fs::{self, Mode};
-use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
+use crate::fs;
+#[cfg(target_os = "linux")]
+use crate::fs::Mode;
+#[cfg(target_os = "linux")]
+use crate::Errno;
+use crate::{AsFd, BorrowedFd, OwnedFd, Result};
+#[cfg(target_os = "linux")]
+use crabc_core::process as os_process;
+#[cfg(target_os = "macos")]
+use crate::darwin::process as os_process;
 
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::pty::{grantpt, openpt, ptsname_into, unlockpt, OpenptFlags};
+#[cfg(all(target_os = "macos", feature = "alloc"))]
+#[doc(inline)]
+pub use crate::darwin::pty::ptsname;
+
+#[cfg(target_os = "linux")]
 const TIOCGPTN: u32 = 0x8004_5430;
+#[cfg(target_os = "linux")]
 const TIOCSPTLCK: u32 = 0x4004_5431;
+#[cfg(target_os = "linux")]
 const TIOCGPTPEER: u32 = 0x5441;
+#[cfg(target_os = "linux")]
 const TIOCSCTTY: u32 = 0x540e;
 
+#[cfg(target_os = "linux")]
 const PTY_NAME_PREFIX: &[u8] = b"/dev/pts/";
-#[cfg(feature = "alloc")]
+#[cfg(all(target_os = "linux", feature = "alloc"))]
 const PTY_NAME_MAX: usize = PTY_NAME_PREFIX.len() + 10;
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `O_*` flags accepted by [`openpt`] and [`PtyPair::open`].
     ///
@@ -72,6 +115,7 @@ pub struct PtyPair {
     slave: OwnedFd,
 }
 
+#[cfg(target_os = "linux")]
 impl PtyPair {
     /// Opens a new owned PTY pair.
     ///
@@ -89,28 +133,6 @@ impl PtyPair {
         unlockpt(&master)?;
         let slave = open_peer_noctty(&master, flags | OpenptFlags::NOCTTY)?;
         Ok(Self { master, slave })
-    }
-
-    /// Borrows the PTY master descriptor.
-    #[inline]
-    #[must_use]
-    pub fn master(&self) -> BorrowedFd<'_> {
-        self.master.as_fd()
-    }
-
-    /// Borrows the PTY slave descriptor.
-    #[inline]
-    #[must_use]
-    pub fn slave(&self) -> BorrowedFd<'_> {
-        self.slave.as_fd()
-    }
-
-    /// Transfers both descriptors out of the pair in master/slave order.
-    #[inline]
-    #[must_use]
-    pub fn into_parts(self) -> (OwnedFd, OwnedFd) {
-        let Self { master, slave } = self;
-        (master, slave)
     }
 
     /// Makes the already-open slave this process's controlling terminal.
@@ -134,6 +156,73 @@ impl PtyPair {
         }
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+impl PtyPair {
+    /// Opens a new owned PTY pair.
+    ///
+    /// `flags` must include [`OpenptFlags::RDWR`]. `NOCTTY` and `CLOEXEC`
+    /// are passed to the master and slave opens as requested; the slave
+    /// always receives `NOCTTY` to preserve the safe ownership-only boundary.
+    /// The slave is opened by its `ptsname_r` name.
+    #[inline]
+    pub fn open(flags: OpenptFlags) -> Result<Self> {
+        if !flags.contains(OpenptFlags::RDWR) {
+            return Err(crate::Errno::INVAL);
+        }
+
+        let master = openpt(flags)?;
+        grantpt(&master)?;
+        unlockpt(&master)?;
+        let slave = crate::darwin::pty::open_slave(master.as_fd(), flags | OpenptFlags::NOCTTY)?;
+        Ok(Self { master, slave })
+    }
+
+    /// Makes the already-open slave this process's controlling terminal.
+    ///
+    /// XNU's `TIOCSCTTY` has no reassignment form, so `steal` has no effect:
+    /// a terminal that is already another session's controlling terminal
+    /// fails with [`crate::Errno::PERM`].
+    ///
+    /// # Safety
+    ///
+    /// The caller must be a session leader without a controlling terminal,
+    /// keep this pair's slave open and exclusively owned for the ioctl, and
+    /// serialize the transition with all other session, process-group, and
+    /// terminal-state operations in the process. This process-global
+    /// operation is not suitable for an arbitrary multithreaded caller.
+    #[inline]
+    pub unsafe fn set_controlling_terminal(&self, steal: bool) -> Result<()> {
+        let _ = steal;
+        // SAFETY: the method contract establishes the live descriptor,
+        // session-leader, ownership, and process-state serialization rules.
+        unsafe { crate::darwin::pty::set_controlling_terminal(self.slave.as_fd()) }
+    }
+}
+
+impl PtyPair {
+    /// Borrows the PTY master descriptor.
+    #[inline]
+    #[must_use]
+    pub fn master(&self) -> BorrowedFd<'_> {
+        self.master.as_fd()
+    }
+
+    /// Borrows the PTY slave descriptor.
+    #[inline]
+    #[must_use]
+    pub fn slave(&self) -> BorrowedFd<'_> {
+        self.slave.as_fd()
+    }
+
+    /// Transfers both descriptors out of the pair in master/slave order.
+    #[inline]
+    #[must_use]
+    pub fn into_parts(self) -> (OwnedFd, OwnedFd) {
+        let Self { master, slave } = self;
+        (master, slave)
+    }
 
     /// Creates a new session and assigns this pair's slave as its controlling
     /// terminal.
@@ -146,20 +235,21 @@ impl PtyPair {
     /// The caller must be an isolated, single-threaded execution context in
     /// which changing the calling process's session and controlling terminal
     /// is intentional. No other code may concurrently inspect or mutate
-    /// process groups, sessions, or terminal state. Linux `setsid` must be
+    /// process groups, sessions, or terminal state. `setsid` must be
     /// permitted for the caller (in particular, it must not already be a
     /// process-group leader), and `steal` has the authority requirements
     /// documented by [`Self::set_controlling_terminal`]. If the ioctl fails
     /// after `setsid` succeeds, the new session remains in effect.
     #[inline]
     pub unsafe fn establish_session_and_controlling_terminal(&self, steal: bool) -> Result<()> {
-        crabc_core::process::setsid()?;
+        os_process::setsid()?;
         // SAFETY: this method's documented caller obligations are exactly
         // those required by the constituent controlling-terminal operation.
         unsafe { self.set_controlling_terminal(steal) }
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Opens a new pseudoterminal master.
 #[inline]
 pub fn openpt(flags: OpenptFlags) -> Result<OwnedFd> {
@@ -169,6 +259,7 @@ pub fn openpt(flags: OpenptFlags) -> Result<OwnedFd> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Validates the Linux devpts grant associated with a PTY master.
 #[inline]
 pub fn grantpt<Fd: AsFd>(fd: Fd) -> Result<()> {
@@ -176,6 +267,7 @@ pub fn grantpt<Fd: AsFd>(fd: Fd) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Unlocks the slave side of a pseudoterminal.
 #[inline]
 pub fn unlockpt<Fd: AsFd>(fd: Fd) -> Result<()> {
@@ -192,6 +284,7 @@ pub fn unlockpt<Fd: AsFd>(fd: Fd) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Returns the slave device name into caller-provided uninitialized storage.
 ///
 /// The returned [`CStr`] borrows `buffer`, includes its trailing NUL, and is
@@ -206,6 +299,7 @@ pub fn ptsname_into<'buffer, Fd: AsFd>(
     ptsname_raw(number, buffer)
 }
 
+#[cfg(target_os = "linux")]
 /// `ptsname_r(fd)` with an owned result.
 ///
 /// The supplied vector is cleared and reused when possible. Unlike the C
@@ -233,6 +327,7 @@ pub fn ptsname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
     Ok(unsafe { CString::from_vec_with_nul_unchecked(path) })
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn open_peer_noctty<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd> {
     let fd = fd.as_fd();
@@ -250,6 +345,7 @@ fn open_peer_noctty<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn ptsname_raw<'buffer>(
     number: i32,
@@ -290,6 +386,7 @@ fn ptsname_raw<'buffer>(
     Ok(unsafe { CStr::from_bytes_with_nul_unchecked(bytes) })
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn pty_number<Fd: AsFd>(fd: Fd) -> Result<i32> {
     let mut number = 0_i32;

@@ -5,6 +5,29 @@
 //! Linux's `TCGETS`/`TCSETS*` ioctls consume the older 19-byte kernel
 //! layout. The conversion remains local to this module rather than leaking a
 //! C ABI cast into Rust callers.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem's `tcgetattr` family, `ttyname_r`
+//! and the `TIOC*` window-size and exclusive-mode ioctls. [`Termios`],
+//! [`SpecialCodes`], [`SpecialCodeIndex`], [`QueueSelector`] and [`Action`]
+//! carry Darwin's layout and values; [`OptionalActions`] and [`Winsize`]
+//! are the same on both targets. Behavior that differs from Linux:
+//!
+//! - [`SpecialCodes`] has Darwin's twenty entries, and a disabled code is
+//!   `0xff` (`_POSIX_VDISABLE`) rather than zero. [`SpecialCodeIndex`] has
+//!   no `VSWTC` and adds `VDSUSP` and `VSTATUS`.
+//! - Speeds are stored as numeric rates, so the speed setters accept any
+//!   rate and the terminal driver judges it when [`tcsetattr`] applies the
+//!   configuration. An input rate of zero reads back as the output rate.
+//! - [`ttyname_into`] and `ttyname` use libSystem `ttyname_r` instead of
+//!   Linux's procfs link.
+//! - [`ioctl_tiocexcl`] does not stop an unprivileged process from opening
+//!   a pseudoterminal slave again.
+//! - A pseudoterminal master rejects terminal requests with
+//!   [`crate::Errno::NOTTY`] until its slave has been opened once.
+//! - Terminal operations on `/dev/null` fail with [`crate::Errno::NODEV`]
+//!   instead of [`crate::Errno::NOTTY`].
 
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
@@ -15,30 +38,64 @@ use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crate::fs::{self, FileType};
+#[cfg(any(target_os = "linux", feature = "alloc"))]
+use crate::fs;
+#[cfg(target_os = "linux")]
+use crate::fs::FileType;
+#[cfg(target_os = "linux")]
 use crate::process::Pid;
-use crate::{AsFd, Errno, Result};
+#[cfg(any(target_os = "linux", feature = "alloc"))]
+use crate::Errno;
+use crate::{AsFd, Result};
 
+#[cfg(target_os = "macos")]
+use crate::darwin::termios::ttyname_raw;
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::termios::{
+    ioctl_tiocexcl, ioctl_tiocnxcl, tcdrain, tcflow, tcflush, tcgetattr, tcgetpgrp, tcgetsid,
+    tcgetwinsize, tcsendbreak, tcsetattr, tcsetpgrp, tcsetwinsize, Action, QueueSelector,
+    SpecialCodeIndex, SpecialCodes, Termios,
+};
+
+#[cfg(target_os = "linux")]
 const TCGETS: u32 = 0x5401;
+#[cfg(target_os = "linux")]
 const TCSETS: u32 = 0x5402;
+#[cfg(target_os = "linux")]
 const TCSBRK: u32 = 0x5409;
+#[cfg(target_os = "linux")]
 const TCXONC: u32 = 0x540a;
+#[cfg(target_os = "linux")]
 const TCFLSH: u32 = 0x540b;
+#[cfg(target_os = "linux")]
 const TIOCEXCL: u32 = 0x540c;
+#[cfg(target_os = "linux")]
 const TIOCNXCL: u32 = 0x540d;
+#[cfg(target_os = "linux")]
 const TIOCGPGRP: u32 = 0x540f;
+#[cfg(target_os = "linux")]
 const TIOCSPGRP: u32 = 0x5410;
+#[cfg(target_os = "linux")]
 const TIOCGWINSZ: u32 = 0x5413;
+#[cfg(target_os = "linux")]
 const TIOCSWINSZ: u32 = 0x5414;
+#[cfg(target_os = "linux")]
 const TIOCGSID: u32 = 0x5429;
 
+#[cfg(target_os = "linux")]
 const PROC_SELF_FD_PREFIX: &[u8] = b"/proc/self/fd/";
+#[cfg(target_os = "linux")]
 const PROC_SELF_FD_BUFFER_LEN: usize = 25;
 
+#[cfg(target_os = "linux")]
 const CBAUD: u32 = 0x100f;
+#[cfg(target_os = "linux")]
 const CIBAUD: u32 = 0x100f_0000;
+#[cfg(target_os = "linux")]
 const IBSHIFT: u32 = 16;
 
+#[cfg(target_os = "linux")]
 /// A Linux terminal configuration.
 #[derive(Clone, Debug)]
 pub struct Termios {
@@ -57,6 +114,7 @@ pub struct Termios {
     output_speed: u32,
 }
 
+#[cfg(target_os = "linux")]
 /// The private Linux/x86-64 record consumed by `TCGETS`/`TCSETS*`.
 ///
 /// Linux/x86-64 uses exactly four `u32` flags, one line-discipline byte, and
@@ -76,14 +134,23 @@ struct KernelTermios {
     special_codes: [u8; 19],
 }
 
+#[cfg(target_os = "linux")]
 const _: [(); 36] = [(); core::mem::size_of::<KernelTermios>()];
+#[cfg(target_os = "linux")]
 const _: [(); 4] = [(); core::mem::align_of::<KernelTermios>()];
+#[cfg(target_os = "linux")]
 const _: [(); 0] = [(); core::mem::offset_of!(KernelTermios, input_modes)];
+#[cfg(target_os = "linux")]
 const _: [(); 4] = [(); core::mem::offset_of!(KernelTermios, output_modes)];
+#[cfg(target_os = "linux")]
 const _: [(); 8] = [(); core::mem::offset_of!(KernelTermios, control_modes)];
+#[cfg(target_os = "linux")]
 const _: [(); 12] = [(); core::mem::offset_of!(KernelTermios, local_modes)];
+#[cfg(target_os = "linux")]
 const _: [(); 16] = [(); core::mem::offset_of!(KernelTermios, line_discipline)];
+#[cfg(target_os = "linux")]
 const _: [(); 17] = [(); core::mem::offset_of!(KernelTermios, special_codes)];
+#[cfg(target_os = "linux")]
 impl From<KernelTermios> for Termios {
     #[inline]
     fn from(kernel: KernelTermios) -> Self {
@@ -102,6 +169,7 @@ impl From<KernelTermios> for Termios {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Termios {
     #[inline]
     fn to_kernel(&self) -> KernelTermios {
@@ -116,6 +184,7 @@ impl Termios {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Termios {
     /// Sets this configuration to the POSIX raw-mode transformation.
     #[inline]
@@ -176,6 +245,7 @@ impl Termios {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// An array indexed by [`SpecialCodeIndex`] containing the 19 Linux terminal
 /// control bytes.
 ///
@@ -186,6 +256,7 @@ impl Termios {
 #[derive(Clone)]
 pub struct SpecialCodes(pub(crate) [u8; 19]);
 
+#[cfg(target_os = "linux")]
 impl core::ops::Index<SpecialCodeIndex> for SpecialCodes {
     type Output = u8;
 
@@ -195,6 +266,7 @@ impl core::ops::Index<SpecialCodeIndex> for SpecialCodes {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl core::ops::IndexMut<SpecialCodeIndex> for SpecialCodes {
     #[inline]
     fn index_mut(&mut self, index: SpecialCodeIndex) -> &mut Self::Output {
@@ -202,6 +274,7 @@ impl core::ops::IndexMut<SpecialCodeIndex> for SpecialCodes {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl core::fmt::Debug for SpecialCodes {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("SpecialCodes {")?;
@@ -224,7 +297,7 @@ impl core::fmt::Debug for SpecialCodes {
 }
 
 /// A newtype used by [`SpecialCodes`] debug output for readable control bytes.
-struct SpecialCode(u8);
+pub(crate) struct SpecialCode(pub(crate) u8);
 
 impl core::fmt::Debug for SpecialCode {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -241,10 +314,12 @@ impl core::fmt::Debug for SpecialCode {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Indices for use with [`Termios::special_codes`].
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SpecialCodeIndex(usize);
 
+#[cfg(target_os = "linux")]
 impl SpecialCodeIndex {
     #[inline]
     const fn from_raw(index: usize) -> Self {
@@ -287,6 +362,7 @@ impl SpecialCodeIndex {
     pub const VEOL2: Self = Self(16);
 }
 
+#[cfg(target_os = "linux")]
 impl core::fmt::Debug for SpecialCodeIndex {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
@@ -312,6 +388,7 @@ impl core::fmt::Debug for SpecialCodeIndex {
     }
 }
 
+#[cfg(target_os = "linux")]
 // The x86-64 ioctl representation is the legacy kernel record: four u32
 // flags, one line byte, and exactly 19 control bytes.
 const _: [(); 19] = [(); core::mem::size_of::<SpecialCodes>()];
@@ -325,6 +402,7 @@ pub enum OptionalActions {
     Flush = 2,
 }
 
+#[cfg(target_os = "linux")]
 /// Queue selection for [`tcflush`].
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(u32)]
@@ -334,6 +412,7 @@ pub enum QueueSelector {
     IOFlush = 2,
 }
 
+#[cfg(target_os = "linux")]
 /// Flow-control action for [`tcflow`].
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(u32)]
@@ -344,7 +423,8 @@ pub enum Action {
     IOn = 3,
 }
 
-/// Linux `struct winsize`.
+/// The terminal window size, `struct winsize`, which both targets lay out
+/// identically.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
 pub struct Winsize {
@@ -354,6 +434,7 @@ pub struct Winsize {
     pub ws_ypixel: u16,
 }
 
+#[cfg(target_os = "linux")]
 /// Obtains terminal attributes.
 #[inline]
 pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios> {
@@ -387,6 +468,7 @@ pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios> {
     Ok(termios)
 }
 
+#[cfg(target_os = "linux")]
 /// Updates terminal attributes.
 #[inline]
 pub fn tcsetattr<Fd: AsFd>(fd: Fd, action: OptionalActions, termios: &Termios) -> Result<()> {
@@ -404,6 +486,7 @@ pub fn tcsetattr<Fd: AsFd>(fd: Fd, action: OptionalActions, termios: &Termios) -
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Returns the terminal window size.
 #[inline]
 pub fn tcgetwinsize<Fd: AsFd>(fd: Fd) -> Result<Winsize> {
@@ -425,6 +508,7 @@ pub fn tcgetwinsize<Fd: AsFd>(fd: Fd) -> Result<Winsize> {
     Ok(size)
 }
 
+#[cfg(target_os = "linux")]
 /// Updates the terminal window size.
 #[inline]
 pub fn tcsetwinsize<Fd: AsFd>(fd: Fd, size: Winsize) -> Result<()> {
@@ -441,6 +525,7 @@ pub fn tcsetwinsize<Fd: AsFd>(fd: Fd, size: Winsize) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Enables exclusive mode on a terminal.
 ///
 /// While exclusive mode is enabled, subsequent unprivileged opens of the
@@ -457,6 +542,7 @@ pub fn ioctl_tiocexcl<Fd: AsFd>(fd: Fd) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Disables exclusive mode on a terminal.
 #[inline]
 pub fn ioctl_tiocnxcl<Fd: AsFd>(fd: Fd) -> Result<()> {
@@ -468,6 +554,7 @@ pub fn ioctl_tiocnxcl<Fd: AsFd>(fd: Fd) -> Result<()> {
     }
     Ok(())
 }
+#[cfg(target_os = "linux")]
 /// Returns the terminal foreground process group.
 #[inline]
 pub fn tcgetpgrp<Fd: AsFd>(fd: Fd) -> Result<Pid> {
@@ -475,6 +562,7 @@ pub fn tcgetpgrp<Fd: AsFd>(fd: Fd) -> Result<Pid> {
     ioctl_get_pid(fd, TIOCGPGRP)
 }
 
+#[cfg(target_os = "linux")]
 /// Sets the terminal foreground process group.
 #[inline]
 pub fn tcsetpgrp<Fd: AsFd>(fd: Fd, pgrp: Pid) -> Result<()> {
@@ -487,6 +575,7 @@ pub fn tcsetpgrp<Fd: AsFd>(fd: Fd, pgrp: Pid) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Returns the session associated with the controlling terminal.
 #[inline]
 pub fn tcgetsid<Fd: AsFd>(fd: Fd) -> Result<Pid> {
@@ -494,6 +583,7 @@ pub fn tcgetsid<Fd: AsFd>(fd: Fd) -> Result<Pid> {
     ioctl_get_pid(fd, TIOCGSID)
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a terminal PID-like result without ever forming a Rust value from
 /// the output buffer until Linux reports success. Linux uses zero to mean
 /// “no foreground group” for some PTY states; that value cannot be represented
@@ -533,11 +623,12 @@ pub fn ttyname_into<'buffer, Fd: AsFd>(
     buffer: &'buffer mut [MaybeUninit<u8>],
 ) -> Result<&'buffer CStr> {
     let length = ttyname_raw(fd.as_fd(), buffer)?;
-    // SAFETY: `ttyname_raw` initialized exactly `length + 1` bytes and wrote
-    // the final NUL after validating the pathname's device and inode.
+    // SAFETY: `ttyname_raw` initialized `length` validated pathname bytes and
+    // the NUL after them.
     let bytes = unsafe { slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), length + 1) };
-    // SAFETY: `ttyname_raw` wrote one trailing NUL, and Linux symlink targets
-    // cannot contain an embedded NUL byte.
+    // SAFETY: `ttyname_raw` wrote one trailing NUL, and the name has no
+    // interior NUL: a Linux symlink target cannot contain one, and the Darwin
+    // length stops at the first NUL.
     Ok(unsafe { CStr::from_bytes_with_nul_unchecked(bytes) })
 }
 
@@ -565,8 +656,8 @@ pub fn ttyname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
                 // SAFETY: `ttyname_raw` initialized `length` pathname bytes
                 // and one trailing NUL in the vector's spare capacity.
                 unsafe { buffer.set_len(length + 1) };
-                // SAFETY: the validated Linux pathname has exactly one final
-                // NUL and no interior NUL bytes.
+                // SAFETY: the validated pathname has exactly one final NUL
+                // and no interior NUL bytes.
                 return Ok(unsafe { CString::from_vec_with_nul_unchecked(buffer) });
             }
             Err(error) => return Err(error),
@@ -574,6 +665,7 @@ pub fn ttyname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Implements the shared ttyname validation and pathname read for both the
 /// caller-buffered and allocating APIs. The returned length excludes NUL.
 fn ttyname_raw(fd: crate::BorrowedFd<'_>, buffer: &mut [MaybeUninit<u8>]) -> Result<usize> {
@@ -612,6 +704,7 @@ fn ttyname_raw(fd: crate::BorrowedFd<'_>, buffer: &mut [MaybeUninit<u8>]) -> Res
     Ok(length)
 }
 
+#[cfg(target_os = "linux")]
 fn proc_self_fd_path<'buffer>(
     fd: crate::RawFd,
     buffer: &'buffer mut [u8; PROC_SELF_FD_BUFFER_LEN],
@@ -644,27 +737,32 @@ fn proc_self_fd_path<'buffer>(
     Ok(unsafe { CStr::from_bytes_with_nul_unchecked(&buffer[..length + 1]) })
 }
 
+#[cfg(target_os = "linux")]
 /// Waits for terminal output to drain.
 #[inline]
 pub fn tcdrain<Fd: AsFd>(fd: Fd) -> Result<()> {
     ioctl_value(fd, TCSBRK, 1)
 }
+#[cfg(target_os = "linux")]
 /// Flushes selected terminal queues.
 #[inline]
 pub fn tcflush<Fd: AsFd>(fd: Fd, queue: QueueSelector) -> Result<()> {
     ioctl_value(fd, TCFLSH, queue as i32)
 }
+#[cfg(target_os = "linux")]
 /// Applies terminal flow control.
 #[inline]
 pub fn tcflow<Fd: AsFd>(fd: Fd, action: Action) -> Result<()> {
     ioctl_value(fd, TCXONC, action as i32)
 }
+#[cfg(target_os = "linux")]
 /// Sends a terminal break using Linux's implementation-defined duration.
 #[inline]
 pub fn tcsendbreak<Fd: AsFd>(fd: Fd) -> Result<()> {
     ioctl_value(fd, TCSBRK, 0)
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn ioctl_value<Fd: AsFd>(fd: Fd, request: u32, value: i32) -> Result<()> {
     let fd = fd.as_fd();
@@ -676,6 +774,7 @@ fn ioctl_value<Fd: AsFd>(fd: Fd, request: u32, value: i32) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn speed_code(speed: u32) -> Option<u32> {
     const SPEEDS: &[(u32, u32)] = &[
         (0, 0),
@@ -700,6 +799,7 @@ fn speed_code(speed: u32) -> Option<u32> {
         .find_map(|&(rate, code)| (rate == speed).then_some(code))
 }
 
+#[cfg(target_os = "linux")]
 fn decode_speed(code: u32) -> Option<u32> {
     const SPEEDS: [u32; 16] = [
         0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400,

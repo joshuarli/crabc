@@ -19,7 +19,9 @@
 //! clocks. It ports clock reads, resolutions and `clock_settime`,
 //! [`nanosleep`], the wall-clock and realtime-millisecond reads,
 //! [`process_cpu_time`], the interval timers with [`alarm`] and [`ualarm`],
-//! and the pure UTC calendar conversions. Behavior that differs from Linux:
+//! the pure UTC calendar conversions, and the alloc-gated `LocalCalendar`
+//! projection through explicit `timezone` rules. Behavior that
+//! differs from Linux:
 //!
 //! - [`ClockId`] has Darwin's values. Darwin's `CLOCK_MONOTONIC` keeps
 //!   counting while the system sleeps, like Linux's `CLOCK_BOOTTIME`;
@@ -42,8 +44,6 @@
 //! - `timerfd_create`, `timerfd_settime`, `timerfd_gettime`, `Itimerspec`,
 //!   `TimerfdFlags`, `TimerfdTimerFlags` and `TimerfdClockId`: Darwin has no
 //!   timer descriptors.
-//! - `LocalCalendar`: it projects through `timezone` rules, and `timezone`
-//!   is not ported.
 
 use core::convert::TryFrom;
 use core::mem::MaybeUninit;
@@ -74,7 +74,6 @@ pub use crate::darwin::time::{
 pub use crate::civil_time::{
     difftime, gmtime, timegm, CalendarTime, UnixTime, NANOS_PER_SECOND,
 };
-#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 pub use crate::civil_time::LocalCalendar;
 

@@ -14,6 +14,13 @@
 //! record just as a linear local-file lookup does. System snapshots are capped
 //! at one mebibyte so an unbounded administrator-controlled file cannot force
 //! unbounded native allocation.
+//!
+//! # Darwin
+//!
+//! The module is absent on macOS, so using it is a compile-time error, as
+//! decision 4 of CRAB-7 records. macOS accounts come from Open Directory,
+//! not `/etc/passwd` and `/etc/group`, so these snapshots would not describe
+//! the system.
 
 use alloc::string::String;
 use alloc::vec::Vec;

@@ -41,8 +41,8 @@
 //! removal, hard and symbolic links, `readlinkat`, `renameat_with` over
 //! `renameatx_np`, access checks, permission and ownership changes, the
 //! timestamp family, file length, position and synchronization, advisory
-//! locks, and the named temporary-file and temporary-directory family.
-//! Behavior that differs from Linux:
+//! locks, the named temporary-file and temporary-directory family, and
+//! physical canonicalization. Behavior that differs from Linux:
 //!
 //! - APFS stores names as UTF-8. Creating an entry whose name is not UTF-8
 //!   fails with `EILSEQ`, and looking one up finds nothing.
@@ -58,6 +58,17 @@
 //!   `O_PATH`, so the parent needs search permission.
 //! - `fsync` does not flush the storage device's own cache, and `sync` may
 //!   return before writeback completes.
+//! - [`canonicalize_into`] and `canonicalize` use Darwin's bounds: a
+//!   1024-byte `PATH_MAX` ([`CANONICAL_PATH_MAX`]) and 32 symbolic links
+//!   (`MAXSYMLINKS`). Darwin has no `O_PATH`, so each component is
+//!   classified with a no-follow `fstatat` and only the directories the walk
+//!   enters, including through `..`, are opened, with `O_SEARCH`; each needs
+//!   search permission. A relative path from a working directory longer than
+//!   `PATH_MAX` fails with `ENAMETOOLONG`.
+//! - On a case-insensitive volume, the default for macOS, a canonical path
+//!   keeps the caller's spelling of each component, so two spellings of one
+//!   file canonicalize differently. Compare `st_dev` and `st_ino` to test
+//!   whether two paths name the same file.
 //!
 //! These items are absent on Darwin:
 //!
@@ -76,9 +87,6 @@
 //!   `statvfs` reports 32-bit block and file counts.
 //! - The extended-attribute family and `XattrFlags`: Darwin's interface has
 //!   position and option arguments and no attribute namespaces.
-//! - `canonicalize`, `canonicalize_into` and `CANONICAL_PATH_MAX`: the
-//!   algorithm and its bound encode Linux's 4096-byte `PATH_MAX` and
-//!   forty-link limit, where Darwin's are 1024 bytes and 32 links.
 
 #[cfg(feature = "alloc")]
 use alloc::{ffi::CString, string::String, vec::Vec};
@@ -86,7 +94,6 @@ use bitflags::bitflags;
 use crate::buffer::Buffer;
 use core::ffi::CStr;
 use core::mem::ManuallyDrop;
-#[cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
 use core::ptr;
@@ -3681,12 +3688,19 @@ pub fn readlink<P: PathArg, B: Into<Vec<u8>>>(path: P, reuse: B) -> Result<CStri
 /// bytes, while preserving arbitrary non-NUL bytes in those bytes.
 pub const CANONICAL_PATH_MAX: usize = 4096;
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+/// The Darwin pathname bound used by the native canonicalization operation.
+///
+/// Darwin's `PATH_MAX` is 1024 bytes including the terminating NUL, so the
+/// operation accepts and returns at most 1023 pathname bytes.
+pub const CANONICAL_PATH_MAX: usize = crate::darwin::sys::PATH_MAX;
+
 const CANONICAL_PENDING_CAPACITY: usize = CANONICAL_PATH_MAX * 2;
 #[cfg(target_os = "linux")]
 const CANONICAL_MAX_SYMLINKS: usize = 40;
+#[cfg(target_os = "macos")]
+const CANONICAL_MAX_SYMLINKS: usize = crate::darwin::sys::MAXSYMLINKS;
 
-#[cfg(target_os = "linux")]
 /// Resolves a pathname to an absolute, byte-preserving physical pathname.
 ///
 /// This is the allocation-free caller-buffered equivalent of [`canonicalize`].
@@ -3726,7 +3740,6 @@ pub fn canonicalize_into<P: PathArg, Buf: Buffer<u8>>(
     unsafe { Ok(output.assume_init(initialized)) }
 }
 
-#[cfg(target_os = "linux")]
 /// Resolves a pathname to an owned, NUL-terminated physical pathname.
 ///
 /// This alloc-enabled spelling is useful when the result must outlive the
@@ -3747,14 +3760,12 @@ pub fn canonicalize<P: PathArg>(path: P) -> Result<CString> {
     })
 }
 
-#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 #[inline]
 fn canonical_path_bytes<P: PathArg>(path: P) -> Result<Vec<u8>> {
     path.into_with_c_str(|path| Ok(path.to_bytes().to_vec()))
 }
 
-#[cfg(target_os = "linux")]
 /// Runs `f` with a canonical pathname assembled in a fixed, no-alloc
 /// workspace. Keeping this workspace bounded makes the same resolution
 /// algorithm available to `--no-default-features` static probes and to the
@@ -3775,7 +3786,6 @@ where
     f(workspace.resolved())
 }
 
-#[cfg(target_os = "linux")]
 struct CanonicalWorkspace {
     pending: [u8; CANONICAL_PENDING_CAPACITY],
     pending_len: usize,
@@ -3789,7 +3799,6 @@ struct CanonicalWorkspace {
     symlink_count: usize,
 }
 
-#[cfg(target_os = "linux")]
 impl CanonicalWorkspace {
     fn new(path: &[u8]) -> Result<Self> {
         let mut pending = [0; CANONICAL_PENDING_CAPACITY];
@@ -3819,7 +3828,15 @@ impl CanonicalWorkspace {
             // Capture the process CWD before opening the stable directory fd.
             // As with `process::getcwd`, callers must coordinate concurrent
             // CWD changes while performing pathname work.
-            let (cwd, _) = crate::process::getcwd(&mut self.cwd)?;
+            let captured = crate::process::getcwd(&mut self.cwd);
+            // Darwin's getcwd reports a working directory longer than
+            // PATH_MAX as ERANGE rather than ENAMETOOLONG.
+            #[cfg(target_os = "macos")]
+            let captured = captured.map_err(|error| match error {
+                crate::Errno::RANGE => crate::Errno::NAMETOOLONG,
+                error => error,
+            });
+            let (cwd, _) = captured?;
             if cwd.is_empty() || cwd[cwd.len() - 1] != 0 {
                 return Err(crate::Errno::IO);
             }
@@ -3853,7 +3870,7 @@ impl CanonicalWorkspace {
                 continue;
             }
 
-            let candidate = self.open_component(&current, component, false)?;
+            let candidate = self.lookup_component(&current, component)?;
             let mut link_target = [MaybeUninit::<u8>::uninit(); CANONICAL_PATH_MAX];
             let link_length = self.readlink_component(&current, component, &mut link_target)?;
 
@@ -3883,12 +3900,11 @@ impl CanonicalWorkspace {
             }
 
             if !has_remaining && trailing_slash {
-                self.ensure_directory(&candidate)?;
+                self.ensure_entry_directory(&candidate)?;
             }
             self.append_component_range(start, end)?;
             if has_remaining {
-                self.ensure_directory(&candidate)?;
-                current = candidate;
+                current = self.descend(&current, &self.pending[start..end], candidate)?;
             }
         }
 
@@ -4044,6 +4060,24 @@ impl CanonicalWorkspace {
     fn open_current_directory(&self) -> Result<OwnedFd> {
         self.open_path(b".")
     }
+}
+
+/// Linux walks every component through an `O_PATH` descriptor, which needs no
+/// permission on the component itself.
+#[cfg(target_os = "linux")]
+impl CanonicalWorkspace {
+    fn lookup_component(&self, directory: &OwnedFd, component: &[u8]) -> Result<OwnedFd> {
+        self.open_component(directory, component, false)
+    }
+
+    fn ensure_entry_directory(&self, entry: &OwnedFd) -> Result<()> {
+        self.ensure_directory(entry)
+    }
+
+    fn descend(&self, _directory: &OwnedFd, _component: &[u8], entry: OwnedFd) -> Result<OwnedFd> {
+        self.ensure_directory(&entry)?;
+        Ok(entry)
+    }
 
     fn open_path(&self, path: &[u8]) -> Result<OwnedFd> {
         canonical_path_cstr(path, |path| {
@@ -4116,7 +4150,83 @@ impl CanonicalWorkspace {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Darwin has no `O_PATH`. A component is classified with a no-follow
+/// `fstatat`, and only a directory the walk enters is opened, with
+/// `O_SEARCH`, so each entered directory needs search permission.
+#[cfg(target_os = "macos")]
+impl CanonicalWorkspace {
+    fn lookup_component(&self, directory: &OwnedFd, component: &[u8]) -> Result<FileType> {
+        canonical_path_cstr(component, |component| {
+            let stat = statat(directory, component, AtFlags::SYMLINK_NOFOLLOW)?;
+            Ok(FileType::from_raw_mode(stat.st_mode))
+        })
+    }
+
+    fn ensure_entry_directory(&self, entry: &FileType) -> Result<()> {
+        if *entry == FileType::Directory {
+            Ok(())
+        } else {
+            Err(crate::Errno::NOTDIR)
+        }
+    }
+
+    fn descend(&self, directory: &OwnedFd, component: &[u8], entry: FileType) -> Result<OwnedFd> {
+        self.ensure_entry_directory(&entry)?;
+        self.open_component(directory, component, true)
+    }
+
+    fn open_path(&self, path: &[u8]) -> Result<OwnedFd> {
+        canonical_path_cstr(path, |path| {
+            openat(CWD, path, OFlags::SEARCH | OFlags::CLOEXEC, Mode::empty())
+        })
+    }
+
+    fn open_component<Fd: AsFd>(
+        &self,
+        directory: Fd,
+        component: &[u8],
+        directory_only: bool,
+    ) -> Result<OwnedFd> {
+        debug_assert!(directory_only, "Darwin opens only directories while canonicalizing");
+        canonical_path_cstr(component, |component| {
+            openat(
+                directory,
+                component,
+                OFlags::SEARCH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+        })
+    }
+
+    fn ensure_directory<Fd: AsFd>(&self, descriptor: Fd) -> Result<()> {
+        canonical_path_cstr(b".", |path| {
+            let _ = openat(descriptor, path, OFlags::SEARCH | OFlags::CLOEXEC, Mode::empty())?;
+            Ok(())
+        })
+    }
+
+    fn readlink_component(
+        &self,
+        directory: &OwnedFd,
+        component: &[u8],
+        target: &mut [MaybeUninit<u8>; CANONICAL_PATH_MAX],
+    ) -> Result<Option<usize>> {
+        canonical_path_cstr(component, |component| {
+            match readlinkat_raw(directory, component, &mut target[..]) {
+                Ok((initialized, _)) => {
+                    if initialized.len() >= CANONICAL_PATH_MAX {
+                        Err(crate::Errno::NAMETOOLONG)
+                    } else {
+                        Ok(Some(initialized.len()))
+                    }
+                }
+                Err(crate::Errno::INVAL) => Ok(None),
+                Err(error) => Err(error),
+            }
+        })
+    }
+}
+
 fn canonical_path_cstr<T, F>(path: &[u8], f: F) -> Result<T>
 where
     F: FnOnce(&CStr) -> Result<T>,

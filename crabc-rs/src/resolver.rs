@@ -4,6 +4,13 @@
 //! result values. It never reads `_res`, `h_errno`, or TLS `errno`, and it does
 //! not call `getaddrinfo`, `getnameinfo`, or `ToSocketAddrs`. The bounded DNS
 //! wire/exchange seam lives in `crabc-core::resolver`.
+//!
+//! # Darwin
+//!
+//! The module is absent on macOS, so using it is a compile-time error, as
+//! decision 4 of CRAB-7 records. macOS resolves names through mDNSResponder
+//! with its own policy, and the DNS seam lives in `crabc-core`, which is not
+//! built there.
 
 use alloc::borrow::ToOwned;
 use alloc::string::{String, ToString};
