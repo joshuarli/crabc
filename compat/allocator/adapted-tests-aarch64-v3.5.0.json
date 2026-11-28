@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-aarch64-test-adapter",
+  "profile": "linux-aarch64-private-test-adapter",
+  "scope": "Native Linux/AArch64 evidence for the private prefixed C test adapter over the bounded crabc-mimalloc engine. It is not a public mimalloc or crabc-libc allocator ABI.",
+  "target": {
+    "architecture": "aarch64",
+    "endianness": "little",
+    "interpreter": "ld-musl-aarch64.so.1",
+    "rust_target": "aarch64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "source_selection": {
+    "base_contract_path": "compat/allocator/adapted-tests-v3.5.0.json",
+    "base_source_selection_sha256": "5d68a87d5ec52420e27b102822a64efd20ad310f759e4830ab184152d1b95d2c",
+    "base_schema": "crabc-mimalloc-adapted-test-api",
+    "expected_adapter_symbol_count": 16,
+    "selected_test_count": 33,
+    "role": "Reuses only the reviewed pinned-source patch and selected C checks. The AArch64 production target, dependency, and public-API claims in the base contract are not inherited."
+  },
+  "compile_requirements": {
+    "adapter_feature": "test-adapter",
+    "compiler": "musl-gcc",
+    "expected_executable_dynamic_dependencies": [],
+    "expected_executable_elf": {
+      "class": "ELF64",
+      "endianness": "little",
+      "machine": "AArch64"
+    },
+    "expected_fixture_stdout": "allocator ok\n",
+    "language": "C11",
+    "link_command_shape": "musl-gcc <fixture-or-patched-source> <rust-staticlib> -L<owned-unwind-alias> -L<rust-target-self-contained> -lgcc_s -lc -o <native-binary>",
+    "link_order": "C fixture or selected patched source, adapter staticlib, then musl/system libraries",
+    "native_library_search_paths": [],
+    "native_static_libs": [
+      "-lgcc_s",
+      "-lc"
+    ],
+    "required_header": "crabc-mimalloc-test-adapter.h",
+    "rust_cdylib_supported": false,
+    "rust_target_self_contained_native_library": "libunwind.a",
+    "rust_staticlib_filename": "libcrabc_mimalloc_test_adapter.a"
+  },
+  "evidence_boundary": {
+    "canonical_native_host_provenance": {
+      "execution_mode": "native",
+      "host_architectures": [
+        "aarch64",
+        "arm64"
+      ]
+    },
+    "native_execution_required": true,
+    "private_prefixed_c_abi_only": true,
+    "public_crabc_allocator_integration": false,
+    "public_mi_exports": false
+  }
+}

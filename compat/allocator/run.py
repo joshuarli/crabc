@@ -12544,7 +12544,7 @@ def m1_foundations_report(
 
     c_oracle = shared_oracle.get("c_oracle")
     x86_64_contract = (
-        contract.get("schema") == "crabc-mimalloc-x86_64-m1-foundations"
+        contract.get("schema") in {"crabc-mimalloc-x86_64-m1-foundations", "crabc-mimalloc-aarch64-m1-foundations"}
     )
     if x86_64_contract:
         if (
@@ -12827,7 +12827,7 @@ def m1_foundations_report(
         bit_arithmetic_comparison = bit_arithmetic_differential["comparison"]
         bit_arithmetic_c_oracle = bit_arithmetic_differential["c_oracle"]
         bit_arithmetic_rust = bit_arithmetic_differential["rust"]
-        report["shared_evidence"]["x86_64_bit_arithmetic_c_rust_trace"] = {
+        report["shared_evidence"][f"{summary['target']['architecture']}_bit_arithmetic_c_rust_trace"] = {
             "c_compiler": bit_arithmetic_c_oracle["compiler"],
             "c_command": bit_arithmetic_c_oracle["command"],
             "c_raw_output": bit_arithmetic_c_oracle["raw_output"],
@@ -12938,13 +12938,13 @@ def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
 
 
 def _x86_64_source_contract_evidence(
-    shared_oracle: Mapping[str, Any], *, gate_name: str
+    shared_oracle: Mapping[str, Any], *, gate_name: str, architecture: str = "x86_64"
 ) -> dict[str, Any]:
     """Bind a native gate to the target-local checked source inventories."""
 
-    api_inventory = shared_oracle.get("x86_64_source_api_inventory")
-    api_coverage = shared_oracle.get("x86_64_api_coverage")
-    source_map = shared_oracle.get("x86_64_source_map")
+    api_inventory = shared_oracle.get(f"{architecture}_source_api_inventory")
+    api_coverage = shared_oracle.get(f"{architecture}_api_coverage")
+    source_map = shared_oracle.get(f"{architecture}_source_map")
     if (
         not isinstance(api_inventory, Mapping)
         or api_inventory.get("status") != "passed"
@@ -12961,12 +12961,12 @@ def _x86_64_source_contract_evidence(
         raise HarnessError(f"{gate_name} source-contract inventory scope changed")
     return {
         "api_coverage": {
-            "contract": artifact_record(X86_64_API_COVERAGE_CONTRACT),
+            "contract": artifact_record(X86_64_API_COVERAGE_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "aarch64-api-coverage-v3.5.0.json"),
             "overall_status": api_coverage["overall_status"],
             "status": api_coverage["status"],
         },
         "api_inventory": {
-            "contract": artifact_record(X86_64_API_CONTRACT),
+            "contract": artifact_record(X86_64_API_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "aarch64-api-v3.5.0.json"),
             "declaration_count": api_inventory["declaration_count"],
             "status": api_inventory["status"],
         },
@@ -12975,7 +12975,7 @@ def _x86_64_source_contract_evidence(
             "status is explicit and does not reduce this finite native evidence gate"
         ),
         "source_map": {
-            "contract": artifact_record(X86_64_SOURCE_MAP_CONTRACT),
+            "contract": artifact_record(X86_64_SOURCE_MAP_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "aarch64-source-map-v3.5.0.json"),
             "overall_status": source_map["overall_status"],
             "status": source_map["status"],
         },
@@ -12992,7 +12992,7 @@ def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dic
 
 
 def _m1_x86_64_static_image_baseline(
-    pin: Mapping[str, str], *, offline: bool
+    pin: Mapping[str, str], *, offline: bool, architecture: str = "x86_64"
 ) -> dict[str, Any]:
     """Build the x86-only C static-image reader without re-running quick.
 
@@ -13002,7 +13002,7 @@ def _m1_x86_64_static_image_baseline(
     different C boundary, not because x86 inherits the AArch64 reader.
     """
 
-    require_native_x86_64()
+    require_native_architecture(architecture)
     compiler = require_tool("musl-gcc")
     archive = fetch_archive(pin, offline)
     with temporary_directory(prefix="crabc-mimalloc-m1-x86_64-static-image-source-") as temporary:
@@ -13010,12 +13010,12 @@ def _m1_x86_64_static_image_baseline(
         return build_m1_static_image_probe(
             compiler,
             source,
-            M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT,
+            M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT if architecture == "x86_64" else ARTIFACT_ROOT / "aarch64/m1-foundations/static-image",
             CONFIGURATION_PROFILES["release"],
         )
 
 
-def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
+def run_x86_64_m1_foundations(*, offline: bool, architecture: str = "x86_64") -> dict[str, Any]:
     """Execute the native x86 foundations contract and write only x86 evidence.
 
     This path intentionally consumes the full native x86 C oracle rather
@@ -13023,27 +13023,31 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
     private x86 adapter baseline as well as the exact foundations C/Rust witnesses.
     """
 
-    execution_before = require_native_x86_64(require_image_identity=True)
+    execution_before = require_native_x86_64(require_image_identity=True) if architecture == "x86_64" else require_native_aarch64_evidence()
+    contract_path = M1_X86_64_FOUNDATIONS_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "m1-foundations-aarch64-v3.5.0.json"
+    report_path = M1_X86_64_FOUNDATIONS_REPORT if architecture == "x86_64" else REPORT_ROOT / "aarch64/m1-foundations-latest.json"
+    artifact_root = ARTIFACT_ROOT / architecture / "m1-foundations"
     source_before = m1_foundations_source_state()
     pin = load_pin()
-    contract = read_json(M1_X86_64_FOUNDATIONS_CONTRACT)
-    summary = validate_x86_64_m1_foundations_contract(contract, pin)
+    contract = read_json(contract_path)
+    summary = validate_x86_64_m1_foundations_contract(contract, pin) if architecture == "x86_64" else validate_x86_64_m1_foundations_contract(contract, pin, architecture)
     bounded_source_evidence = _m1_x86_64_bounded_source_definition_evidence(
         summary, pin, offline=offline
     )
     test_program = _m1_foundations_test_program(
-        summary["execution"], M1_X86_64_FOUNDATIONS_CARGO_TARGET
+        summary["execution"], M1_X86_64_FOUNDATIONS_CARGO_TARGET if architecture == "x86_64" else artifact_root / "cargo-target"
     )
     shared_oracle = run_milestone0(
         offline=offline,
         generate_contracts=False,
         check_only=False,
-        architecture="x86_64",
+        architecture=architecture,
         write_report=False,
+        **({} if architecture == "x86_64" else {"native_shared": True}),
     )
-    if shared_oracle.get("architecture_profile") != "x86_64-native-c-oracle":
+    if shared_oracle.get("architecture_profile") != f"{architecture}-native-c-oracle":
         raise HarnessError("native x86 M1 received a non-x86 shared oracle")
-    source_contract_evidence = _m1_x86_64_source_contract_evidence(shared_oracle)
+    source_contract_evidence = _m1_x86_64_source_contract_evidence(shared_oracle) if architecture == "x86_64" else _x86_64_source_contract_evidence(shared_oracle, gate_name="native aarch64 M1", architecture=architecture)
     c_oracle = shared_oracle.get("c_oracle")
     if not isinstance(c_oracle, Mapping):
         raise HarnessError("native x86 M1 shared oracle lacks C evidence")
@@ -13051,7 +13055,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
     if not isinstance(profiles, Mapping) or not isinstance(profiles.get("release"), dict):
         raise HarnessError("native x86 M1 shared oracle lacks its release profile")
     profiles["release"]["m1_static_image_probe"] = _m1_x86_64_static_image_baseline(
-        pin, offline=offline
+        pin, offline=offline, **({} if architecture == "x86_64" else {"architecture": architecture})
     )
 
     bits_component, bits_check = _m1_foundations_check_by_id(
@@ -13063,6 +13067,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         timeout_seconds=summary["execution"]["timeout_seconds"],
         test_program=test_program,
         check=bits_check,
+        **({} if architecture == "x86_64" else {"architecture": architecture, "artifact_root": artifact_root / "bits-arithmetic-trace"}),
     )
     raw_component, raw_check = _m1_foundations_check_by_id(
         summary, "raw-primitive-c-rust-trace"
@@ -13077,8 +13082,8 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
-        architecture="x86_64",
-        artifact_root=M1_X86_64_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT,
+        architecture=architecture,
+        artifact_root=M1_X86_64_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT if architecture == "x86_64" else artifact_root / "raw-primitive-trace",
         test_program=test_program,
         check=raw_check,
     )
@@ -13086,8 +13091,8 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
-        architecture="x86_64",
-        artifact_root=M1_X86_64_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+        architecture=architecture,
+        artifact_root=M1_X86_64_COMPILER_TLS_TRACE_ARTIFACT_ROOT if architecture == "x86_64" else artifact_root / "compiler-tls-trace",
         test_program=test_program,
         check=compiler_tls_check,
     )
@@ -13095,8 +13100,8 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         pin,
         offline=offline,
         timeout_seconds=summary["execution"]["timeout_seconds"],
-        architecture="x86_64",
-        artifact_root=M1_X86_64_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+        architecture=architecture,
+        artifact_root=M1_X86_64_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT if architecture == "x86_64" else artifact_root / "compiler-tls-same-tld-trace",
         test_program=test_program,
         check=same_tld_check,
     )
@@ -13131,8 +13136,8 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         "c_oracle": c_oracle,
         "compiler_tls_codegen": shared_oracle.get("compiler_tls_codegen"),
         "rust_release_layout": shared_oracle.get("rust_direct_engine"),
-        "x86_64_normal_engine_dependency_graph": shared_oracle.get(
-            "x86_64_engine_dependency_graph"
+        f"{architecture}_normal_engine_dependency_graph": shared_oracle.get(
+            f"{architecture}_engine_dependency_graph"
         ),
     }
     report = m1_foundations_report(
@@ -13146,22 +13151,23 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         compiler_tls_same_tld_differential=compiler_tls_same_tld_differential,
         focused_checks=focused_checks,
         bit_arithmetic_differential=bit_arithmetic_differential,
-        contract_path=M1_X86_64_FOUNDATIONS_CONTRACT,
-        report_schema="crabc-mimalloc-x86_64-m1-foundations-report",
+        contract_path=contract_path,
+        report_schema=f"crabc-mimalloc-{architecture}-m1-foundations-report",
         component_status_key="native_status",
         completion_ready_statuses=frozenset({M1_X86_64_FOUNDATIONS_COMPONENT_STATUS}),
-        dependency_graph_key="x86_64_normal_engine_dependency_graph",
+        dependency_graph_key=f"{architecture}_normal_engine_dependency_graph",
         unit_program=test_program,
     )
-    report["shared_evidence"]["x86-64-source-contract-inventories"] = source_contract_evidence
-    report["shared_evidence"]["x86-64-bounded-source-definitions"] = (
+    report["shared_evidence"][f"{'x86-64' if architecture == 'x86_64' else 'aarch64'}-source-contract-inventories"] = source_contract_evidence
+    report["shared_evidence"][f"{'x86-64' if architecture == 'x86_64' else 'aarch64'}-bounded-source-definitions"] = (
         bounded_source_evidence
     )
     report["source_contracts"] = source_contract_evidence
     report["native_execution_provenance"] = native_execution_attestation(
-        execution_before, require_native_x86_64(require_image_identity=True)
+        execution_before, require_native_x86_64(require_image_identity=True) if architecture == "x86_64" else require_native_aarch64_evidence(),
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
-    write_json(M1_X86_64_FOUNDATIONS_REPORT, report)
+    write_json(report_path, report)
     return report
 
 
@@ -18173,6 +18179,7 @@ def validate_x86_64_test_adapter_contract(
     source_contract: Mapping[str, Any],
     pin: Mapping[str, str],
     adapter_header: str,
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Validate the native x86-64 boundary around the reviewed API adapter source set.
 
@@ -18182,6 +18189,8 @@ def validate_x86_64_test_adapter_contract(
     AArch64 production assumptions by accident.
     """
 
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported adapter architecture: {architecture}")
     expected_fields = {
         "compile_requirements",
         "evidence_boundary",
@@ -18194,22 +18203,22 @@ def validate_x86_64_test_adapter_contract(
     }
     if set(contract) != expected_fields:
         raise HarnessError("native x86-64 test adapter contract fields changed")
-    if contract.get("format") != 1 or contract.get("schema") != "crabc-mimalloc-x86_64-test-adapter":
+    if contract.get("format") != 1 or contract.get("schema") != f"crabc-mimalloc-{architecture}-test-adapter":
         raise HarnessError("unsupported native x86-64 test adapter contract")
-    if contract.get("profile") != "linux-x86_64-private-test-adapter":
+    if contract.get("profile") != f"linux-{architecture}-private-test-adapter":
         raise HarnessError("native x86-64 test adapter profile changed")
     if contract.get("scope") != (
-        "Native Linux/x86-64 evidence for the private prefixed C test adapter "
+        f"Native Linux/{'x86-64' if architecture == 'x86_64' else 'AArch64'} evidence for the private prefixed C test adapter "
         "over the bounded crabc-mimalloc engine. It is not a public mimalloc "
         "or crabc-libc allocator ABI."
     ):
         raise HarnessError("native x86-64 test adapter scope changed")
 
     expected_target = {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "endianness": "little",
-        "interpreter": X86_64_INTERPRETER,
-        "rust_target": X86_64_RUST_TARGET,
+        "interpreter": f"ld-musl-{architecture}.so.1",
+        "rust_target": f"{architecture}-unknown-linux-musl",
         "system": "linux",
     }
     if contract.get("target") != expected_target:
@@ -18249,18 +18258,17 @@ def validate_x86_64_test_adapter_contract(
         "expected_executable_elf": {
             "class": "ELF64",
             "endianness": "little",
-            "machine": "Advanced Micro Devices X86-64",
+            "machine": "Advanced Micro Devices X86-64" if architecture == "x86_64" else "AArch64",
         },
         "expected_fixture_stdout": "allocator ok\n",
         "language": "C11",
         "link_command_shape": (
             "musl-gcc <fixture-or-patched-source> <rust-staticlib> "
-            "-L<rust-target-self-contained> "
-            "-lunwind -lc -o <native-binary>"
+            + ("-L<rust-target-self-contained> -lunwind -lc -o <native-binary>" if architecture == "x86_64" else "-L<owned-unwind-alias> -L<rust-target-self-contained> -lgcc_s -lc -o <native-binary>")
         ),
         "link_order": "C fixture or selected patched source, adapter staticlib, then musl/system libraries",
         "native_library_search_paths": [],
-        "native_static_libs": ["-lunwind", "-lc"],
+        "native_static_libs": ["-lunwind", "-lc"] if architecture == "x86_64" else ["-lgcc_s", "-lc"],
         "required_header": TEST_ADAPTER_HEADER.name,
         "rust_cdylib_supported": False,
         "rust_target_self_contained_native_library": "libunwind.a",
@@ -18272,7 +18280,7 @@ def validate_x86_64_test_adapter_contract(
     expected_boundary = {
         "canonical_native_host_provenance": {
             "execution_mode": "native",
-            "host_architectures": ["x86_64", "amd64"],
+            "host_architectures": ["x86_64", "amd64"] if architecture == "x86_64" else ["aarch64", "arm64"],
         },
         "native_execution_required": True,
         "private_prefixed_c_abi_only": True,
@@ -18284,9 +18292,9 @@ def validate_x86_64_test_adapter_contract(
 
     return {
         "expected_adapter_symbol_count": source_summary["expected_adapter_symbol_count"],
-        "profile": "linux-x86_64-private-test-adapter",
+        "profile": f"linux-{architecture}-private-test-adapter",
         "selected_test_count": source_summary["selected_test_count"],
-        "target": X86_64_RUST_TARGET,
+        "target": f"{architecture}-unknown-linux-musl",
     }
 
 def validate_adapted_stress_test_contract(
@@ -25692,6 +25700,7 @@ def rust_layout_probe(
     c_release_fundamental_trace: Mapping[str, int],
     *,
     rust_target: str | None = None,
+    native_shared: bool = False,
 ) -> dict[str, Any]:
     """Compare the direct Rust engine against one native C release profile.
 
@@ -25711,7 +25720,7 @@ def rust_layout_probe(
         "--locked",
     ]
     if rust_target is not None:
-        if rust_target == X86_64_RUST_TARGET:
+        if rust_target == X86_64_RUST_TARGET or native_shared:
             # The x86 evidence lane must not inherit a feature-selected
             # adapter/test artifact from the shared target volume. Its test
             # harness remains behavioral evidence, while the separate normal
@@ -25723,8 +25732,8 @@ def rust_layout_probe(
         "--",
         "--nocapture",
     ))
-    if rust_target == X86_64_RUST_TARGET:
-        with temporary_directory(prefix="crabc-mimalloc-direct-x86_64-") as temporary:
+    if rust_target == X86_64_RUST_TARGET or native_shared:
+        with temporary_directory(prefix=f"crabc-mimalloc-direct-{architecture}-") as temporary:
             environment = os.environ.copy()
             environment["CARGO_TARGET_DIR"] = str(Path(temporary) / "target")
             environment["CARGO_INCREMENTAL"] = "0"
@@ -25759,7 +25768,7 @@ def rust_layout_probe(
     }
     if rust_target is not None:
         result["target"] = rust_target
-    if rust_target == X86_64_RUST_TARGET:
+    if rust_target == X86_64_RUST_TARGET or native_shared:
         result["dependency_resolution"] = dict(X86_64_LOCKFILE_RESOLUTION)
         result["target_directory"] = "fresh temporary CARGO_TARGET_DIR"
     return result
@@ -26117,6 +26126,22 @@ def build_runtime_ticket_zero_adapter(
     }
 
 
+def prepare_aarch64_unwind_alias(artifact_root: Path) -> Path:
+    target = Path(rust_target_self_contained_native_library_search_path(
+        PRODUCTION_RUST_TARGET, "libunwind.a")) / "libunwind.a"
+    directory = artifact_root / "native-unwind"
+    directory.mkdir(parents=True, exist_ok=True)
+    alias = directory / "libgcc_s.a"
+    if alias.is_symlink():
+        if alias.resolve(strict=True) != target.resolve(strict=True):
+            raise HarnessError("native unwind alias targets unexpected library")
+    elif alias.exists():
+        raise HarnessError("native unwind alias is not a symlink")
+    else:
+        alias.symlink_to(target)
+    return directory
+
+
 def run_test_adapter_fixtures(
     compiler: str,
     source: Path,
@@ -26130,6 +26155,7 @@ def run_test_adapter_fixtures(
     expected_fixture_stdout: str = "allocator ok\n",
     readelf: str | None = None,
     native_executable_expectations: Mapping[str, Any] | None = None,
+    native_unwind_alias: Path | None = None,
 ) -> dict[str, Any]:
     """Build, audit, and run the fixture plus selected upstream API checks.
 
@@ -26148,6 +26174,10 @@ def run_test_adapter_fixtures(
     native_search_paths = native_static_library_search_paths(
         compile_requirements, rust_target=rust_target
     )
+    if native_unwind_alias is not None:
+        if rust_target != PRODUCTION_RUST_TARGET or native_unwind_alias != prepare_aarch64_unwind_alias(artifact_root):
+            raise HarnessError("native unwind alias is invalid")
+        native_search_paths.insert(0, str(native_unwind_alias))
     native_search_flags = [f"-L{path}" for path in native_search_paths]
     fixture_binary = artifact_root / "allocator-fixture-rust"
     fixture_command = [
@@ -27987,6 +28017,7 @@ def run_x86_64_oracle(
     adapter_contract: Mapping[str, Any],
     adapter_summary: Mapping[str, Any],
     adapter_patch: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run native x86-64 C-oracle and private test-adapter evidence.
 
@@ -27998,9 +28029,13 @@ def run_x86_64_oracle(
     target assumptions while leaving public allocator integration unclaimed.
     """
 
-    native_execution_provenance = require_native_x86_64()
-    engine_dependency_graph = x86_64_engine_dependency_graph()
-    normal_engine_artifact = x86_64_normal_engine_artifact()
+    native_execution_provenance = require_native_x86_64() if architecture == "x86_64" else require_native_aarch64_evidence()
+    engine_dependency_graph = x86_64_engine_dependency_graph() if architecture == "x86_64" else x86_64_engine_dependency_graph(architecture)
+    normal_engine_artifact = x86_64_normal_engine_artifact() if architecture == "x86_64" else x86_64_normal_engine_artifact(architecture)
+    target = f"{architecture}-unknown-linux-musl"
+    artifact_root = ARTIFACT_ROOT / architecture
+    report_root = REPORT_ROOT / architecture
+    adapter_path = X86_64_TEST_ADAPTER_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "adapted-tests-aarch64-v3.5.0.json"
     compiler = require_tool("musl-gcc")
     readelf = require_tool("readelf")
     nm = require_tool("nm")
@@ -28011,8 +28046,8 @@ def run_x86_64_oracle(
             source,
             name,
             flags,
-            artifact_root=X86_64_ORACLE_ARTIFACT_ROOT / "oracle",
-            architecture="x86_64",
+            artifact_root=artifact_root / "oracle",
+            architecture=architecture,
         )
         for name, flags in CONFIGURATION_PROFILES.items()
     }
@@ -28020,7 +28055,8 @@ def run_x86_64_oracle(
         profiles["release"]["layout"],
         profiles["release"]["single_thread_small_trace"]["record"],
         profiles["release"]["fundamental_trace"]["c_oracle"]["record"],
-        rust_target=X86_64_RUST_TARGET,
+        rust_target=target,
+        **({} if architecture == "x86_64" else {"native_shared": True}),
     )
     profiles["release"]["fundamental_trace"]["rust_comparison"] = rust_direct_engine[
         "single_thread_fundamental_trace"
@@ -28030,21 +28066,21 @@ def run_x86_64_oracle(
         archive,
         source,
         profiles,
-        architecture="x86_64",
-        target_metadata=X86_64_TARGET_METADATA,
+        architecture=architecture,
+        target_metadata=X86_64_TARGET_METADATA if architecture == "x86_64" else None,
     )
-    report["architecture_profile"] = "x86_64-native-c-oracle"
+    report["architecture_profile"] = f"{architecture}-native-c-oracle"
     report["native_execution_provenance"] = native_execution_provenance
-    report["x86_64_source_api_inventory"] = dict(source_api_inventory)
-    report["x86_64_api_coverage"] = dict(source_api_coverage)
-    report["x86_64_source_map"] = dict(source_map)
-    report["x86_64_engine_dependency_graph"] = engine_dependency_graph
-    report["x86_64_normal_engine_artifact"] = normal_engine_artifact
+    report[f"{architecture}_source_api_inventory"] = dict(source_api_inventory)
+    report[f"{architecture}_api_coverage"] = dict(source_api_coverage)
+    report[f"{architecture}_source_map"] = dict(source_map)
+    report[f"{architecture}_engine_dependency_graph"] = engine_dependency_graph
+    report[f"{architecture}_normal_engine_artifact"] = normal_engine_artifact
     # The unit suite exercises the direct no_std engine against this native C
     # oracle. It is distinct from the target-local private adapter below and
     # is not evidence for public allocator integration.
     report["rust_direct_engine"] = rust_direct_engine
-    report["compiler_tls_codegen"] = compiler_tls_codegen(architecture="x86_64")
+    report["compiler_tls_codegen"] = compiler_tls_codegen(architecture=architecture)
     adapter_compile_requirements = adapter_contract["compile_requirements"]
     assert isinstance(adapter_compile_requirements, dict)
     adapter_target = adapter_contract["target"]
@@ -28059,19 +28095,19 @@ def run_x86_64_oracle(
     }
     expected_adapter_symbols = adapter_source_contract["expected_adapter_symbols"]
     assert isinstance(expected_adapter_symbols, list)
-    adapter_artifact_root = X86_64_ORACLE_ARTIFACT_ROOT / "test-adapter"
+    adapter_artifact_root = artifact_root / "test-adapter"
     static_library, native_libraries, adapter_build = build_test_adapter(
         readelf,
         nm,
         adapter_contract,
-        rust_target=X86_64_RUST_TARGET,
-        architecture="x86_64",
+        rust_target=target,
+        architecture=architecture,
         artifact_root=adapter_artifact_root,
         expected_symbols=expected_adapter_symbols,
     )
-    report["x86_64_private_test_adapter"] = {
+    report[f"{architecture}_private_test_adapter"] = {
         "build": adapter_build,
-        "contract": artifact_record(X86_64_TEST_ADAPTER_CONTRACT),
+        "contract": artifact_record(adapter_path),
         "contract_summary": dict(adapter_summary),
         "evidence_boundary": adapter_contract["evidence_boundary"],
         "fixtures": run_test_adapter_fixtures(
@@ -28082,12 +28118,13 @@ def run_x86_64_oracle(
             adapter_source_contract,
             artifact_root=adapter_artifact_root,
             target_compile_requirements=adapter_compile_requirements,
-            rust_target=X86_64_RUST_TARGET,
+            rust_target=target,
             expected_fixture_stdout=str(
                 adapter_compile_requirements["expected_fixture_stdout"]
             ),
             readelf=readelf,
             native_executable_expectations=native_executable_expectations,
+            **({} if architecture == "x86_64" else {"native_unwind_alias": prepare_aarch64_unwind_alias(adapter_artifact_root)}),
         ),
         "source_selection": {
             "base_contract_path": relative(ADAPTED_TEST_CONTRACT),
@@ -28104,7 +28141,7 @@ def run_x86_64_oracle(
             "does not establish public crabc allocator integration or default promotion"
         ),
     }
-    output = X86_64_ORACLE_REPORT_ROOT / "latest.json"
+    output = report_root / "latest.json"
     write_json(output, report)
     return report
 
@@ -28122,6 +28159,7 @@ def run_milestone0(
     runtime_ticket_zero_watchdog_seconds: int = RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
     runtime_ticket_zero_stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
     write_report: bool = True,
+    native_shared: bool = False,
 ) -> dict[str, Any]:
     if architecture not in {"aarch64", "x86_64"}:
         raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
@@ -28137,12 +28175,12 @@ def run_milestone0(
     archive = fetch_archive(pin, offline)
     x86_64_source_map: Mapping[str, Any] | None = None
     x86_64_api_coverage: Mapping[str, Any] | None = None
-    if architecture == "x86_64":
-        x86_64_source_map = x86_64_source_map_contract(archive)
-        x86_64_api_coverage = x86_64_api_coverage_contract(archive)
+    if architecture == "x86_64" or native_shared:
+        x86_64_source_map = x86_64_source_map_contract(archive) if architecture == "x86_64" else x86_64_source_map_contract(archive, architecture)
+        x86_64_api_coverage = x86_64_api_coverage_contract(archive) if architecture == "x86_64" else x86_64_api_coverage_contract(archive, architecture)
     with temporary_directory(prefix="crabc-mimalloc-") as temporary:
         source = safe_extract(archive, Path(temporary), pin["archive_root"])
-        if architecture == "x86_64":
+        if architecture == "x86_64" or native_shared:
             if generate_contracts:
                 raise HarnessError(
                     "native x86-64 uses its checked-in source API inventory; "
@@ -28150,7 +28188,7 @@ def run_milestone0(
                 )
             assert x86_64_source_map is not None
             assert x86_64_api_coverage is not None
-            source_api_inventory = x86_64_source_api_inventory(archive)
+            source_api_inventory = x86_64_source_api_inventory(archive) if architecture == "x86_64" else x86_64_source_api_inventory(archive, architecture)
             adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
             adapted_summary = validate_adapted_test_contract(
                 adapted_contract,
@@ -28158,12 +28196,13 @@ def run_milestone0(
                 TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
                 source_selection_only=True,
             )
-            x86_64_adapter_contract = read_json(X86_64_TEST_ADAPTER_CONTRACT)
+            x86_64_adapter_contract = read_json(X86_64_TEST_ADAPTER_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "adapted-tests-aarch64-v3.5.0.json")
             x86_64_adapter_summary = validate_x86_64_test_adapter_contract(
                 x86_64_adapter_contract,
                 adapted_contract,
                 pin,
                 TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+                **({} if architecture == "x86_64" else {"architecture": architecture}),
             )
             adapted_patch = apply_and_verify_adapted_test_patch(
                 source,
@@ -28202,6 +28241,7 @@ def run_milestone0(
                 adapter_contract=x86_64_adapter_contract,
                 adapter_summary=x86_64_adapter_summary,
                 adapter_patch=adapted_patch,
+                **({} if architecture == "x86_64" else {"architecture": architecture}),
             )
         contracts = generated_contracts(source, pin)
         if generate_contracts:
@@ -28520,6 +28560,9 @@ def main() -> int:
             if arguments.architecture == "x86_64":
                 report = run_x86_64_m1_foundations(offline=arguments.offline)
                 report_path = M1_X86_64_FOUNDATIONS_REPORT
+            elif os.environ.get("CRABC_ALLOCATOR_EVIDENCE_ARCH") == "aarch64":
+                report = run_x86_64_m1_foundations(offline=arguments.offline, architecture="aarch64")
+                report_path = REPORT_ROOT / "aarch64/m1-foundations-latest.json"
             else:
                 report = run_m1_foundations(offline=arguments.offline)
                 report_path = M1_FOUNDATIONS_REPORT

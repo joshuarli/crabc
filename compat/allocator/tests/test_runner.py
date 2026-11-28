@@ -1394,6 +1394,17 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                 rust_target="riscv64gc-unknown-linux-musl",
             )
 
+    def test_native_aarch64_adapter_contract_requires_static_unwind_and_native_identity(self) -> None:
+        contract = RUNNER.read_json(RUNNER.ALLOCATOR_ROOT / "adapted-tests-aarch64-v3.5.0.json")
+        source = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        pin = RUNNER.load_pin()
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+        result = RUNNER.validate_x86_64_test_adapter_contract(contract, source, pin, header, "aarch64")
+        self.assertEqual(result["target"], "aarch64-unknown-linux-musl")
+        contract["compile_requirements"]["expected_executable_dynamic_dependencies"] = ["libgcc_s.so.1"]
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_x86_64_test_adapter_contract(contract, source, pin, header, "aarch64")
+
     def test_native_x86_64_adapter_contract_is_target_local_and_source_bound(self) -> None:
         source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
         x86_contract = RUNNER.read_json(RUNNER.X86_64_TEST_ADAPTER_CONTRACT)
