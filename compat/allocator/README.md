@@ -342,9 +342,9 @@ base pages. That VM has no hugetlbfs pool and no NUMA node topology, so the
 16 KiB and 64 KiB page sizes, `MAP_HUGETLB` success, 1-GiB pages and `mbind`
 placement remain open conditions.
 
-The x86 fragment's values are unchanged. The AArch64 fragment adds five
+The x86 fragment's values are unchanged. The AArch64 fragment adds six
 checks to the x86 inventory, each an unchanged pinned-C/Rust receiver that ran
-natively on arm. All five are pending on x86 until a native x86 run admits them
+natively on arm. All six are pending on x86 until a native x86 run admits them
 into the x86 fragment:
 
 - `process-thp-prctl-get-failure-c-rust-differential` and
@@ -362,6 +362,12 @@ into the x86 fragment:
   (`m2_policy_first_arena_trim_x86_64.py`) drives the policy-first
   `mi_arena_reserve` caller through a failed aligned-overmap prefix or suffix
   release.
+- `process-os-page-prefix-trim-c-rust-differential`
+  (`m2_process_os_page_prefix_trim_x86_64.{c,py}` and
+  `os::tests::emit_process_os_page_prefix_trim_trace`) fails the over-map
+  prefix release that `mi_arenas_page_alloc_fresh_area` reaches through
+  `mi_arena_os_alloc_aligned`, then the terminal release of the returned
+  middle. It is the prefix counterpart of the process-owned suffix receiver.
 
 ### AArch64 page-map component
 

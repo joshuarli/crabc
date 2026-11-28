@@ -400,6 +400,7 @@ ARENA_DESTROY_FAILURE_CHECK_IDS = (
     "huge-arena-destroy-failure-c-rust-differential",
 )
 POLICY_FIRST_ARENA_TRIM_CHECK_ID = "policy-first-arena-trim-c-rust-differential"
+OS_PAGE_PREFIX_TRIM_CHECK_ID = "process-os-page-prefix-trim-c-rust-differential"
 AARCH64_ADDED_CHECKS = (
     (
         THP_PRCTL_FAILURE_CHECK_IDS[0],
@@ -426,11 +427,17 @@ AARCH64_ADDED_CHECKS = (
         "c-rust-policy-first-arena-trim-differential",
         "compat/allocator/m2_policy_first_arena_trim_x86_64.py",
     ),
+    (
+        OS_PAGE_PREFIX_TRIM_CHECK_ID,
+        "c-rust-os-page-prefix-trim-differential",
+        "compat/allocator/m2_process_os_page_prefix_trim_x86_64.py",
+    ),
 )
 CHECKS_BY_ARCHITECTURE = {"x86_64": CHECKS, "aarch64": (*CHECKS, *AARCH64_ADDED_CHECKS)}
 ADDED_THP_POLICY_CHECK_IDS = {"x86_64": (), "aarch64": THP_PRCTL_FAILURE_CHECK_IDS}
 ADDED_TERMINAL_RELEASE_CHECK_IDS = {"x86_64": (), "aarch64": ARENA_DESTROY_FAILURE_CHECK_IDS}
 ADDED_POLICY_TRIM_CHECK_IDS = {"x86_64": (), "aarch64": (POLICY_FIRST_ARENA_TRIM_CHECK_ID,)}
+ADDED_OS_PAGE_PREFIX_TRIM_CHECK_IDS = {"x86_64": (), "aarch64": (OS_PAGE_PREFIX_TRIM_CHECK_ID,)}
 TRACE_CHECK_ID = CHECKS[0][0]
 TRACE_TARGET = CHECKS[0][2]
 
@@ -1145,6 +1152,21 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
             ),
         )
         for check_id in ADDED_POLICY_TRIM_CHECK_IDS[architecture]
+    )
+    terminal_release_bindings += tuple(
+        (
+            check_id,
+            (
+                "os-free-and-full-memory-id-release",
+                "os-regular-and-aligned-map-owners",
+                "unix-fixed-free-primitive",
+            ),
+            (
+                ("os-free-and-statistics-events", "partial-fixed-profile"),
+                ("os-primitive-regular-and-aligned-allocation", "partial-fixed-profile"),
+            ),
+        )
+        for check_id in ADDED_OS_PAGE_PREFIX_TRIM_CHECK_IDS[architecture]
     )
     for check_id, definition_ids, branch_ids in terminal_release_bindings:
         for definition_id in definition_ids:

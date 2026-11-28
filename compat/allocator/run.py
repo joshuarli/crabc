@@ -14771,6 +14771,25 @@ M2_AARCH64_VM_DIRECT_RECEIVERS = {
         "c_receipt": None,
         "scope": "pinned-c-rust-policy-first-arena-reserve-after-failed-aligned-overmap-prefix-or-suffix-release-warning-order-escaped-range-and-later-reservation",
     },
+    "process-os-page-prefix-trim-c-rust-differential": {
+        "artifact": "m2-process-os-page-prefix-trim",
+        "kind": "c-rust-os-page-prefix-trim-differential",
+        "target": "compat/allocator/m2_process_os_page_prefix_trim_x86_64.py",
+        "fixture": "compat/allocator/m2_process_os_page_prefix_trim_x86_64.c",
+        "rust_test": "os::tests::emit_process_os_page_prefix_trim_trace",
+        "trace_prefix": "m2.os_page_prefix_trim.",
+        "common": {
+            "memory_exact": 1, "prefix_exact": 1, "terminal_exact": 1, "middle_length": 192 * 1024,
+            "escaped_prefix_length": 256 * 1024 * 1024 - 4096, "reserved_claim": 192 * 1024,
+            "committed_claim": 64 * 1024, "mmap_claim": 2, "reserved_final": 0, "committed_final": 0,
+            "warning_fragments": 6, "warning_bodies": 3, "warning_order": 1, "warning_before_stats": 1,
+            "raw_middle": 1, "raw_prefix": 1, "raw_no_stats": 1,
+        },
+        "c_only": {},
+        "rust_only": {"prefix_still_live": 1},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-process-owned-fresh-os-page-failed-aligned-overmap-prefix-release-warning-before-accounting-escaped-prefix-and-terminal-raw-retry",
+    },
 }
 M2_VM_DIRECT_RECEIVERS = {
     "x86_64": {},
@@ -15576,6 +15595,7 @@ def _m2_x86_64_validated_component(
                 "c-rust-process-owned-protection-fault-differential",
                 "c-rust-arena-destroy-failure-differential",
                 "c-rust-policy-first-arena-trim-differential",
+                "c-rust-os-page-prefix-trim-differential",
                 "c-rust-second-arena-reset-advice-matrix",
                 "c-rust-process-arena-purge-differential",
                 "c-rust-arena-delayed-purge-failure-differential",
@@ -15827,6 +15847,7 @@ def _m2_x86_64_validated_component(
         elif raw_check.get("kind") in {
             "c-rust-arena-destroy-failure-differential",
             "c-rust-policy-first-arena-trim-differential",
+            "c-rust-os-page-prefix-trim-differential",
         }:
             receiver = M2_VM_DIRECT_RECEIVERS[architecture].get(raw_check["id"])
             if (
@@ -17404,8 +17425,12 @@ def _m2_vm_direct_receiver_check_records(
     src/os.c:240-258): pinned C leaks the failed range, and Rust retains a
     raw-retry owner for it. The policy-first trim receiver fails one aligned
     overmap release under `mi_arena_reserve` (src/arena.c:341-406,
-    src/os.c:303-430) and has no side-only fields. Each record names the
-    component that owns its checks.
+    src/os.c:303-430) and has no side-only fields. The fresh OS-page prefix
+    receiver fails the over-map prefix release that `mi_arenas_page_alloc_fresh_area`
+    reaches through `mi_arena_os_alloc_aligned` (src/arena.c:573-590, 796-850)
+    and then the terminal release; only Rust retains a raw-retry owner, which
+    leaves the escaped prefix live. Each record names the component that owns
+    its checks.
     """
 
     if receivers is None:
