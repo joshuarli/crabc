@@ -116,18 +116,18 @@ class NativeAbiExportsTests(unittest.TestCase):
                           static_missing=[static(name) for name in delta["missing_remove"]])
         self.seed(original)
         value = report(shared_extra=[dynamic("tgkill")],
-                       static_extra=[static(name) for name in delta["extra_add"] + delta["anonymous_extra"]],
-                       static_missing=[static(name) for name in delta["missing_add"] + delta["anonymous_missing"]])
+                       static_extra=[static(name) for name in delta["extra_add"]] + [static("anon.0b65.0")],
+                       static_missing=[static(name) for name in delta["missing_add"]])
         value["target"] = "aarch64-unknown-linux-musl"
         with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"):
             passed, output = self.check(value)
             self.assertTrue(passed, output)
-            value["triage"]["static_archive"]["extra"].append(static("anon.unreviewed"))
+            value["triage"]["static_archive"]["extra"].append(static("unreviewed_named"))
             passed, output = self.check(value)
             self.assertFalse(passed, output)
-            self.assertIn("anon.unreviewed", output)
+            self.assertIn("unreviewed_named", output)
             value["triage"]["static_archive"]["extra"].pop()
-            value["triage"]["static_archive"]["extra"].pop()
+            value["triage"]["static_archive"]["extra"].pop(0)
             passed, output = self.check(value)
             self.assertFalse(passed, output)
             self.assertIn("static_archive.extra", output)
@@ -136,34 +136,13 @@ class NativeAbiExportsTests(unittest.TestCase):
             self.assertFalse(passed, output)
             self.assertIn("shared_dynamic.extra", output)
 
-    def test_arm_update_recollects_only_anonymous_rosters(self) -> None:
-        delta = json.loads(exports.ARM_STATIC_DELTA.read_text())
-        original = report(shared_extra=[dynamic("tgkill")],
-                          static_extra=[static(name) for name in delta["extra_remove"]],
-                          static_missing=[static(name) for name in delta["missing_remove"]])
-        self.seed(original)
-        value = report(shared_extra=[dynamic("tgkill")],
-                       static_extra=[static(name) for name in delta["extra_add"]] + [static("anon.renamed.0.llvm.7")],
-                       static_missing=[static(name) for name in delta["missing_add"]])
+    def test_arm_update_refuses_native_arm_collection(self) -> None:
+        value = report()
         value["target"] = "aarch64-unknown-linux-musl"
-        path = self.root / "arm-report.json"
-        path.write_text(json.dumps(value))
-        arm_delta = self.root / "arm-delta.json"
-        arm_delta.write_text(json.dumps(delta))
-        with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"), \
-                patch.object(exports, "ARM_STATIC_DELTA", arm_delta):
-            self.assertFalse(self.check(value)[0])
-            exports.update(path, tracked_path=self.tracked_path)
-            updated = json.loads(arm_delta.read_text())
-            self.assertEqual(updated["anonymous_extra"], ["anon.renamed.0.llvm.7"])
-            self.assertEqual(updated["anonymous_missing"], [])
-            self.assertEqual({key: updated[key] for key in updated if not key.startswith("anonymous_")},
-                             {key: delta[key] for key in delta if not key.startswith("anonymous_")})
-            self.assertTrue(self.check(value)[0])
-            value["triage"]["static_archive"]["extra"].append(static("unreviewed_named"))
-            path.write_text(json.dumps(value))
-            with self.assertRaisesRegex(exports.ExportsError, "named export delta differs"):
-                exports.update(path, tracked_path=self.tracked_path)
+        self.write(value)
+        with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"):
+            with self.assertRaisesRegex(exports.ExportsError, "requires native x86 collection"):
+                exports.update(self.report_path, tracked_path=self.tracked_path)
 
     def test_new_static_extra_fails(self) -> None:
         self.seed(report(static_extra=[static("owned")]))
@@ -194,16 +173,15 @@ class NativeAbiExportsTests(unittest.TestCase):
         self.assertTrue(passed, output)
         self.assertNotIn("_Rchurn", self.tracked_path.read_text(encoding="utf-8"))
 
-    def test_llvm_promotion_suffix_of_anonymous_static_extra_is_ignored(self) -> None:
+    def test_anonymous_static_names_are_ignored(self) -> None:
         self.seed(report(static_extra=[static("owned"), static("anon.0b65.0.llvm.18065665657365612692")]))
-        passed, output = self.check(report(static_extra=[static("owned"), static("anon.0b65.0.llvm.17626645863537651630")]))
+        self.assertNotIn("anon.", self.tracked_path.read_text(encoding="utf-8"))
+        passed, output = self.check(report(static_extra=[static("owned"), static("anon.77aa.3"),
+                                                         static("anon.0b65.1.llvm.17626645863537651630")]))
         self.assertTrue(passed, output)
-        passed, output = self.check(report(static_extra=[static("owned"), static("anon.0b65.1.llvm.17626645863537651630")]))
+        passed, output = self.check(report(static_extra=[static("owned"), static("anonymous_named")]))
         self.assertFalse(passed, output)
-        self.assertIn("anon.0b65.1", output)
-        passed, output = self.check(report(static_extra=[static("owned")]))
-        self.assertFalse(passed, output)
-        self.assertIn("anon.0b65.0", output)
+        self.assertIn("anonymous_named", output)
 
     def test_measurement_differences_are_not_gated(self) -> None:
         self.seed(report(shared_extra=[dynamic("tgkill")]))

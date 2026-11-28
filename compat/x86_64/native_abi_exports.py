@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -24,8 +23,7 @@ TARGET = inventory.TARGET
 TRACKED_PATH = ROOT / "compat/x86_64/native-abi-exports.json"
 DYNAMIC_KEYS = ("name", "version", "version_default", "type", "binding", "visibility")
 DATA_TYPES = frozenset({"OBJECT", "TLS"})
-RUST_V0_PREFIX = "_R"
-LLVM_PROMOTION_SUFFIX = re.compile(r"\.llvm\.[0-9]+$")
+UNREVIEWED_STATIC_PREFIXES = ("_R", "anon.")
 DYNAMIC_CATEGORIES = (
     "extra", "missing", "compatibility_differences", "data_size_differences", "version_differences",
 )
@@ -70,10 +68,6 @@ def _dynamic_entry(row: object, description: str, *, from_report: bool) -> dict[
     return entry
 
 
-def _static_name(name: str) -> str:
-    return LLVM_PROMOTION_SUFFIX.sub("", name) if name.startswith("anon.") else name
-
-
 def _static_names(rows: object, description: str, *, from_report: bool) -> list[str]:
     require(isinstance(rows, list), f"{description} must be a list")
     if from_report:
@@ -84,7 +78,7 @@ def _static_names(rows: object, description: str, *, from_report: bool) -> list[
             names.append(row["name"])
         rows = names
     require(all(isinstance(name, str) and name for name in rows), f"{description} entries are malformed")
-    return sorted({_static_name(name) for name in rows if not name.startswith(RUST_V0_PREFIX)})
+    return sorted({name for name in rows if not name.startswith(UNREVIEWED_STATIC_PREFIXES)})
 
 
 def _objects(value: object, description: str, *, keys: frozenset[str] | None = None) -> list[dict[str, Any]]:
@@ -146,25 +140,20 @@ def differences(report_path: Path, *, tracked_path: Path | None = None) -> dict[
             delta = inventory.read_json(ARM_STATIC_DELTA, "reviewed native ARM static delta")
         except inventory.InventoryError as error:
             raise ExportsError(f"reviewed native ARM static delta is invalid: {error}") from error
-        keys = {"schema", "target", "extra_add", "extra_remove", "missing_add", "missing_remove",
-                "anonymous_extra", "anonymous_missing"}
+        keys = {"schema", "target", "extra_add", "extra_remove", "missing_add", "missing_remove"}
         require(type(delta) is dict and set(delta) == keys and delta["schema"] == 1
                 and delta["target"] == TARGET, "reviewed native ARM static delta contract drifted")
         for key in keys - {"schema", "target"}:
             rows = delta[key]
             require(type(rows) is list and all(type(name) is str and name for name in rows)
                     and rows == sorted(set(rows)), f"reviewed native ARM {key} roster differs")
-            if key.startswith("anonymous_"):
-                require(all(name.startswith("anon.") for name in rows), "reviewed ARM anonymous roster differs")
-            else:
-                require(all(not name.startswith("anon.") for name in rows), "reviewed ARM named roster differs")
+            require(not any(name.startswith(UNREVIEWED_STATIC_PREFIXES) for name in rows),
+                    "reviewed ARM named roster differs")
         for category in ("extra", "missing"):
             removed, added = set(delta[category + "_remove"]), set(delta[category + "_add"])
             baseline = set(tracked["static_archive"][category])
             require(removed <= baseline and not (added & baseline), f"reviewed x86 static {category} contract drifted")
-            baseline = {name for name in baseline if not name.startswith("anon.")}
-            anonymous = set(map(_static_name, delta["anonymous_" + category]))
-            tracked["static_archive"][category] = sorted((baseline - removed) | added | anonymous)
+            tracked["static_archive"][category] = sorted((baseline - removed) | added)
     changes = {}
     for group, categories in (("shared_dynamic", DYNAMIC_CATEGORIES), ("static_archive", STATIC_CATEGORIES)):
         for category in categories:
@@ -199,40 +188,7 @@ def check(report_path: Path, *, tracked_path: Path | None = None, stream: Any = 
     return False
 
 
-def update_arm_anonymous(report_path: Path, *, tracked_path: Path | None = None,
-                         delta_path: Path | None = None) -> Path:
-    """Re-collect only the reviewed ARM anonymous static rosters.
-
-    Anonymous constants are renamed by any libc change. Every named export,
-    dynamic entry and class difference must already match the reviewed delta;
-    otherwise this refuses and the named delta needs review.
-    """
-
-    require(TARGET == "aarch64-unknown-linux-musl", "reviewed ARM anonymous rosters require native ARM collection")
-    delta_path = ARM_STATIC_DELTA if delta_path is None else delta_path
-    raw = inventory.require_exact_keys(load_report(report_path).get("triage"), {"shared_dynamic", "static_archive", "disposition"},
-                                       "native ABI inventory triage")["static_archive"]
-    named_changes = {}
-    for category, change in differences(report_path, tracked_path=tracked_path).items():
-        kept = {side: [item for item in items if not (isinstance(item, str) and item.startswith("anon."))]
-                for side, items in change.items()}
-        if kept["added"] or kept["removed"]:
-            named_changes[category] = kept
-    require(not named_changes, "native ARM named export delta differs: " + ", ".join(sorted(named_changes)))
-    delta = inventory.read_json(delta_path, "reviewed native ARM static delta")
-    for category in ("extra", "missing"):
-        delta["anonymous_" + category] = sorted(
-            {row["name"] for row in raw[category] if row["name"].startswith("anon.")})
-    try:
-        delta_path.write_bytes((json.dumps(delta, sort_keys=True, indent=2) + "\n").encode("utf-8"))
-    except OSError as error:
-        raise ExportsError(f"cannot write reviewed native ARM static delta: {delta_path}") from error
-    return delta_path
-
-
 def update(report_path: Path, *, tracked_path: Path | None = None) -> Path:
-    if TARGET == "aarch64-unknown-linux-musl":
-        return update_arm_anonymous(report_path, tracked_path=tracked_path)
     require(TARGET == "x86_64-unknown-linux-musl", "reviewed x86 export delta requires native x86 collection")
     tracked_path = TRACKED_PATH if tracked_path is None else tracked_path
     tracked = {"schema": SCHEMA, "target": TARGET, **project(load_report(report_path))}
