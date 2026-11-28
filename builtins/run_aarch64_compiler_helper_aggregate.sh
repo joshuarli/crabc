@@ -130,12 +130,17 @@ record_command candidate-disassembly objdump --disassemble "$candidate"
 python3 - "$CONTRACT" "$WORK_DIR/raw/candidate-definitions.stdout" "$WORK_DIR/raw/candidate-disassembly.stdout" <<'PY'
 import re, sys
 names = open(sys.argv[1], encoding="utf-8").read().splitlines()
-definitions = {line.split()[-1] for line in open(sys.argv[2], encoding='utf-8') if line.split()}
-missing = sorted(set(names) - definitions)
+addresses = {}
+for line in open(sys.argv[2], encoding='utf-8'):
+    fields = line.split()
+    if len(fields) == 3:
+        addresses[fields[2]] = int(fields[0], 16)
+missing = sorted(set(names) - addresses.keys())
 if missing:
     raise SystemExit('candidate did not retain helper(s): ' + ', '.join(missing))
 text = open(sys.argv[3], encoding='utf-8', errors='replace').read()
-missing = [name for name in names if re.search(r'\bb(?:l)?\s+[^\n]*<' + re.escape(name) + r'>', text) is None]
+targets = {int(match.group(1), 16) for match in re.finditer(r'\bbl?\s+([0-9a-f]+)\s+<', text)}
+missing = [name for name in names if addresses[name] not in targets]
 if missing:
     raise SystemExit('candidate has no direct transfer to helper(s): ' + ', '.join(missing))
 PY
