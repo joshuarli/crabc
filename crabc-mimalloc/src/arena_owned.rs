@@ -741,6 +741,9 @@ impl ProcessArenaBacking {
     #[inline]
     pub(crate) fn registry(&self) -> &ArenaRegistry { &self.registry }
 
+    #[cfg(test)]
+    pub(crate) fn test_reserve_lock(&self) -> &PrivateLock { &self.reserve_lock }
+
     /// Checks that every installed child arena owner is bound to this exact
     /// VM policy/identity/configuration before a caller can search existing
     /// slices. An empty child group is admissible; its first installation

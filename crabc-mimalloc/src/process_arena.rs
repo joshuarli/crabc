@@ -5664,6 +5664,41 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    const FUTEX_SYSCALL: usize = 202;
+    #[cfg(target_arch = "aarch64")]
+    const FUTEX_SYSCALL: usize = 98;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn blocked_on_lock(tid: i32, lock: &crate::lock::PrivateLock) -> bool {
+        let Ok(line) = std::fs::read_to_string(std::format!("/proc/self/task/{tid}/syscall")) else {
+            return false;
+        };
+        let mut fields = line.split_ascii_whitespace();
+        let futex = fields.next().and_then(|number| number.parse::<usize>().ok())
+            == Some(FUTEX_SYSCALL);
+        let address = fields.next().and_then(|address|
+            usize::from_str_radix(address.trim_start_matches("0x"), 16).ok());
+        let start = core::ptr::from_ref(lock).addr();
+        futex && address.is_some_and(|address|
+            address >= start && address < start + core::mem::size_of_val(lock))
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn wait_for_reserve_waiters(
+        tids: &[core::sync::atomic::AtomicI32; 2], lock: &crate::lock::PrivateLock,
+    ) -> usize {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let waiters = tids.iter()
+                .filter(|tid| blocked_on_lock(tid.load(Ordering::Acquire), lock)).count();
+            if waiters == tids.len() || std::time::Instant::now() > deadline {
+                return waiters;
+            }
+            std::thread::yield_now();
+        }
+    }
+
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_concurrent_reserve_c_rust_trace() {
@@ -5742,9 +5777,13 @@ mod tests {
             core::sync::atomic::AtomicUsize::new(0)];
         let worker_found = [core::sync::atomic::AtomicBool::new(false),
             core::sync::atomic::AtomicBool::new(false)];
+        let worker_tids = [core::sync::atomic::AtomicI32::new(0),
+            core::sync::atomic::AtomicI32::new(0)];
         warnings.active.store(true, Ordering::Release);
-        let (registry_claimed, registry_order, both_claimed, both_second,
-            distinct_claims, low_slice, high_slice, first_claims_live,
+        let reserve_lock = backing.test_reserve_lock();
+        let held = reserve_lock.lock().expect("the test holds the source reserve lock");
+        let (reserve_waiters, registry_waiting, registry_claimed, registry_order, both_claimed,
+            both_second, distinct_claims, low_slice, high_slice, first_claims_live,
             mapped_both, after_claim, worker_released, second_base) =
             std::thread::scope(|scope| {
                 let mut threads = std::vec::Vec::new();
@@ -5755,7 +5794,9 @@ mod tests {
                     let arena = &worker_arenas[index];
                     let slice = &worker_slices[index];
                     let found = &worker_found[index];
+                    let tid = &worker_tids[index];
                     threads.push(scope.spawn(move || {
+                        tid.store(crabc_core::thread::gettid(), Ordering::Release);
                         start.wait();
                         let worker_search = ArenaSearch {
                             heap_sequence: 0, heap_count: 1, thread_sequence: 0,
@@ -5779,6 +5820,9 @@ mod tests {
                     }));
                 }
                 start.wait();
+                let reserve_waiters = wait_for_reserve_waiters(&worker_tids, reserve_lock);
+                let registry_waiting = backing.registry().count();
+                drop(held);
                 claimed.wait();
                 warnings.active.store(false, Ordering::Release);
                 let registry_claimed = backing.registry().count();
@@ -5821,9 +5865,9 @@ mod tests {
                 release.wait();
                 let worker_released = threads.into_iter().all(|thread|
                     thread.join().expect("each arena worker completes its release"));
-                (registry_claimed, registry_order, both_claimed, both_second,
-                    distinct_claims, low_slice, high_slice, first_claims_live,
-                    mapped_both, after_claim, worker_released, second_base)
+                (reserve_waiters, registry_waiting, registry_claimed, registry_order,
+                    both_claimed, both_second, distinct_claims, low_slice, high_slice,
+                    first_claims_live, mapped_both, after_claim, worker_released, second_base)
             });
         let reserved_delta = after_claim.vm.reserved_current - before.vm.reserved_current;
         let committed_delta = after_claim.vm.committed_current - before.vm.committed_current;
@@ -5862,6 +5906,8 @@ mod tests {
         let terminal_committed_delta = terminal.committed_current - before.vm.committed_current;
         for (field, value) in [
             ("first_full", i64::from(first_full)),
+            ("reserve_waiters", reserve_waiters as i64),
+            ("registry_waiting", registry_waiting as i64),
             ("registry_claimed", registry_claimed as i64),
             ("registry_order", i64::from(registry_order)),
             ("both_claimed", i64::from(both_claimed)),
@@ -5884,7 +5930,8 @@ mod tests {
         ] {
             std::println!("m2.second_concurrent.{field}={value}");
         }
-        assert!(first_full && registry_order && both_claimed && both_second
+        assert!(first_full && reserve_waiters == 2 && registry_waiting == 1
+            && registry_claimed == 2 && registry_order && both_claimed && both_second
             && distinct_claims && first_claims_live && mapped_both && worker_released
             && initial_released && retained_both && terminal_unmapped
             && terminal_registry == 0);

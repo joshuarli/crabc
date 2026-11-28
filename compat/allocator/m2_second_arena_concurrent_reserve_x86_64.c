@@ -1,12 +1,19 @@
-/* Pinned source worker claims after a regular arena has no fitting span. */
+/* Pinned source worker claims after a regular arena has no fitting span.
+   `mi_arenas_try_alloc` reads `arena_count` after its failed search and
+   before `arena_reserve_lock` (src/arena.c:553-562). The main thread holds
+   that lock until both workers block on it, so both observe one arena and
+   exactly one reserves the second. */
 #define _GNU_SOURCE 1
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "static.c"
@@ -19,6 +26,7 @@ typedef struct worker_s {
   void* claim;
   mi_memid_t id;
   bool released;
+  _Atomic long tid;
 } worker_t;
 
 static owner_t owner;
@@ -36,6 +44,7 @@ static void warning(const char* message, void* argument) {
 static void* claim_worker(void* argument) {
   worker_t* worker = (worker_t*)argument;
   worker->id = _mi_memid_none();
+  atomic_store_explicit(&worker->tid, syscall(SYS_gettid), memory_order_release);
   pthread_barrier_wait(worker->start);
   worker->claim = mi_arenas_try_alloc(&owner.heap, 256, MI_ARENA_SLICE_ALIGN,
                                       false, true, NULL, 0, -1, &worker->id);
@@ -51,6 +60,38 @@ static void* claim_worker(void* argument) {
 
 static void emit(const char* field, long long value) {
   printf("m2.second_concurrent.%s=%lld\n", field, value);
+}
+
+static bool blocked_on(long tid, const void* lock, size_t size) {
+  char path[64];
+  char line[512];
+  snprintf(path, sizeof path, "/proc/self/task/%ld/syscall", tid);
+  FILE* const input = fopen(path, "r");
+  if (input == NULL) return false;
+  const bool read = fgets(line, sizeof line, input) != NULL;
+  fclose(input);
+  if (!read) return false;
+  char* cursor = NULL;
+  const long number = strtol(line, &cursor, 10);
+  if (cursor == line || number != SYS_futex) return false;
+  const uintptr_t address = (uintptr_t)strtoull(cursor, NULL, 16);
+  return address >= (uintptr_t)lock && address < (uintptr_t)lock + size;
+}
+
+static size_t wait_for_reserve_waiters(const worker_t* workers, const mi_lock_t* lock) {
+  struct timespec start;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  for (;;) {
+    size_t waiters = 0;
+    for (size_t i = 0; i < 2; i++) {
+      waiters += blocked_on(atomic_load_explicit(&workers[i].tid, memory_order_acquire), lock, sizeof(*lock));
+    }
+    if (waiters == 2) return waiters;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec - start.tv_sec > 30) return waiters;
+    sched_yield();
+  }
 }
 
 static bool live_page(void* base) {
@@ -113,10 +154,14 @@ int main(void) {
   };
   pthread_t threads[2];
   atomic_store_explicit(&capture_warnings, true, memory_order_release);
+  mi_lock_acquire(&owner.subproc.arena_reserve_lock);
   for (size_t i = 0; i < 2; i++) {
     if (pthread_create(&threads[i], NULL, claim_worker, &workers[i]) != 0) return 3;
   }
   pthread_barrier_wait(&start);
+  const size_t reserve_waiters = wait_for_reserve_waiters(workers, &owner.subproc.arena_reserve_lock);
+  const size_t registry_waiting = mi_arenas_get_count(&owner.subproc);
+  mi_lock_release(&owner.subproc.arena_reserve_lock);
   pthread_barrier_wait(&claimed);
   atomic_store_explicit(&capture_warnings, false, memory_order_release);
 
@@ -174,7 +219,8 @@ int main(void) {
   const int64_t terminal_reserved_delta = owner.subproc.stats.reserved.current - reserved_before;
   const int64_t terminal_committed_delta = owner.subproc.stats.committed.current - committed_before;
 
-  emit("first_full", first_full); emit("registry_claimed", registry_claimed);
+  emit("first_full", first_full); emit("reserve_waiters", reserve_waiters);
+  emit("registry_waiting", registry_waiting); emit("registry_claimed", registry_claimed);
   emit("registry_order", registry_order); emit("both_claimed", both_claimed);
   emit("both_second", both_second); emit("distinct_claims", distinct_claims);
   emit("low_slice", low_slice); emit("high_slice", high_slice);

@@ -14,8 +14,8 @@ FIXTURE = Path(__file__).with_suffix(".c")
 ARCH = harness.native_evidence_architecture()
 TARGET = "process_arena::tests::emit_m2_second_arena_concurrent_reserve_c_rust_trace"
 FIELDS = (
-    "first_full", "registry_claimed", "registry_order", "both_claimed",
-    "both_second", "distinct_claims", "low_slice", "high_slice",
+    "first_full", "reserve_waiters", "registry_waiting", "registry_claimed",
+    "registry_order", "both_claimed", "both_second", "distinct_claims", "low_slice", "high_slice",
     "first_claims_live", "mapped_both", "warnings", "reserved_delta",
     "committed_delta", "mmap_calls", "commit_calls", "purge_calls",
     "arena_delta", "worker_released", "initial_released", "retained_both",
@@ -24,7 +24,8 @@ FIELDS = (
 )
 LINE = re.compile(r"^m2\.second_concurrent\.([a-z_]+)=(-?[0-9]+)$")
 EXPECTED = {
-    "first_full": 1, "registry_claimed": 2, "registry_order": 1,
+    "first_full": 1, "reserve_waiters": 2, "registry_waiting": 1,
+    "registry_claimed": 2, "registry_order": 1,
     "both_claimed": 1, "both_second": 1, "distinct_claims": 1,
     "low_slice": 9, "high_slice": 512, "first_claims_live": 1,
     "mapped_both": 1, "warnings": 0,

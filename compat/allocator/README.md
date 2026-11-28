@@ -518,7 +518,11 @@ and inventory are unchanged. Nine are existing receivers:
   `m2_second_arena_concurrent_reserve_x86_64.py`,
   `m2_second_arena_reserve_retry_x86_64.py`) reserve a second regular arena
   after the first fills, through two racing claims, and after one refused
-  mapping with its warnings.
+  mapping with its warnings. The racing receiver holds `arena_reserve_lock`
+  until `/proc/self/task/<tid>/syscall` shows both workers blocked on it, so
+  both read the one-arena count after their failed searches
+  (`src/arena.c:553-562`). Exactly one reserves; otherwise a worker that read
+  the count after the other's publication would reserve a third arena.
 - `second-arena-commit-retry-c-rust-differential`
   (`m2_second_arena_commit_retry_x86_64.py`) fails one claim commit beside a
   live second-arena claim and retries it.

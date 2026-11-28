@@ -945,7 +945,8 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "rust_test": "process_arena::tests::emit_m2_second_arena_concurrent_reserve_c_rust_trace",
         "trace_prefix": "m2.second_concurrent.",
         "common": {
-            "first_full": 1, "registry_claimed": 2, "registry_order": 1, "both_claimed": 1,
+            "first_full": 1, "reserve_waiters": 2, "registry_waiting": 1, "registry_claimed": 2,
+            "registry_order": 1, "both_claimed": 1,
             "both_second": 1, "distinct_claims": 1, "low_slice": 9, "high_slice": 512,
             "first_claims_live": 1, "mapped_both": 1, "warnings": 0,
             "reserved_delta": 64 * 1024 * 1024, "committed_delta": 589824, "mmap_calls": 1,
