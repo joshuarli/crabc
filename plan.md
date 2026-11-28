@@ -135,6 +135,12 @@ each in its owning document and continue.
 
 ### Mac and arm64 phase progress
 
+Owner direction 2026-11-28: dogfood the owner's ctrs engine
+(`~/repos/ctrs`) instead of OrbStack for the arm64 VM, and implement the ctrs
+features this work needs (CTRS-17 to 20). Until the ctrs devbox lands and the
+relay scripts move to it, no new arm work starts on OrbStack; the next arm
+candidate runs on ctrs.
+
 Host: OrbStack machine `crabc` with the clone and lane worktrees on the ext4
 volume `/mnt/crabc` ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack));
 arm image `sha256:7b7cd03d…`, all 18 arm manifest tool hashes verified in it.
