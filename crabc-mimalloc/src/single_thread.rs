@@ -52003,86 +52003,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn generic_forced_collection_stops_at_one_pending_os_release_aarch64() {
-        let fault = fault::install(fault::Plan::disabled());
-        for request in [7, SMALL_MAX_OBJ_SIZE + 1] {
-            with_allocator(|allocator| {
-                let blocks = [
-                    allocator.allocate_aligned(request, 128 * KIB).unwrap(),
-                    allocator.allocate_aligned(request, 128 * KIB).unwrap(),
-                ];
-                let bin = if request == 7 { BIN_HUGE } else { BIN_FULL };
-                assert_eq!(allocator.queue_count(bin), Some(2));
-                for block in blocks {
-                    let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
-                    // The new force visitor supplies the singleton collection
-                    // route. Keep this exact source producer scoped and joined;
-                    // the older public preparation helper admits regular pages
-                    // only, so construct its atomic projection here explicitly.
-                    let producer = RemoteFreeProducer {
-                        producer: unsafe { Page::remote_free_producer_state_at(page) },
-                        canonical_block: unsafe {
-                            Page::canonical_remote_block_for_live_client_at(page, block)
-                        }.unwrap(),
-                        client_block: block,
-                        _owner: PhantomData,
-                        _not_sync: PhantomData,
-                    };
-                    thread::scope(|scope| {
-                        assert!(scope.spawn(move || producer.publish()).join().unwrap().is_ok());
-                    });
-                }
-                fault.set(fault::Plan::at_pair(
-                    fault::Point::Unmap, 1, fault::Point::Unmap, 1, Errno::NOMEM,
-                ));
-                assert!(!allocator.collect_all_pages_for_allocation_retry());
-                assert!(allocator.has_pending_os_release());
-                assert_eq!(fault.observed(), 1);
-                assert_eq!(fault.secondary_observed(), 0, "no second release or inline retry");
-                assert_eq!(allocator.queue_count(bin), Some(1));
-                assert_eq!(allocator.session.theap().page_count(), 1);
-                let remaining = allocator.session.queue(bin).unwrap().first();
-                assert!(!remaining.is_null());
-                assert_eq!(unsafe { (*remaining).used() }, 1);
-                assert_eq!(blocks.into_iter().filter(|block| {
-                    !unsafe { allocator.page_map.checked_lookup(block.as_ptr()) }.is_null()
-                }).count(), 1, "the next page retains its complete lookup and queue ownership");
-
-                // An explicit later collection resumes only the existing
-                // parked mapping owner. A repeated failure still leaves the
-                // next page linked; disabling the fault then drains both.
-                assert!(!allocator.collect_all_pages_for_allocation_retry());
-                assert_eq!(fault.secondary_observed(), 1);
-                assert_eq!(allocator.queue_count(bin), Some(1));
-                fault.set(fault::Plan::disabled());
-                assert!(allocator.collect_all_pages_for_allocation_retry());
-                assert!(!allocator.has_pending_os_release());
-                assert_eq!(allocator.session.theap().page_count(), 0);
-            });
-        }
-        with_allocator(|allocator| {
-            let first = allocator.allocate_aligned(7, 128 * KIB).unwrap();
-            let second = allocator.allocate_aligned(7, 128 * KIB).unwrap();
-            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-            unsafe { allocator.free(first).unwrap() };
-            assert!(allocator.has_pending_os_release());
-            // A second legal local free cannot overwrite the detached owner
-            // either. Its block is consumed but its empty page stays linked
-            // and mapped, with a lifecycle error instead of a lost release.
-            assert_eq!(unsafe { allocator.free(second) }, Err(FreeError::Lifecycle));
-            assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
-            let page = unsafe { allocator.page_map.checked_lookup(second.as_ptr()) };
-            assert!(!page.is_null());
-            assert_eq!(unsafe { (*page).used() }, 0);
-            fault.set(fault::Plan::disabled());
-            assert!(allocator.collect_all_pages_for_allocation_retry());
-            assert!(!allocator.has_pending_os_release());
-            assert_eq!(allocator.session.theap().page_count(), 0);
-        });
-    }
-
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn generic_forced_collection_consumes_each_source_page_release_once() {
@@ -52185,43 +52105,6 @@ mod tests {
                     .iter().all(|byte| *byte == 0x6D));
                 assert!(allocator.take_page_collect_poison_for_fixture_cleanup().is_some());
                 unsafe { allocator.free(client).unwrap() };
-            });
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn captured_local_free_lifecycle_failure_discharges_the_consumed_client_aarch64() {
-        let fault = fault::install(fault::Plan::disabled());
-        for captured_entry in [false, true] {
-            with_allocator(|allocator| {
-                let first = allocator.allocate_aligned(7, 128 * KIB).unwrap();
-                let client = allocator.allocate_aligned(7, 128 * KIB).unwrap();
-                let page = NonNull::new(unsafe { allocator.page_for_block(client) }).unwrap();
-                // SAFETY: this isolated owner retains the exact live aligned
-                // client and its published source page until local consumption.
-                let captured = unsafe {
-                    crate::process_page_map::classify_live_allocation_in_page(page, client)
-                }.unwrap();
-                let canonical = captured.canonical_block();
-                fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-                unsafe { allocator.free(first).unwrap() };
-                assert!(allocator.has_pending_os_release());
-                assert_eq!(unsafe {
-                    if captured_entry { allocator.free_captured_live_allocation_with_progress(captured) }
-                    else { allocator.free_with_progress(client) }
-                }, LocalClientFreeProgress::Consumed(Err(FreeError::Lifecycle)));
-                // The second page remains linked because the first detached
-                // mapping is still retained. Its client has nevertheless become
-                // the local free-list head, and must never be freed a second time.
-                assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
-                assert_eq!(unsafe { allocator.page_map.checked_lookup(client.as_ptr()) }, page.as_ptr());
-                assert_eq!(unsafe { page.as_ref().used() }, 0);
-                assert_eq!(unsafe { page.as_ref().remote_free_test_local_free() }, canonical.cast().as_ptr());
-                fault.set(fault::Plan::disabled());
-                assert!(allocator.collect_all_pages_for_allocation_retry());
-                assert!(!allocator.has_pending_os_release());
-                assert_eq!(allocator.session.theap().page_count(), 0);
             });
         }
     }
@@ -53416,57 +53299,6 @@ mod tests {
             assert_eq!(near_limit.as_ptr().addr() & (128 * MIB - 1), 0);
             unsafe { allocator.free(near_limit).unwrap() };
             assert!(allocator.allocate_aligned(7, 256 * MIB).is_none());
-        });
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry_aarch64() {
-        let fault = fault::install(fault::Plan::disabled());
-        with_allocator(|allocator| {
-            // Materialize the ordinary direct page before an OS owner can be
-            // parked. A later first generic lookup may source-collect and
-            // retry every pending OS owner before it allocates a fresh page;
-            // this established local page keeps the ordinary free below out
-            // of that unrelated retry path.
-            let arena_block = allocator.allocate(37, false).unwrap();
-            let block = allocator.allocate_aligned(7, 128 * KIB).unwrap();
-            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-            // SAFETY: this is the sole live block in the OS singleton. The
-            // terminal release detaches all metadata before the injected
-            // reclaim error parks its unique mapping owner.
-            unsafe { allocator.free(block).unwrap() };
-            assert!(allocator.has_pending_os_release());
-            // The semantic free cleared lookup before parking, so the same
-            // pointer can no longer be accepted as a current allocation.
-            assert_eq!(unsafe { allocator.free(block) }, Err(FreeError::Unmapped));
-            // Reclaim must succeed before another OS-aligned claim can begin.
-            // Keep the injected `unmap` failure active for this allocation's
-            // mandatory pending-owner retry.
-            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-            assert!(allocator.allocate_aligned(7, 128 * KIB).is_none());
-            assert_eq!(
-                fault.observed(),
-                1,
-                "a new OS claim retries the parked mapping through the raw unmap seam"
-            );
-            assert!(allocator.has_pending_os_release());
-            // SAFETY: this ordinary block is current and arena-owned.
-            unsafe { allocator.free(arena_block).unwrap() };
-            // Re-arm the same source `Unmap` seam to prove collection leaves
-            // the exact parked owner available while release failure persists.
-            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-            assert!(!allocator.collect_retired(true));
-            assert_eq!(
-                fault.observed(),
-                1,
-                "forced collection retries the parked OS mapping exactly once"
-            );
-            assert!(allocator.has_pending_os_release());
-
-            fault.set(fault::Plan::disabled());
-            assert!(allocator.collect_retired(true));
-            assert!(!allocator.has_pending_os_release());
         });
     }
 

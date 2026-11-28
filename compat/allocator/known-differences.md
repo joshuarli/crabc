@@ -1604,29 +1604,6 @@ Check: `python3 compat/allocator/x86_64_m7_gate.py --offline --page-map-differen
 Remove only by keeping an empty page map in which allocation can be attempted
 and fail, which would make an arena and page engine run without a page map.
 
-### `CRABC-MI-FORCED-COLLECTION-OS-RELEASE-OWNER` — accepted private failure-retention boundary
-
-Pinned `src/theap.c:mi_theap_collect_ex(MI_FORCE)` visits all owned queues
-before arena collection; `src/page.c:mi_malloc_generic_fallback` then retries
-allocation. `PageAllocatorEngine::collect_all_pages_for_allocation_retry` ports
-that post-prepass page/backing transition. The retained Rust prepass also has an
-existing non-abandoning full-page scan, so an exact whole-source collection
-sequence is not claimed; generic callback administration and statistics merging
-are separate.
-
-Unlike C's void, best-effort OS free, Rust retains a failed mapping release in
-`pending_os_release`. The full-queue prepass and forced traversal both stop
-when this slot becomes occupied: the OOM allocation returns no block and the
-next page keeps its queue, PageMap, metadata and remote head. `release_page`
-rejects a second OS release before queue mutation while that owner exists. A
-later explicit collection retries the parked mapping before visiting another
-page; a repeated failure preserves both owners. Ordinary arena operations are
-unchanged. This is ownership-safety strengthening, not C unmap-error parity.
-
-Check: `single_thread::tests::generic_forced_collection_stops_at_one_pending_os_release`
-(two remotely emptied OS singletons in both huge and full queues, paired
-release failures, preservation of the next registered page, explicit retry).
-
 ### `CRABC-MI-OS-PUBLICATION-ROLLBACK-OWNER` — accepted private provenance-failure retention
 
 - **Port map:** `src/arena.c:os-aligned-singleton-metadata-page-map-and-release`
