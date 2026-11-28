@@ -249,7 +249,7 @@ through the relay in the `main` mirror first to seed the source oracles,
 package corpus, Lua archive and Rust std/LTO vendors.
 
 When the work needs a guest capability ctrs lacks, implement it in ctrs (or
-file it in ctrs `TODO.md` with `todo add`, saying what crabc needs, the blocked
+file it in the ctrs backlog with `todo add`, saying what crabc needs, the blocked
 condition and a container-level proof), then record the condition as
 host-limited here or in its fragment until it lands. Requested so far:
 hugetlbfs pools (CTRS-17), NUMA nodes (CTRS-18), a 16 KiB-page kernel
