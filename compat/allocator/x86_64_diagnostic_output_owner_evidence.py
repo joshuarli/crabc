@@ -45,7 +45,7 @@ RUST_SOURCE_FILES = (
     ROOT / "crabc-core/src/lib.rs",
     ROOT / "crabc-core/src/error.rs",
     ROOT / "crabc-core/src/thread.rs",
-    ROOT / "crabc-core/src/syscall_x86_64.rs",
+    ROOT / "crabc-core/src/syscall/x86_64.rs",
 )
 
 # Cargo resolves the selected package/feature graph and target profile through

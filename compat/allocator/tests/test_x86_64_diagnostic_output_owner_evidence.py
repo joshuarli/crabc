@@ -310,7 +310,7 @@ class RetainedStreamReaderTests(unittest.TestCase):
                 "crabc-core/src/lib.rs",
                 "crabc-core/src/error.rs",
                 "crabc-core/src/thread.rs",
-                "crabc-core/src/syscall_x86_64.rs",
+                "crabc-core/src/syscall/x86_64.rs",
             ],
         )
 
