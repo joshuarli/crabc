@@ -1,6 +1,6 @@
-# Paused AArch64 allocator route
+# AArch64 allocator route
 
-AArch64 allocator implementation and qualification are paused; these are the preserved reproduction commands for the frozen baseline, not the active work queue. The active route is the native x86-64 harness in [`README.md`](README.md). Everything below runs through the AArch64 `scripts/dev.sh` dispatcher in the pinned Linux/AArch64 development image.
+The native private evidence launcher and its supported AArch64 commands are described in [`README.md`](README.md). The commands below describe the older dispatcher route and do not qualify the private launcher.
 
 ```sh
 ./scripts/dev.sh allocator --quick

@@ -35,6 +35,7 @@ class X86AllocatorWorkspaceTests(unittest.TestCase):
         core_module = self.checkout / "compat/x86_64/core_image.py"
         core_module.parent.mkdir(parents=True)
         core_module.write_text((ROOT / "compat/x86_64/core_image.py").read_text())
+        (core_module.parent / "native_arch.py").write_text((ROOT / "compat/x86_64/native_arch.py").read_text())
         self.boundary = self.checkout / ".work/allocator-x86_64"
         self.capture = self.fixture / "docker-args"
         self.bin = self.fixture / "bin"
@@ -410,6 +411,10 @@ fi
         launcher.parent.mkdir(parents=True)
         launcher.write_text(RUNNER.read_text(encoding="utf-8"), encoding="utf-8")
         (linked / "rust-toolchain.toml").write_text((ROOT / "rust-toolchain.toml").read_text())
+        native = linked / "compat/x86_64"
+        native.mkdir(parents=True)
+        for name in ("native_arch.py", "core_image.py"):
+            (native / name).write_text((ROOT / "compat/x86_64" / name).read_text())
         environment = os.environ.copy()
         environment.update(PATH=f"{self.bin}:{environment['PATH']}", DOCKER_CAPTURE=str(self.capture))
         result = subprocess.run(
@@ -583,14 +588,21 @@ fi
 
 class X86_64RunnerBoundaryTests(unittest.TestCase):
     def run_launcher(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [str(RUNNER), *arguments],
-            cwd=ROOT,
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as directory:
+            uname = Path(directory) / "uname"
+            uname.write_text("#!/bin/sh\nprintf 'x86_64\\n'\n")
+            uname.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{directory}:{env['PATH']}"
+            return subprocess.run(
+                [str(RUNNER), *arguments],
+                cwd=ROOT,
+                env=env,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
 
     def test_script_is_valid_and_exposes_only_private_allocator_commands(self) -> None:
         syntax = subprocess.run(

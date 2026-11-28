@@ -70,7 +70,15 @@ python3 scripts/test_python.py --module compat/allocator/tests/test_x86_64_runne
 
 ## Launcher
 
-`run-x86_64.sh` is a closed command set. It requires a native x86-64 host
+On native AArch64 Linux, `image`, `allocator-unit`, `allocator-native-integration`,
+and `allocator-m1` use `.work/allocator-aarch64` and the private arm64 image.
+The arm64 image pins Alpine 3.24.1's arm64 manifest
+`sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18`.
+Other commands, including cost gates R1–R4, M5 throughput and the engine
+matrix, remain x86-only. The AArch64 M1 report is under
+`reports/allocator/aarch64/`.
+
+`run-x86_64.sh` is a closed command set. It requires a native Linux host
 (emulation is refused), provides no generic shell or Cargo, and builds no
 crabc libc, loader, sysroot, or `crabc-rs`. `./compat/allocator/run-x86_64.sh
 --help` prints the complete command list; an unknown command exits 2.

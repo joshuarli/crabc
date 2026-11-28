@@ -7,10 +7,12 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly PLATFORM="linux/amd64"
-readonly IMAGE="crabc-allocator-evidence:x86_64"
-readonly DOCKERFILE="$ROOT_DIR/compat/allocator/Dockerfile.x86_64"
-readonly WORK_BOUNDARY="$ROOT_DIR/.work/allocator-x86_64"
+eval "$(python3 -B "$ROOT_DIR/compat/x86_64/native_arch.py")"
+readonly ARCH="$arch"
+readonly PLATFORM="$platform"
+readonly IMAGE="crabc-allocator-evidence:$ARCH"
+readonly DOCKERFILE="$ROOT_DIR/compat/allocator/Dockerfile.$ARCH"
+readonly WORK_BOUNDARY="$ROOT_DIR/.work/allocator-$ARCH"
 
 usage() {
     cat <<'EOF'
@@ -277,7 +279,7 @@ configure_work_dir() {
 
 require_native_x86_64_host() {
     case "$(uname -m)" in
-        x86_64|amd64) ;;
+        x86_64|amd64|aarch64|arm64) ;;
         *) fail "native x86-64 allocator evidence refuses emulation (host: $(uname -m))" ;;
     esac
 }
@@ -298,7 +300,7 @@ ensure_image() {
     fi
     local identity
     identity="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")"
-    if [ "$identity" != "linux/amd64" ]; then
+    if [ "$identity" != "$PLATFORM" ]; then
         fail "$IMAGE is $identity; rebuild it with ./compat/allocator/run-x86_64.sh image"
     fi
     ALLOCATOR_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
@@ -315,9 +317,9 @@ ensure_image() {
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
         --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --entrypoint /bin/sh "$ALLOCATOR_IMAGE_ID" -ec '
-            test "$(uname -m)" = x86_64
-            test "$(rustup show active-toolchain)" = "$1-x86_64-unknown-linux-musl (default)"
-            test "$(rustc -vV | sed -n "s/^host: //p")" = x86_64-unknown-linux-musl
+            test "$(uname -m)" = "$3"
+            test "$(rustup show active-toolchain)" = "$1-$3-unknown-linux-musl (default)"
+            test "$(rustc -vV | sed -n "s/^host: //p")" = "$3-unknown-linux-musl"
             test -f "$(rustc --print target-libdir)/self-contained/libunwind.a"
             test "$(cat /opt/musl-1.2.6/.crabc-oracle)" = "$2"
             sha256sum -c /usr/local/share/crabc-allocator-image-tools.sha256 >/dev/null
@@ -325,7 +327,7 @@ ensure_image() {
             cmake --version >/dev/null
             cargo miri --version >/dev/null
         ' allocator-image-authentication "$rust_channel" \
-        "$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" manifest)" \
+        "$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" --architecture "$ARCH" manifest)" "$ARCH" \
         || fail "allocator image authentication failed; rebuild with ./compat/allocator/run-x86_64.sh image"
 }
 
@@ -421,10 +423,10 @@ run_in_container() {
     # development tag changes between inspection and container creation.
     execution_image="$image_id"
     local -a context_args=(
-        --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo
-        --env CARGO_TARGET_DIR=/workspace/.work/allocator-x86_64/target
-        --env CRABC_WORK_DIR=/workspace/.work/allocator-x86_64
-        --env TMPDIR=/workspace/.work/allocator-x86_64/tmp
+        --env CARGO_HOME=/workspace/.work/allocator-$ARCH/cargo
+        --env CARGO_TARGET_DIR=/workspace/.work/allocator-$ARCH/target
+        --env CRABC_WORK_DIR=/workspace/.work/allocator-$ARCH
+        --env TMPDIR=/workspace/.work/allocator-$ARCH/tmp
     )
     if [ "$qualification_context" = true ]; then
         local core_work="$ROOT_DIR/.work/x86_64"
@@ -448,9 +450,9 @@ run_in_container() {
         --platform "$PLATFORM" \
         --workdir /workspace \
         "${context_args[@]}" \
-        --env CRABC_ALLOCATOR_EVIDENCE_ARCH=x86_64 \
+        --env CRABC_ALLOCATOR_EVIDENCE_ARCH="$ARCH" \
         --env CRABC_EXECUTION_MODE=native \
-        --env CRABC_HOST_ARCH=x86_64 \
+        --env CRABC_HOST_ARCH="$ARCH" \
         --env CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID="$image_id" \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
         --env PYTHONDONTWRITEBYTECODE=1 \
@@ -458,12 +460,12 @@ run_in_container() {
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --volume "$ROOT_DIR:/workspace$input_mount_mode" \
-        --volume "$WORK_DIR:/workspace/.work/allocator-x86_64$input_mount_mode" \
+        --volume "$WORK_DIR:/workspace/.work/allocator-$ARCH$input_mount_mode" \
         --volume "$WORK_DIR/target:/workspace/target$input_mount_mode" \
         --volume "$WORK_DIR/reports:/workspace/compat/reports$input_mount_mode" \
         --volume "$WORK_DIR/allocator-cache:/workspace/compat/allocator/.cache$input_mount_mode" \
         --volume "$temporary_mount:/tmp" \
-        --volume "$temporary_mount:/workspace/.work/allocator-x86_64/tmp" \
+        --volume "$temporary_mount:/workspace/.work/allocator-$ARCH/tmp" \
         "${GIT_METADATA_MOUNTS[@]}" \
         "$execution_image" "$@"
 }
@@ -507,6 +509,12 @@ esac
 
 configure_execution_budget
 require_native_x86_64_host
+if [ "$ARCH" = aarch64 ]; then
+    case "$command" in
+        image|allocator-unit|allocator-native-integration|allocator-m1) ;;
+        *) fail "allocator command $command is not qualified on aarch64" ;;
+    esac
+fi
 
 case "$command" in
     image)
@@ -521,7 +529,11 @@ case "$command" in
     allocator-m1)
         [ "$#" -eq 0 ] || fail "allocator-m1 takes no arguments"
         ensure_image
-        run_in_container python3 compat/allocator/run.py --m1 --offline
+        if [ "$ARCH" = x86_64 ]; then
+            run_in_container python3 compat/allocator/run.py --m1 --offline
+        else
+            run_in_container python3 compat/allocator/run.py --m1 --offline --architecture "$ARCH"
+        fi
         ;;
     allocator-m1-clock-fallback)
         [ "$#" -eq 0 ] || fail "allocator-m1-clock-fallback takes no arguments"
@@ -1379,6 +1391,7 @@ parse_cases(sys.argv[1:])
         ;;
     allocator-unit)
         if [ "$#" -ne 0 ]; then
+            [ "$ARCH" = x86_64 ] || fail "allocator-unit --filter is x86-64 only"
             [ "$#" -eq 2 ] && [ "$1" = --filter ] || \
                 fail "allocator-unit accepts only --filter module::tests::exact_test_name"
             [[ "$2" =~ ^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$ ]] || \
@@ -1386,7 +1399,7 @@ parse_cases(sys.argv[1:])
         fi
         ensure_image
         if [ "$#" -eq 0 ]; then
-            run_in_container cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc --lib --no-default-features
+            run_in_container cargo test --locked --target "$ARCH-unknown-linux-musl" -p crabc-mimalloc --lib --no-default-features
         else
             run_in_container python3 compat/allocator/run_unit_x86_64.py "$2"
         fi
@@ -1398,7 +1411,7 @@ parse_cases(sys.argv[1:])
         # the default-off scalar audit and next-munmap fault seams those
         # targets require. Each target is a separate process; run them all
         # and report every failure.
-        run_in_container cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc \
+        run_in_container cargo test --locked --target "$ARCH-unknown-linux-musl" -p crabc-mimalloc \
             --no-default-features --features native-runtime-test-audit,native-runtime-test-fault \
             --no-fail-fast --test 'native_*'
         ;;
