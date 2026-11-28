@@ -191,8 +191,13 @@ exact source access on both sides, made both concurrent-reserve tests
 deterministic, and narrowed the VM conditions to source facts. Still open and
 not host-limited: the VM reserve/commit/purge/reuse callers, explicit
 reservations beyond the compared trims and the narrowed hint, THP and
-statistics rows; installed-product initialization; and the remaining
-fault-injection receivers. The arena unown retry for unmapped and OS-list pages
+statistics rows; installed-product initialization, the process-body callback
+interval (the engine admits no pre-startup callback) and the M7 error-site and
+statistics differentials on arm. `540c445df` added arm receivers for
+`mi_subproc_new` failure cleanup, thread-local key and slot-table refusal,
+ambient detection, deferred-free callbacks and repeated process
+initialization; the slot-table receiver records that Rust drops C's `EFAULT`
+report (CRAB-24). The arena unown retry for unmapped and OS-list pages
 closed with an arm64 hardware-watchpoint pause (`6785d275c`), and the OS-page
 prefix trim has a receiver (`69425dba9`); arenas now keep only host-limited
 conditions. Pending for x86: the interleaving and prefix-trim receivers, the
