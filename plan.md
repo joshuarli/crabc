@@ -171,8 +171,12 @@ rosters (`c661da885`; rerun `native-abi-exports update` on the candidate's own
 inventory when abi-evidence reports only `anon.*` changes), toolchain-hashed
 binary128 helper names (`7825f0851`, `fd1916f19`) and label-based helper
 transfer matching (`6b0f6e5f9`, a product-tree change that ended the
-baseline). A fresh candidate runs at `6b0f6e5f9` in the VM clone's
-`.work/wt/arm-cand2` (log `.work/wt/arm-cand2-run.log`).
+baseline). The next run at `6b0f6e5f9` passed 61 steps and found a real
+runtime defect: AArch64 `__divtc3` called compiler_builtins' Rust-ABI
+`__rust_divtc3` as C, crashing complex `long double` division
+(`ae60e0f8b`), plus two stale compiler-helper reader checks (`b24656ac5`,
+`e367a4188`). Candidate 3 runs at `e367a4188` in the VM clone's
+`.work/wt/arm-cand3` (log `.work/wt/arm-cand3-run.log`).
 
 Allocator M2 on AArch64 (`fc949c1dd`): the VM component runs natively (63
 checks, no C/Rust mismatch); its conditions narrow as the arenas,
