@@ -885,6 +885,53 @@ def _m2_aarch64_arena_abandoned_search_trace() -> dict[str, int]:
 
 
 M2_AARCH64_ARENA_ABANDONED_SEARCH_TRACE = _m2_aarch64_arena_abandoned_search_trace()
+
+
+def _m2_aarch64_arena_abandonment_interleaving_trace() -> dict[str, int]:
+    """Pinned relations of `m2_arena_abandonment_interleaving_x86_64.c` on 4 KiB AArch64.
+
+    Each scenario pauses a thread at one source access and lets another act.
+    A last foreign free that lands before the exiting owner's first
+    `mi_abandoned_page_unown` head load, or that makes its release CAS fail,
+    is collected by the owner, which unabandons and frees the page; with one
+    block still live the retried CAS leaves the page mapped until its last
+    free. A free-triggered unabandon whose clear-once CAS finds the bit taken
+    by a concurrent arena reader counts one busy wait and clears it only after
+    the reader's failed claim restores it. Every paused access is the exact
+    bitmap word or page head, on an OS page distinct from the head, the bin's
+    bitmap pointer and the arena base.
+    """
+
+    def span(page: int, abandoned: int, free: int) -> dict[str, int]:
+        return {"page": page, "abandoned": abandoned, "free": free, "committed": 8, "purge": 8}
+
+    freed = span(0, 0, 8)
+    mapped = span(1, 1, 0)
+    rows: dict[str, dict[str, int]] = {
+        "first": {"distinct_pages": 1, "exit_pause_word": 1, "freer_returned": 1, "pauses": 1},
+        "first.exit": freed,
+        **{
+            name: {
+                "distinct_pages": 1, "exit_pause_word": 1, "unown_pause_head": 1,
+                "mapped_before_free": 1, "freer_returned": 1, "pauses": 2,
+            }
+            for name in ("cas", "cas_live")
+        },
+        "cas.exit": freed,
+        "cas_live.exit": mapped,
+        "cas_live.last": freed,
+        "wait": {
+            "distinct_pages": 1, "freer_pause_word": 1, "freer_owns": 1, "reader_pause_head": 1,
+            "reader_cleared": 1, "freer_waiting": 1, "busy_waits": 1, "reader_owns": 1, "pauses": 2,
+        },
+        "wait.abandoned": mapped,
+        "wait.freed": {"abandoned_count": 0},
+        "wait.last": freed,
+    }
+    return {f"{name}.{field}": value for name, fields in rows.items() for field, value in fields.items()}
+
+
+M2_AARCH64_ARENA_ABANDONMENT_INTERLEAVING_TRACE = _m2_aarch64_arena_abandonment_interleaving_trace()
 # Their records use the direct-receiver format of the VM component: shared
 # relations on both sides, plus a pinned-C-only primitive receipt or a
 # Rust-only retained count where the receiver reports one.
@@ -1108,6 +1155,19 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "rust_only": {},
         "c_receipt": None,
         "scope": "pinned-c-rust-abandoned-page-search-across-three-arenas-and-two-heaps-with-live-heap-count-start-rotation-per-heap-records-and-full-drain",
+    },
+    "arena-abandonment-interleaving-c-rust-differential": {
+        "artifact": "m2-arena-abandonment-interleaving",
+        "kind": "c-rust-arena-abandonment-differential",
+        "target": "compat/allocator/m2_arena_abandonment_interleaving_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_abandonment_interleaving_x86_64.c",
+        "rust_test": "native_arena_abandonment_interleaving::abandonment_interleavings_match_the_pinned_source",
+        "trace_prefix": "m2.arena_interleave.",
+        "common": M2_AARCH64_ARENA_ABANDONMENT_INTERLEAVING_TRACE,
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-page-protection-paused-remote-free-before-the-unown-head-load-and-release-cas-and-clear-once-unabandon-wait-for-a-concurrent-arena-reader",
     },
 }
 # The huge-progress receiver writes a matched C/Rust report. It substitutes

@@ -515,6 +515,16 @@ integer mostly-used boundary (`free <= reserved / 8` stays unmapped). It never
 releases or reuses a page itself; terminal releases belong to the callers that
 own the raw-release tail.
 
+The protocol's concurrent interleavings are also compared with pinned C on the
+native arm64 host, not only modelled. `native_arena_abandonment_interleaving`
+and `compat/allocator/m2_arena_abandonment_interleaving_x86_64.c` revoke access
+to one OS page, so the access that publishes the abandoned bit, the unown
+release CAS, or the clear-once CAS faults, and that thread waits in a SIGSEGV
+handler while another thread frees or searches. Neither side's source changes.
+The static-main freer and reader each hold the main Heap's short lock only to
+form their bitmap/count capability, never across the clear-once wait, so a
+reader can hold a cleared bit while a freer waits, as in C.
+
 ### Thread attach and owner exit
 
 Worker attach: `runtime_lifecycle.rs::attach_current_thread` takes a

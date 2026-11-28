@@ -2490,6 +2490,11 @@ impl ArenaAbandonedPages<'_> {
         self.bitmap.is_clear_range(slice_index, 1) == Some(true)
     }
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub(crate) fn field_address(&self, slice_index: usize) -> Option<usize> {
+        self.bitmap.field_address(slice_index)
+    }
+
     /// Returns whether the static-main ordinary `pages` image still names
     /// this slice.
     ///
@@ -3126,6 +3131,13 @@ impl<'arena> ArenaView<'arena> {
     /// Dynamic heap-local `ArenaPages` images are intentionally not created
     /// here. The returned capability is valid only while this `ArenaView`
     /// keeps the in-place arena metadata live.
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub(crate) fn abandoned_pages_slot_address(&self, bin: usize) -> Option<usize> {
+        (bin < ARENA_BIN_COUNT).then(|| {
+            core::ptr::from_ref(&self.arena().pages_main.pages_abandoned[bin]).addr()
+        })
+    }
+
     pub(crate) fn abandoned_pages(&self, bin: usize) -> Option<ArenaAbandonedPages<'arena>> {
         if bin >= ARENA_BIN_COUNT {
             return None;

@@ -6867,6 +6867,87 @@ pub unsafe fn native_runtime_arena_span_state_test_audit(
     })
 }
 
+/// Addresses of the source words one exact live regular medium client's
+/// abandonment passes through: its page's `xthread_free` head, its arena's
+/// main-Heap `pages_abandoned[bin]` word holding the page's bit, that bin's
+/// bitmap-pointer slot in `pages_main`, and the arena base. They are copied
+/// identities for page-protection witnesses, never Page, bitmap, or release
+/// capabilities.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeAbandonmentWordsTestAudit {
+    pub thread_free: usize,
+    pub abandoned_word: usize,
+    pub abandoned_bitmap_slot: usize,
+    pub arena: usize,
+}
+
+/// Copies [`NativeRuntimeAbandonmentWordsTestAudit`] for one live client.
+///
+/// # Safety
+///
+/// As [`native_runtime_live_client_arena_span_test_audit`]: `client` is an
+/// exact live native allocation sampled while its page owner is quiescent.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_abandonment_words_test_audit(
+    client: core::ptr::NonNull<u8>,
+) -> Option<NativeRuntimeAbandonmentWordsTestAudit> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the exact live client and quiescent page owner keep this lookup
+    // and its short immutable scalar projection valid.
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
+    let page_ref = unsafe { page.as_ref() };
+    let block_size = page_ref.block_size();
+    if block_size <= SMALL_SIZE_MAX || block_size > MEDIUM_MAX_OBJ_SIZE {
+        return None;
+    }
+    let memory = page_ref.memid().arena_memory()?;
+    let bin = size_class::bin_for_regular_page_block_size(block_size);
+    // SAFETY: the live page's arena memid keeps its source arena alive.
+    let view = unsafe { ArenaView::from_ptr(memory.arena) }?;
+    let abandoned = view.abandoned_pages(bin)?;
+    Some(NativeRuntimeAbandonmentWordsTestAudit {
+        thread_free: crate::types::Page::xthread_free_address_at(page),
+        abandoned_word: abandoned.field_address(memory.slice_index as usize)?,
+        abandoned_bitmap_slot: view.abandoned_pages_slot_address(bin)?,
+        arena: memory.arena.addr(),
+    })
+}
+
+/// Copies the active process subprocess's `pages_unabandon_busy_wait` total.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_unabandon_busy_wait_test_audit() -> Option<i64> {
+    // SAFETY: active process publication keeps the subprocess identity and
+    // its atomic statistics alive; this copies one relaxed counter.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let process = owner.ready().ok()?.process_backing().ok()?.process();
+    Some(process.subprocess().bitmap_statistics().snapshot().pages_unabandon_busy_wait)
+}
+
+/// Copies the process main Heap's total `abandoned_count` over every bin.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_main_heap_abandoned_count_test_audit() -> Option<usize> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    if !RUNTIME_PROCESS.is_active() {
+        return None;
+    }
+    // SAFETY: active process publication keeps the main Heap and its lock
+    // alive. The helper projects only copied counts while holding that lock.
+    let main_heap = unsafe { RUNTIME_PROCESS.active_main_heap() }?;
+    native_runtime_main_heap_lifecycle_audit(main_heap).map(|(count, _)| count)
+}
+
 /// The source `mi_memkind_t` value of one exact live native client's page:
 /// arena-backed or OS-backed, as `_mi_arenas_page_alloc` selected it.
 ///

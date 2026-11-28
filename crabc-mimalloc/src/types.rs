@@ -4916,6 +4916,13 @@ impl Page {
         unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page.as_ptr()).xthread_id)) }
     }
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[inline]
+    pub(crate) fn xthread_free_address_at(page: NonNull<Self>) -> usize {
+        // SAFETY: this computes a field address without reading the page.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).xthread_free) }.addr()
+    }
+
     #[inline]
     pub(crate) fn owner_thread_id(&self) -> usize {
         self.xthread_id.load(core::sync::atomic::Ordering::Acquire)

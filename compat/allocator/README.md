@@ -506,8 +506,8 @@ of the fragment's bounded definitions. `allocator-m2` runs:
 The receivers take their architecture from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a
 direct x86 invocation keeps its historical paths and messages.
 
-The AArch64 fragment adds thirteen checks to the x86 inventory, each a
-pinned-C/Rust receiver that ran natively on arm. All thirteen are pending on x86
+The AArch64 fragment adds fourteen checks to the x86 inventory, each a
+pinned-C/Rust receiver that ran natively on arm. All fourteen are pending on x86
 until a native x86 run admits them into the x86 arenas record, whose manifest
 and inventory are unchanged. Nine are existing receivers:
 
@@ -544,7 +544,7 @@ and inventory are unchanged. Nine are existing receivers:
   which the x86 M5 gate also runs) compares the `mi_abandoned_page_try_reclaim`
   decisions on free under its seven option profiles.
 
-Four further receivers are new with this component and run only on AArch64
+Five further receivers are new with this component and run only on AArch64
 until a native x86 run admits them:
 
 - `arena-page-abandonment-c-rust-differential`
@@ -562,6 +562,22 @@ until a native x86 run admits them:
   sibling heaps move the search start from the middle arena to the first and
   back, and a drain takes the arenas in source order while the second heap's
   page stays in its own record.
+- `arena-abandonment-interleaving-c-rust-differential`
+  (`m2_arena_abandonment_interleaving_x86_64.{c,py}` and the
+  `native_arena_abandonment_interleaving` integration test) drives the
+  concurrent abandonment interleavings deterministically without editing
+  either side. A SIGSEGV handler pauses one thread at an exact source access
+  after `mprotect` revokes access to the OS page holding it, and the main
+  thread restores the page once another thread has acted. The exiting
+  owner's `pages_abandoned[bin]` publication or its `mi_abandoned_page_unown`
+  release CAS is paused while a foreign free of the last block lands, and
+  the owner collects it and frees the page; with a block still live, the
+  retried CAS leaves the page mapped. A free-triggered unabandon's
+  `mi_bitmap_clear_once_set` CAS is paused while an arena reader clears the
+  bit and pauses at its ownership claim, so the freer counts one busy wait
+  until the reader restores the bit. Every pause names the exact bitmap word
+  or page head on both sides, and 100 repeated runs of each side under CPU
+  load produced the same 56 values.
 - `arena-purge-rotation-c-rust-differential`
   (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
   eight arenas with disabled-delay, immediate-delay, preloading and
@@ -577,10 +593,14 @@ until a native x86 run admits them:
 
 Pinned-C-only primitive receipts and Rust-only retained counts use the VM
 direct-receiver record; the aggregate re-parses every physical transcript.
-The component stays partial: the concurrent unown and
-unabandon interleavings remain open, and so do large-page
-and huge-page reservation success, NUMA placement and the 16 KiB and 64 KiB
-base-page geometries, which this VM cannot supply.
+The component stays partial. The unown retry after a full unmapped or
+OS-list abandonment stays open, because every source step between that
+collection and the release CAS writes only the page's own metadata (or the
+Heap's OS-list lock), so a page-protection pause cannot isolate it. The
+clear-once wait from the cross-thread reclaim-on-free caller is also not yet
+driven. Large-page and huge-page reservation success, NUMA placement and the
+16 KiB and 64 KiB base-page geometries stay open because this VM cannot
+supply them.
 
 ### Bitmap component
 

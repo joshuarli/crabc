@@ -1273,6 +1273,13 @@ impl<'storage> BitmapView<'storage> {
         unsafe { &*self.chunks_ptr().add(chunk_index) }
     }
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub(crate) fn field_address(&self, index: usize) -> Option<usize> {
+        let range = self.range(index, 1)?;
+        let chunk_bit = range.index % BCHUNK_BITS;
+        Some(core::ptr::from_ref(self.chunk(range.index / BCHUNK_BITS).field(chunk_bit / BFIELD_BITS)).addr())
+    }
+
     #[inline]
     fn chunkmap(&self) -> &Chunk {
         &self.prefix().chunkmap
