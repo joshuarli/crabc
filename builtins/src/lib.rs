@@ -9,7 +9,7 @@
 //! helpers exported below.
 
 #![no_std]
-#![cfg_attr(target_arch = "aarch64", feature(f128))]
+#![cfg_attr(target_arch = "aarch64", feature(f128, complex_numbers))]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 // Rust has no binary80 scalar ABI. These reviewed assembly entries receive
