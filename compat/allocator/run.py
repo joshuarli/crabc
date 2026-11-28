@@ -25407,6 +25407,18 @@ def validate_x86_64_engine_dependency_graph(metadata: Mapping[str, Any]) -> dict
     )
 
 
+def validate_aarch64_shared_engine_dependency_graph(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    versions = {name: version for name, version in EXPECTED_X86_64_ENGINE_DEPENDENCY_VERSIONS.items()
+                if name != "cpufeatures"}
+    edges = {name: tuple(dependency for dependency in dependencies if dependency != "cpufeatures")
+             for name, dependencies in EXPECTED_X86_64_ENGINE_DEPENDENCY_EDGES.items()
+             if name != "cpufeatures"}
+    return validate_exact_normal_dependency_graph(
+        metadata, target=PRODUCTION_RUST_TARGET,
+        expected_dependency_versions=versions, expected_dependency_edges=edges,
+    )
+
+
 def production_dependency_graph() -> dict[str, Any]:
     command = [
         "cargo",
@@ -25430,20 +25442,22 @@ def production_dependency_graph() -> dict[str, Any]:
     return report
 
 
-def x86_64_engine_dependency_graph() -> dict[str, Any]:
+def x86_64_engine_dependency_graph(architecture: str = "x86_64") -> dict[str, Any]:
     """Collect the native x86-64 engine's exact normal dependency graph."""
 
     # The canonical Docker image may begin with an empty bind-mounted Cargo
     # cache. `--locked` pins this resolution without falsely requiring that
     # the cache was already populated; a first native run may download the
     # lockfile-selected crates.
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported engine architecture: {architecture}")
     command = [
         "cargo",
         "metadata",
         "--format-version",
         "1",
         "--filter-platform",
-        X86_64_RUST_TARGET,
+        f"{architecture}-unknown-linux-musl",
         "--no-default-features",
         "--locked",
     ]
@@ -25455,7 +25469,7 @@ def x86_64_engine_dependency_graph() -> dict[str, Any]:
         raise HarnessError(f"Cargo metadata did not return valid JSON: {error}") from error
     if not isinstance(metadata, dict):
         raise HarnessError("Cargo metadata did not return a JSON object")
-    report = validate_x86_64_engine_dependency_graph(metadata)
+    report = validate_x86_64_engine_dependency_graph(metadata) if architecture == "x86_64" else validate_aarch64_shared_engine_dependency_graph(metadata)
     report["command"] = command
     report["resolution"] = dict(X86_64_LOCKFILE_RESOLUTION)
     return report

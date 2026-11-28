@@ -953,6 +953,19 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.HarnessError, "selected dependency edge mismatch"):
             RUNNER.validate_production_dependency_graph(metadata)
 
+    def test_aarch64_shared_engine_dependency_graph_excludes_x86_cpu_helper(self) -> None:
+        metadata = x86_64_engine_dependency_metadata()
+        metadata["packages"] = [p for p in metadata["packages"] if p["name"] != "cpufeatures"]
+        metadata["resolve"]["nodes"] = [n for n in metadata["resolve"]["nodes"] if not n["id"].startswith("cpufeatures ")]
+        for node in metadata["resolve"]["nodes"]:
+            node["deps"] = [dep for dep in node["deps"] if dep["name"] != "cpufeatures"]
+        report = RUNNER.validate_aarch64_shared_engine_dependency_graph(metadata)
+        self.assertEqual(report["target"], "aarch64-unknown-linux-musl")
+        self.assertEqual(report["external_package_count"], 11)
+        metadata["resolve"]["nodes"][0]["deps"] = []
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_aarch64_shared_engine_dependency_graph(metadata)
+
     def test_x86_64_engine_dependency_graph_is_exact_and_excludes_libc(self) -> None:
         report = RUNNER.validate_x86_64_engine_dependency_graph(
             x86_64_engine_dependency_metadata()
