@@ -11114,10 +11114,10 @@ def _m1_x86_64_exclusions() -> list[dict[str, Any]]:
     return exclusions
 
 
-def _x86_64_source_map_unit_statuses(*, gate_name: str) -> dict[str, str]:
+def _x86_64_source_map_unit_statuses(*, gate_name: str, contract_path: Path = X86_64_SOURCE_MAP_CONTRACT) -> dict[str, str]:
     """Read target-local source predicates for one native evidence gate."""
 
-    contract = read_json(X86_64_SOURCE_MAP_CONTRACT)
+    contract = read_json(contract_path)
     raw_units = contract.get("units")
     if not isinstance(raw_units, list) or not raw_units:
         raise HarnessError(f"{gate_name} source map has no units")
@@ -11386,7 +11386,7 @@ def _m1_inventory_digest(value: object) -> str:
 
 
 def validate_x86_64_m1_foundations_contract(
-    contract: Mapping[str, Any], pin: Mapping[str, str]
+    contract: Mapping[str, Any], pin: Mapping[str, str], architecture: str = "x86_64"
 ) -> dict[str, Any]:
     """Validate the native x86 foundations execution contract without importing closure.
 
@@ -11395,6 +11395,14 @@ def validate_x86_64_m1_foundations_contract(
     native oracle, Rust target, and clean-source observations have all passed.
     """
 
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported native M1 architecture: {architecture}")
+    target_triple = f"{architecture}-unknown-linux-musl"
+    source_contract_paths = (
+        X86_64_API_CONTRACT, X86_64_API_COVERAGE_CONTRACT, X86_64_SOURCE_MAP_CONTRACT,
+    ) if architecture == "x86_64" else tuple(
+        ALLOCATOR_ROOT / f"aarch64-{name}-v3.5.0.json" for name in ("api", "api-coverage", "source-map")
+    )
     expected_keys = {
         "components",
         "exclusions",
@@ -11411,7 +11419,7 @@ def validate_x86_64_m1_foundations_contract(
     if (
         set(contract) != expected_keys
         or contract.get("format") != 1
-        or contract.get("schema") != "crabc-mimalloc-x86_64-m1-foundations"
+        or contract.get("schema") != f"crabc-mimalloc-{architecture}-m1-foundations"
     ):
         raise HarnessError("unsupported native x86 M1 foundations contract")
 
@@ -11423,11 +11431,11 @@ def validate_x86_64_m1_foundations_contract(
     if contract.get("upstream") != expected_upstream:
         raise HarnessError("native x86 M1 foundations upstream identity mismatch")
     expected_target = {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "endianness": "little",
         "kernel_baseline": "5.10",
         "os": "linux",
-        "rust_target": X86_64_RUST_TARGET,
+        "rust_target": target_triple,
     }
     if contract.get("target") != expected_target:
         raise HarnessError("native x86 M1 foundations target changed")
@@ -11435,7 +11443,7 @@ def validate_x86_64_m1_foundations_contract(
         "features": [],
         "no_default_features": True,
         "package": "crabc-mimalloc",
-        "rust_target": X86_64_RUST_TARGET,
+        "rust_target": target_triple,
         "test_threads": 1,
         "timeout_seconds": 300,
     }
@@ -11449,9 +11457,9 @@ def validate_x86_64_m1_foundations_contract(
         "compiler-tls-c-rust-trace",
         "compiler-tls-same-tld-terminal-c-rust-trace",
         "compiler-tls-codegen",
-        "x86-64-normal-engine-dependency-graph",
-        "x86-64-source-contract-inventories",
-        "x86-64-bounded-source-definitions",
+        f"{'x86-64' if architecture == 'x86_64' else 'aarch64'}-normal-engine-dependency-graph",
+        f"{'x86-64' if architecture == 'x86_64' else 'aarch64'}-source-contract-inventories",
+        f"{'x86-64' if architecture == 'x86_64' else 'aarch64'}-bounded-source-definitions",
     ]
     if contract.get("global_evidence") != expected_evidence:
         raise HarnessError("native x86 M1 foundations global evidence inventory changed")
@@ -11530,14 +11538,25 @@ def validate_x86_64_m1_foundations_contract(
             "sha256": file_digest(M1_FOUNDATIONS_CONTRACT),
         },
     }
+    if architecture == "aarch64":
+        expected_neutral_inventory["purpose"] = (
+            "Exact check filters, selected layout-key vectors, source-boundary shapes, "
+            "once-call-site shapes, prim.h declaration names, and exclusion identities shared "
+            "as source-shaped M1 inputs only. Their canonical JSON counts and digests are "
+            "checked before AArch64 execution; no x86 component status, report, or source-map "
+            "status is imported."
+        )
     if contract.get("neutral_inventory") != expected_neutral_inventory:
         raise HarnessError("native x86 M1 neutral source-boundary inventory changed")
 
     raw_components = contract.get("components")
     if not isinstance(raw_components, list) or len(raw_components) != len(neutral_inventory):
         raise HarnessError("native x86 M1 component inventory changed")
-    source_map_statuses = _m1_x86_64_source_map_unit_statuses()
+    source_map_statuses = _x86_64_source_map_unit_statuses(gate_name=f"native {architecture} M1", contract_path=source_contract_paths[2])
     expected_once_dispositions = _m1_x86_64_once_call_site_dispositions(neutral_inventory)
+    if architecture == "aarch64":
+        for disposition in expected_once_dispositions:
+            disposition["reason"] = disposition["reason"].replace("Linux/x86-64", "Linux/AArch64")
     expected_prim_declarations = _m1_x86_64_raw_primitive_declarations(neutral_inventory)
     components: list[dict[str, Any]] = []
     for index, raw_component in enumerate(raw_components):
@@ -11568,7 +11587,11 @@ def validate_x86_64_m1_foundations_contract(
         if raw_component.get("remaining_conditions") != []:
             raise HarnessError(f"native x86 M1 component {component_id} has unreviewed conditions")
 
-        expected_source_map_records = list(M1_X86_64_SOURCE_MAP_REFERENCES[component_id])
+        expected_source_map_records = [dict(record) for record in M1_X86_64_SOURCE_MAP_REFERENCES[component_id]]
+        if architecture == "aarch64":
+            for record in expected_source_map_records:
+                if record["unit_id"] == "x86-64-width-and-bit-operations":
+                    record["unit_id"] = "aarch64-width-and-bit-operations"
         raw_source_map_records = raw_component.get("source_map_records")
         if raw_source_map_records != expected_source_map_records:
             raise HarnessError(
@@ -11629,6 +11652,9 @@ def validate_x86_64_m1_foundations_contract(
         components.append(component)
 
     expected_exclusions = _m1_x86_64_exclusions()
+    if architecture == "aarch64":
+        for exclusion in expected_exclusions:
+            exclusion["reason"] = exclusion["reason"].replace("Linux/x86-64", "Linux/AArch64")
     raw_exclusions = contract.get("exclusions")
     if raw_exclusions != expected_exclusions:
         raise HarnessError("native x86 M1 explicit exclusion inventory changed")
@@ -11654,18 +11680,10 @@ def validate_x86_64_m1_foundations_contract(
         else:
             raise HarnessError("native x86 M1 raw primitive declaration has an invalid classification")
 
-    expected_source_contracts = [
-        relative(X86_64_API_CONTRACT),
-        relative(X86_64_API_COVERAGE_CONTRACT),
-        relative(X86_64_SOURCE_MAP_CONTRACT),
-    ]
+    expected_source_contracts = [relative(path) for path in source_contract_paths]
     if contract.get("source_contracts") != expected_source_contracts:
-        raise HarnessError("native x86 M1 source-contract inventory changed")
-    for source_contract in (
-        X86_64_API_CONTRACT,
-        X86_64_API_COVERAGE_CONTRACT,
-        X86_64_SOURCE_MAP_CONTRACT,
-    ):
+        raise HarnessError("native M1 source-contract inventory changed")
+    for source_contract in source_contract_paths:
         if not source_contract.is_file():
             raise HarnessError(f"native x86 M1 source contract is absent: {source_contract}")
 

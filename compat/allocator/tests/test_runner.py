@@ -4302,6 +4302,17 @@ class ContractTests(unittest.TestCase):
                 {key: 1 for key in RUNNER.M1_BOOTSTRAP_STATIC_IMAGE_LAYOUT_KEYS},
             )
 
+    def test_arm_m1_contract_keeps_target_specific_source_obligations(self) -> None:
+        path = RUNNER.ALLOCATOR_ROOT / "m1-foundations-aarch64-v3.5.0.json"
+        contract = RUNNER.read_json(path)
+        summary = RUNNER.validate_x86_64_m1_foundations_contract(contract, RUNNER.load_pin(), "aarch64")
+        self.assertEqual(summary["target"]["architecture"], "aarch64")
+        self.assertEqual(summary["execution"]["rust_target"], "aarch64-unknown-linux-musl")
+        self.assertEqual(len(summary["components"]), 6)
+        contract["source_contracts"][2] = "compat/allocator/x86_64-source-map-v3.5.0.json"
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_x86_64_m1_foundations_contract(contract, RUNNER.load_pin(), "aarch64")
+
     def test_x86_m1_contract_is_ready_for_native_evidence_not_an_aarch64_status_copy(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_X86_64_FOUNDATIONS_CONTRACT)
         summary = RUNNER.validate_x86_64_m1_foundations_contract(
