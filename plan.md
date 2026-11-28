@@ -157,9 +157,16 @@ Open in this phase: allocator M2 and later milestones. M2 is incomplete on
 x86-64 as well: VM primitives, arenas, initialization and fault seams keep
 remaining conditions in their x86 fragments, and M3 requires a complete M2.
 This is engine fidelity work, closed component by component with native
-AArch64 C/Rust evidence and recorded as pending for x86. CRAB-7 D2–D3;
-the full arm correctness candidate at one SHA after the product lanes land
-(a baseline run at `db3eb2f5a` with seeded inputs had no preflight blockers).
+AArch64 C/Rust evidence and recorded as pending for x86.
+
+CRAB-7 is complete: D1 `70802121a`, D2 `53da80782`, D3 `ff334bb8f`; the macOS
+facade runs 395 native tests, the Linux suite (852) and the rustdoc public
+API are unchanged, and the RFC records decisions 1–9 and the final module
+table. Its x86-64 tests run in the x86 phase.
+
+Next: the full arm correctness candidate at one SHA after the product lanes
+land. The baseline run at `db3eb2f5a` passed its first 42 steps; VM lane
+worktrees must live inside the clone's `.work/wt/` (`e504dc870`).
 
 Allocator M2 on AArch64 (`fc949c1dd`): the VM component runs natively (63
 checks, no C/Rust mismatch); its conditions narrow as the arenas,
