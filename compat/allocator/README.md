@@ -332,9 +332,26 @@ base pages. That VM has no hugetlbfs pool and no NUMA node topology, so the
 16 KiB and 64 KiB page sizes, `MAP_HUGETLB` success, 1-GiB pages and `mbind`
 placement remain open conditions.
 
-The x86 fragment's values are unchanged. Any check that the AArch64 fragment
-adds beyond the x86 inventory is pending on x86 until a native x86 run admits it
-into the x86 fragment.
+The x86 fragment's values are unchanged. The AArch64 fragment adds five
+checks to the x86 inventory, each an unchanged pinned-C/Rust receiver that ran
+natively on arm. All five are pending on x86 until a native x86 run admits them
+into the x86 fragment:
+
+- `process-thp-prctl-get-failure-c-rust-differential` and
+  `process-thp-prctl-set-failure-c-rust-differential`
+  (`m2_thp_prctl_{get,set}_failure_x86_64.py`) run the process-start
+  `_mi_prim_mem_init` caller with `mimalloc_allow_thp=0` and a failed
+  `PR_GET_THP_DISABLE` or `PR_SET_THP_DISABLE`.
+- `regular-arena-destroy-failure-c-rust-differential` and
+  `huge-arena-destroy-failure-c-rust-differential`
+  (`m2_second_arena_destroy_failure_x86_64.py`,
+  `m2_huge_arena_destroy_failure_x86_64.py`) fail the first primitive
+  release in `_mi_arenas_unsafe_destroy_all` for two regular OS arenas or two
+  huge-kind arenas. The aggregate re-parses both physical transcripts.
+- `policy-first-arena-trim-c-rust-differential`
+  (`m2_policy_first_arena_trim_x86_64.py`) drives the policy-first
+  `mi_arena_reserve` caller through a failed aligned-overmap prefix or suffix
+  release.
 
 ### Bitmap component
 

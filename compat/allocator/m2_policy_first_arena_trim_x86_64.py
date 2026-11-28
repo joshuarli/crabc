@@ -53,10 +53,11 @@ def parse_trace(output: str, source: str) -> dict[str, int]:
 
 
 def run(offline: bool) -> Path:
-    harness.require_native_x86_64()
+    architecture = harness.native_evidence_architecture()
+    harness.require_native_evidence(architecture)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-policy-first-arena-trim"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-policy-first-arena-trim"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "pinned-c-oracle"
     with harness.temporary_directory(prefix="m2-policy-first-arena-trim-") as directory:

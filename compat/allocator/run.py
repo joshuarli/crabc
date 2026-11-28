@@ -14074,6 +14074,123 @@ M2_X86_64_VM_PROCESS_RECEIVERS = {
     **M2_X86_64_PROCESS_PROTECTION_RECEIVERS,
 }
 
+# Receivers that only the AArch64 VM fragment admits. Each runs unchanged
+# pinned source against the shared engine; its x86 admission waits for a
+# native x86 run, so the x86 maps above stay the x86 fragment's inventory.
+M2_THP_PRCTL_FAILURE_FIELDS = {
+    "selected_allow_thp_raw", "config_has_transparent_huge_pages", "process_ready",
+    "first_prctl_count", "retry_prctl_count", "get_count", "set_count", "tuples_match",
+}
+M2_AARCH64_ADDED_THP_PROCESS_RECEIVERS = {
+    "process-thp-prctl-get-failure-c-rust-differential": {
+        "artifact": "m2-thp-prctl-get-failure",
+        "kind": "c-rust-process-thp-policy-differential",
+        "target": "compat/allocator/m2_thp_prctl_get_failure_x86_64.py",
+        "fields": M2_THP_PRCTL_FAILURE_FIELDS,
+        "c_extra": set(),
+        "c_values": {"allocation_succeeded": 1},
+        "rust_values": {"process_backing_active": 1, "retry_refused": 1},
+        "required_values": {
+            "selected_allow_thp_raw": 0, "config_has_transparent_huge_pages": 0,
+            "process_ready": 1, "first_prctl_count": 1, "retry_prctl_count": 1,
+            "get_count": 1, "set_count": 0, "tuples_match": 1,
+        },
+        "scope": "pinned-c-rust-process-start-failed-thp-get-clears-thp-and-continues-ready-without-repeat",
+    },
+    "process-thp-prctl-set-failure-c-rust-differential": {
+        "artifact": "m2-thp-prctl-set-failure",
+        "kind": "c-rust-process-thp-policy-differential",
+        "target": "compat/allocator/m2_thp_prctl_set_failure_x86_64.py",
+        "fields": M2_THP_PRCTL_FAILURE_FIELDS,
+        "c_extra": set(),
+        "c_values": {"allocation_succeeded": 1},
+        "rust_values": {"process_backing_active": 1, "retry_refused": 1},
+        "required_values": {
+            "selected_allow_thp_raw": 0, "config_has_transparent_huge_pages": 0,
+            "process_ready": 1, "first_prctl_count": 2, "retry_prctl_count": 2,
+            "get_count": 1, "set_count": 1, "tuples_match": 1,
+        },
+        "scope": "pinned-c-rust-process-start-failed-thp-set-clears-thp-and-continues-ready-without-repeat",
+    },
+}
+M2_THP_PROCESS_RECEIVERS = {
+    "x86_64": M2_X86_64_THP_PROCESS_RECEIVERS,
+    "aarch64": {**M2_X86_64_THP_PROCESS_RECEIVERS, **M2_AARCH64_ADDED_THP_PROCESS_RECEIVERS},
+}
+M2_AARCH64_VM_DIRECT_RECEIVERS = {
+    "regular-arena-destroy-failure-c-rust-differential": {
+        "artifact": "m2-second-arena-destroy-failure",
+        "kind": "c-rust-arena-destroy-failure-differential",
+        "target": "compat/allocator/m2_second_arena_destroy_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_destroy_failure_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_destroy_failure_c_rust_trace",
+        "trace_prefix": "m2.second_destroy_failure.",
+        "common": {
+            "setup": 1, "before_mapped": 1, "unmap_calls": 2,
+            "failed_range_exact": 1, "other_range_exact": 1,
+            "warning_calls": 1, "warning_before_accounting": 1,
+            "registry_after": 0, "failed_map_live": 1, "other_map_gone": 1,
+            "reserved_delta": -(128 * 1024 * 1024), "committed_delta": -(128 * 1024 * 1024),
+            "arena_count_delta": 0, "purge_calls": 0, "post_cleanup_unmapped": 1,
+        },
+        "c_only": {
+            "next_reserved": 1, "leak_survives_next": 1, "next_cleaned": 1,
+            "after_next_reserved_delta": -(128 * 1024 * 1024),
+            "after_next_committed_delta": -200736768, "raw_cleanup": 1,
+        },
+        "rust_only": {
+            "retained_owner": 1, "retry_released": 1,
+            "retry_reserved_delta": -(128 * 1024 * 1024),
+            "retry_committed_delta": -(128 * 1024 * 1024),
+        },
+        "c_receipt": ("c_source_continuation", "c_only"),
+        "scope": "pinned-c-rust-terminal-destroy-of-two-regular-os-arenas-with-first-failed-unmap-warning-before-accounting-leak-and-raw-retry",
+    },
+    "huge-arena-destroy-failure-c-rust-differential": {
+        "artifact": "m2-huge-arena-destroy-failure",
+        "kind": "c-rust-arena-destroy-failure-differential",
+        "target": "compat/allocator/m2_huge_arena_destroy_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_huge_arena_destroy_failure_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_huge_arena_destroy_failure_c_rust_trace",
+        "trace_prefix": "m2.huge_destroy_failure.",
+        "common": {
+            "setup": 1, "before_mapped": 1, "unmap_calls": 2, "warning_calls": 1,
+            "warning_before_accounting": 1, "registry_after": 0,
+            "failed_live": 1, "other_huge_gone": 1,
+            "reserved_delta": -(2 * 1024 * 1024 * 1024),
+            "committed_delta": -(2 * 1024 * 1024 * 1024),
+            "arena_count_delta": 0, "purge_calls": 0,
+            "raw_retry": 1, "terminal_unmapped": 1, "terminal_registry": 1,
+        },
+        "c_only": {"exact_ranges": 2},
+        "rust_only": {"retained_owner": 1},
+        "c_receipt": ("c_exact_unmap_ranges", "exact_ranges"),
+        "scope": "pinned-c-rust-terminal-destroy-of-two-huge-kind-arenas-with-first-failed-unmap-warning-before-accounting-leak-and-raw-retry",
+    },
+    "policy-first-arena-trim-c-rust-differential": {
+        "artifact": "m2-policy-first-arena-trim",
+        "kind": "c-rust-policy-first-arena-trim-differential",
+        "target": "compat/allocator/m2_policy_first_arena_trim_x86_64.py",
+        "fixture": "compat/allocator/m2_policy_first_arena_trim_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_policy_first_arena_trim_c_rust_trace",
+        "trace_prefix": "m2.policy_trim.",
+        "common": {
+            f"{case}.{field}": 12 if field == "warning_order" else 2 if field == "warning_count" else 1
+            for case in ("prefix", "suffix")
+            for field in ("owner", "geometry", "escaped_live", "warning_order", "warning_count",
+                          "warning_statistics_order", "statistics", "later_valid")
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-policy-first-arena-reserve-after-failed-aligned-overmap-prefix-or-suffix-release-warning-order-escaped-range-and-later-reservation",
+    },
+}
+M2_VM_DIRECT_RECEIVERS = {
+    "x86_64": {},
+    "aarch64": M2_AARCH64_VM_DIRECT_RECEIVERS,
+}
+
 
 def _m2_x86_64_page_map_first_map_fallback_producer() -> Any:
     """Load the pinned C/Rust PageMap first-map fallback producer."""
@@ -14541,6 +14658,8 @@ def _m2_x86_64_validated_component(
                 "c-rust-registered-arena-terminal-unmap-fault-differential",
                 "c-rust-process-os-page-terminal-unmap-fault-differential",
                 "c-rust-process-owned-protection-fault-differential",
+                "c-rust-arena-destroy-failure-differential",
+                "c-rust-policy-first-arena-trim-differential",
                 "c-rust-second-arena-reset-advice-matrix",
                 "c-rust-process-arena-purge-differential",
                 "c-rust-arena-delayed-purge-failure-differential",
@@ -14751,7 +14870,7 @@ def _m2_x86_64_validated_component(
             "c-rust-process-thp-madvise-differential",
             "c-rust-process-thp-policy-differential",
         }:
-            receiver = M2_X86_64_THP_PROCESS_RECEIVERS.get(raw_check["id"])
+            receiver = M2_THP_PROCESS_RECEIVERS[architecture].get(raw_check["id"])
             if (
                 component_id != "vm-primitives"
                 or receiver is None
@@ -14760,6 +14879,20 @@ def _m2_x86_64_validated_component(
                 or not (ROOT / receiver["target"]).is_file()
             ):
                 raise HarnessError("native x86 M2 process THP receiver is absent")
+        elif raw_check.get("kind") in {
+            "c-rust-arena-destroy-failure-differential",
+            "c-rust-policy-first-arena-trim-differential",
+        }:
+            receiver = M2_VM_DIRECT_RECEIVERS[architecture].get(raw_check["id"])
+            if (
+                component_id != "vm-primitives"
+                or receiver is None
+                or raw_check.get("kind") != receiver["kind"]
+                or raw_check.get("target") != receiver["target"]
+                or not (ROOT / receiver["target"]).is_file()
+                or not (ROOT / receiver["fixture"]).is_file()
+            ):
+                raise HarnessError(f"native {architecture} M2 direct VM receiver is absent")
         elif raw_check.get("kind") in {
             "c-rust-process-external-os-differential",
             "c-rust-explicit-arena-trim-differential",
@@ -15198,7 +15331,7 @@ def _run_m2_x86_64_thp_process_evidence(
     """Execute the source-built process-owned THP policy receivers."""
 
     results: dict[str, dict[str, Any]] = {}
-    for check_id, receiver in M2_X86_64_THP_PROCESS_RECEIVERS.items():
+    for check_id, receiver in M2_THP_PROCESS_RECEIVERS[architecture].items():
         command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
         execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
         require_success(execution, "process-owned THP C/Rust receiver")
@@ -15219,6 +15352,28 @@ def _run_m2_x86_64_process_vm_evidence(
         require_success(execution, "process-owned VM C/Rust receiver")
         evidence = read_json(ARTIFACT_ROOT / architecture / receiver["artifact"] / "evidence.json")
         results[check_id] = {**evidence, "command": command}
+    return results
+
+
+def _run_m2_vm_direct_receiver_evidence(
+    *, offline: bool, architecture: str,
+) -> dict[str, dict[str, Any]]:
+    """Execute the direct pinned-C/Rust VM receivers with raw transcripts."""
+
+    results: dict[str, dict[str, Any]] = {}
+    for check_id, receiver in M2_VM_DIRECT_RECEIVERS[architecture].items():
+        command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
+        execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
+        require_success(execution, "direct VM C/Rust receiver")
+        artifacts = ARTIFACT_ROOT / architecture / receiver["artifact"]
+        results[check_id] = {
+            **read_json(artifacts / "evidence.json"),
+            "command": command,
+            "c_stdout": (artifacts / "pinned-c.stdout").read_text(encoding="utf-8"),
+            "c_stderr": (artifacts / "pinned-c.stderr").read_text(encoding="utf-8"),
+            "rust_stdout": (artifacts / "rust.stdout").read_text(encoding="utf-8"),
+            "rust_stderr": (artifacts / "rust.stderr").read_text(encoding="utf-8"),
+        }
     return results
 
 
@@ -15600,6 +15755,7 @@ def _m2_x86_64_vm_check_records(
     thp_process_evidence: object | None = None,
     process_vm_evidence: object | None = None,
     architecture: str = "x86_64",
+    vm_direct_evidence: object | None = None,
 ) -> list[dict[str, Any]]:
     """Bind source-built VM differentials and direct owner receivers to their receipts.
 
@@ -15973,16 +16129,19 @@ def _m2_x86_64_vm_check_records(
     })
     if thp_process_evidence is not None:
         if not isinstance(thp_process_evidence, Mapping) or set(thp_process_evidence) != set(
-            M2_X86_64_THP_PROCESS_RECEIVERS
+            M2_THP_PROCESS_RECEIVERS[architecture]
         ):
             raise HarnessError("native x86 M2 process THP receipt inventory is invalid")
-        for check_id, receiver in M2_X86_64_THP_PROCESS_RECEIVERS.items():
+        for check_id, receiver in M2_THP_PROCESS_RECEIVERS[architecture].items():
             check = next(check for check in component["checks"] if check["id"] == check_id)
             observed = thp_process_evidence[check_id]
             expected_command = ["python3", receiver["target"]]
             c_trace = observed.get("c") if isinstance(observed, Mapping) else None
             rust_trace = observed.get("rust") if isinstance(observed, Mapping) else None
             command = observed.get("command") if isinstance(observed, Mapping) else None
+            c_values = receiver.get("c_values", {})
+            rust_values = receiver.get("rust_values", {})
+            required_values = receiver.get("required_values", {})
             if (
                 check.get("kind") != receiver["kind"]
                 or check.get("target") != receiver["target"]
@@ -15994,12 +16153,16 @@ def _m2_x86_64_vm_check_records(
                 or observed.get("mismatches") != []
                 or command not in (expected_command, expected_command + ["--offline"])
                 or not isinstance(c_trace, Mapping)
-                or set(c_trace) != receiver["fields"] | receiver["c_extra"]
+                or set(c_trace) != receiver["fields"] | receiver["c_extra"] | set(c_values)
                 or not isinstance(rust_trace, Mapping)
-                or set(rust_trace) != receiver["fields"]
+                or set(rust_trace) != receiver["fields"] | set(rust_values)
                 or any(type(value) is not int for value in (*c_trace.values(), *rust_trace.values()))
                 or any(c_trace[field] != rust_trace[field] for field in receiver["fields"])
                 or any(c_trace[field] != 0 for field in receiver["c_extra"])
+                or any(c_trace[field] != value for field, value in c_values.items())
+                or any(rust_trace[field] != value for field, value in rust_values.items())
+                or any(trace[field] != value for field, value in required_values.items()
+                       for trace in (c_trace, rust_trace))
                 or not isinstance(observed.get("scope"), str)
                 or not observed["scope"]
                 or any(
@@ -16222,6 +16385,10 @@ def _m2_x86_64_vm_check_records(
                 "passed_test_count": 1,
                 "target": check["target"],
             })
+    if vm_direct_evidence is not None:
+        records.extend(_m2_vm_direct_receiver_check_records(
+            component, pin, vm_direct_evidence, architecture
+        ))
     if runtime_thp_evidence is None:
         return records
     runtime_thp_producer = _m2_x86_64_runtime_thp_configuration_producer()
@@ -16252,6 +16419,86 @@ def _m2_x86_64_vm_check_records(
             "target": runtime_thp_check["target"],
         }
     )
+    return records
+
+
+def _m2_vm_direct_receiver_check_records(
+    component: Mapping[str, Any], pin: Mapping[str, str], evidence: object, architecture: str,
+) -> list[dict[str, Any]]:
+    """Bind each direct VM receipt to its two physical transcripts.
+
+    Both sides record the same shared relations; side-only fields are the
+    source continuation that only pinned C performs and the owner that only
+    Rust retains. The terminal arena-destroy receivers fail the first
+    `_mi_prim_free` in `mi_arenas_unsafe_destroy` (src/arena.c:1542-1557,
+    src/os.c:240-258): pinned C leaks the failed range, and Rust retains a
+    raw-retry owner for it. The policy-first trim receiver fails one aligned
+    overmap release under `mi_arena_reserve` (src/arena.c:341-406,
+    src/os.c:303-430) and has no side-only fields.
+    """
+
+    receivers = M2_VM_DIRECT_RECEIVERS[architecture]
+    if not isinstance(evidence, Mapping) or set(evidence) != set(receivers):
+        raise HarnessError(f"native {architecture} M2 direct VM receipt inventory is invalid")
+    records: list[dict[str, Any]] = []
+    for check_id, receiver in receivers.items():
+        check = next((item for item in component["checks"] if item["id"] == check_id), None)
+        observed = evidence[check_id]
+        artifacts = ARTIFACT_ROOT / architecture / receiver["artifact"]
+        expected_command = ["python3", receiver["target"]]
+        receipt_keys: set[str] = set()
+        expected_c_receipt: object = None
+        if receiver["c_receipt"] is not None:
+            receipt_key, c_receipt = receiver["c_receipt"]
+            receipt_keys.add(receipt_key)
+            expected_c_receipt = (
+                dict(receiver["c_only"]) if c_receipt == "c_only" else receiver["c_only"][c_receipt]
+            )
+        if (
+            check is None or check.get("kind") != receiver["kind"]
+            or check.get("target") != receiver["target"]
+            or check.get("expected_passed_test_count") != 1
+            or not isinstance(observed, Mapping)
+            or set(observed) != {
+                "status", "pinned_revision", "fixture", "c_executable", "rust_test", "trace",
+                *receipt_keys, "command", "c_stdout", "c_stderr", "rust_stdout", "rust_stderr",
+            }
+            or observed.get("status") != "passed"
+            or observed.get("pinned_revision") != pin["revision"]
+            or observed.get("rust_test") != receiver["rust_test"]
+            or observed.get("trace") != {**receiver["common"], **receiver["rust_only"]}
+            or any(observed.get(key) != expected_c_receipt for key in receipt_keys)
+            or observed.get("fixture") != artifact_record(ROOT / receiver["fixture"])
+            or observed.get("c_executable") != artifact_record(artifacts / "pinned-c-oracle")
+            or observed.get("command") not in (expected_command, expected_command + ["--offline"])
+            or observed.get("c_stderr") != ""
+            or observed.get("rust_stderr") != ""
+        ):
+            raise HarnessError(f"native {architecture} M2 direct VM receipt is invalid")
+        for side, expected in (
+            ("c", {**receiver["common"], **receiver["c_only"]}),
+            ("rust", {**receiver["common"], **receiver["rust_only"]}),
+        ):
+            values: dict[str, int] = {}
+            for line in str(observed[f"{side}_stdout"]).splitlines():
+                candidate = line.rsplit(" ... ", 1)[-1]
+                if not candidate.startswith(receiver["trace_prefix"]):
+                    continue
+                match = re.fullmatch(r"([a-z_.]+)=(-?[0-9]+)", candidate[len(receiver["trace_prefix"]):])
+                if match is None or match.group(1) in values:
+                    raise HarnessError(f"native {architecture} M2 direct VM transcript is invalid")
+                values[match.group(1)] = int(match.group(2))
+            if values != expected:
+                raise HarnessError(f"native {architecture} M2 direct VM trace differs from its receipt")
+        records.append({
+            "comparison_status": "matched",
+            "component": "vm-primitives",
+            "command": list(observed["command"]),
+            "evidence_scope": receiver["scope"],
+            "id": check_id,
+            "passed_test_count": 1,
+            "target": receiver["target"],
+        })
     return records
 
 
@@ -17458,6 +17705,7 @@ def m2_aarch64_memory_substrate_report(
     runtime_thp_evidence: Mapping[str, Any],
     thp_process_evidence: Mapping[str, Any],
     process_vm_evidence: Mapping[str, Any],
+    vm_direct_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Render the executed AArch64 components and keep every other component open."""
 
@@ -17468,7 +17716,7 @@ def m2_aarch64_memory_substrate_report(
         raise HarnessError("native aarch64 M2 source evidence did not pass")
     expected_vm_records = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
-        architecture="aarch64",
+        architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
@@ -17578,6 +17826,7 @@ def m2_aarch64_memory_substrate_report(
             "aarch64-vm-primitives-fixed-profile-c-rust-and-owner-evidence": dict(vm_evidence),
         },
         "producer_evidence": {
+            "vm_direct_evidence": dict(vm_direct_evidence),
             "process_vm_evidence": dict(process_vm_evidence),
             "thp_process_evidence": dict(thp_process_evidence),
         },
@@ -17616,9 +17865,12 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence("aarch64")
     thp_process_evidence = _run_m2_x86_64_thp_process_evidence(offline=offline, architecture="aarch64")
     process_vm_evidence = _run_m2_x86_64_process_vm_evidence(offline=offline, architecture="aarch64")
+    vm_direct_evidence = _run_m2_vm_direct_receiver_evidence(
+        offline=offline, architecture="aarch64",
+    )
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
-        architecture="aarch64",
+        architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
     focused_checks = [
         *vm_checks,
@@ -17642,6 +17894,7 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         runtime_thp_evidence=runtime_thp_evidence,
         thp_process_evidence=thp_process_evidence,
         process_vm_evidence=process_vm_evidence,
+        vm_direct_evidence=vm_direct_evidence,
     )
     report["native_execution_provenance"] = native_execution_attestation(
         execution_before, require_native_aarch64_evidence(), architecture="aarch64"

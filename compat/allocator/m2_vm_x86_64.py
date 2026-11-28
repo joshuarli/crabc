@@ -388,6 +388,49 @@ THP_PROCESS_CHECK_IDS = (
     "process-thp-disabled-policy-c-rust-differential",
     "process-thp-inherited-disable-advice-c-rust-differential",
 )
+# Checks that only the AArch64 fragment admits. Each receiver ran natively on
+# AArch64 against unchanged pinned source; its x86 admission is pending a
+# native x86 run, so the x86 inventory above is unchanged.
+THP_PRCTL_FAILURE_CHECK_IDS = (
+    "process-thp-prctl-get-failure-c-rust-differential",
+    "process-thp-prctl-set-failure-c-rust-differential",
+)
+ARENA_DESTROY_FAILURE_CHECK_IDS = (
+    "regular-arena-destroy-failure-c-rust-differential",
+    "huge-arena-destroy-failure-c-rust-differential",
+)
+POLICY_FIRST_ARENA_TRIM_CHECK_ID = "policy-first-arena-trim-c-rust-differential"
+AARCH64_ADDED_CHECKS = (
+    (
+        THP_PRCTL_FAILURE_CHECK_IDS[0],
+        "c-rust-process-thp-policy-differential",
+        "compat/allocator/m2_thp_prctl_get_failure_x86_64.py",
+    ),
+    (
+        THP_PRCTL_FAILURE_CHECK_IDS[1],
+        "c-rust-process-thp-policy-differential",
+        "compat/allocator/m2_thp_prctl_set_failure_x86_64.py",
+    ),
+    (
+        ARENA_DESTROY_FAILURE_CHECK_IDS[0],
+        "c-rust-arena-destroy-failure-differential",
+        "compat/allocator/m2_second_arena_destroy_failure_x86_64.py",
+    ),
+    (
+        ARENA_DESTROY_FAILURE_CHECK_IDS[1],
+        "c-rust-arena-destroy-failure-differential",
+        "compat/allocator/m2_huge_arena_destroy_failure_x86_64.py",
+    ),
+    (
+        POLICY_FIRST_ARENA_TRIM_CHECK_ID,
+        "c-rust-policy-first-arena-trim-differential",
+        "compat/allocator/m2_policy_first_arena_trim_x86_64.py",
+    ),
+)
+CHECKS_BY_ARCHITECTURE = {"x86_64": CHECKS, "aarch64": (*CHECKS, *AARCH64_ADDED_CHECKS)}
+ADDED_THP_POLICY_CHECK_IDS = {"x86_64": (), "aarch64": THP_PRCTL_FAILURE_CHECK_IDS}
+ADDED_TERMINAL_RELEASE_CHECK_IDS = {"x86_64": (), "aarch64": ARENA_DESTROY_FAILURE_CHECK_IDS}
+ADDED_POLICY_TRIM_CHECK_IDS = {"x86_64": (), "aarch64": (POLICY_FIRST_ARENA_TRIM_CHECK_ID,)}
 TRACE_CHECK_ID = CHECKS[0][0]
 TRACE_TARGET = CHECKS[0][2]
 
@@ -821,8 +864,10 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
     if source_map != expected_source_map:
         raise _error("source-map boundary changed")
 
+    checks = CHECKS_BY_ARCHITECTURE[architecture]
+    check_ids = tuple(check[0] for check in checks)
     raw_checks = component.get("checks")
-    if not isinstance(raw_checks, list) or len(raw_checks) != len(CHECKS):
+    if not isinstance(raw_checks, list) or len(raw_checks) != len(checks):
         raise _error("check inventory changed")
     expected_checks = [
         {
@@ -831,7 +876,7 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
             "target": target_name,
             "expected_passed_test_count": 3 if check_id == RESET_ADVICE_MATRIX_ID else 1,
         }
-        for check_id, kind, target_name in CHECKS
+        for check_id, kind, target_name in checks
     ]
     if raw_checks != expected_checks:
         raise _error("check inventory or exact test target changed")
@@ -859,7 +904,7 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
             f"bounded source definition {definition_id} evidence checks",
             allow_empty=False,
         )
-        if any(check_id not in CHECK_IDS for check_id in evidence_ids):
+        if any(check_id not in check_ids for check_id in evidence_ids):
             raise _error(f"bounded source definition {definition_id} has an unknown evidence check")
         _validate_anchor(definition.get("source_anchor"), f"bounded source definition {definition_id}")
 
@@ -880,7 +925,7 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
         evidence_ids = _require_string_list(
             branch.get("evidence_check_ids"), f"branch {branch['id']} evidence checks", allow_empty=True
         )
-        if any(check_id not in CHECK_IDS for check_id in evidence_ids):
+        if any(check_id not in check_ids for check_id in evidence_ids):
             raise _error(f"branch {branch['id']} has an unknown evidence check")
         missing_conditions = _require_string_list(
             branch.get("missing_conditions"), f"branch {branch['id']} missing conditions", allow_empty=True
@@ -913,6 +958,8 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
         or "runtime-source-environment-thp-ready-configuration-admission"
         not in thp_branch["evidence_check_ids"]
         or any(check_id not in thp_branch["evidence_check_ids"] for check_id in THP_PROCESS_CHECK_IDS)
+        or any(check_id not in thp_branch["evidence_check_ids"]
+               for check_id in ADDED_THP_POLICY_CHECK_IDS[architecture])
         or "normal RuntimeProcessStorage initialization" not in thp_branch["source_scope"]
         or "explicit Rust ProcessMain traversal" not in thp_branch["source_scope"]
         or "finite direct matrix" not in thp_branch["source_scope"].lower()
@@ -942,6 +989,7 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
             "thp-direct-policy-outcome-matrix",
             "runtime-source-environment-thp-ready-configuration-admission",
             *THP_PROCESS_CHECK_IDS,
+            *ADDED_THP_POLICY_CHECK_IDS[architecture],
         ]
     ):
         raise _error("THP direct-policy matrix source definition lost its exact evidence binding")
@@ -1064,6 +1112,39 @@ def load_fragment(path: Path, architecture: str = "x86_64") -> dict[str, Any]:
                 ("unix-free-primitive", "qualified-fixed-profile"),
             ),
         ),
+    )
+    terminal_release_bindings += tuple(
+        (
+            check_id,
+            (
+                "os-free-and-full-memory-id-release",
+                "arena-terminal-destroy-and-os-release",
+                "unix-fixed-free-primitive",
+                *(("os-huge-page-free-loop",) if check_id == ARENA_DESTROY_FAILURE_CHECK_IDS[1] else ()),
+            ),
+            (
+                ("os-free-and-statistics-events", "partial-fixed-profile"),
+                ("unix-free-primitive", "qualified-fixed-profile"),
+            ),
+        )
+        for check_id in ADDED_TERMINAL_RELEASE_CHECK_IDS[architecture]
+    )
+    terminal_release_bindings += tuple(
+        (
+            check_id,
+            (
+                "arena-first-policy-reserve",
+                "arena-policy-regular-map-and-manage",
+                "os-regular-and-aligned-map-owners",
+                "os-normal-aligned-and-offset-owners",
+                "unix-fixed-free-primitive",
+            ),
+            (
+                ("os-primitive-regular-and-aligned-allocation", "partial-fixed-profile"),
+                ("arena-first-policy-reserve", "partial-fixed-profile"),
+            ),
+        )
+        for check_id in ADDED_POLICY_TRIM_CHECK_IDS[architecture]
     )
     for check_id, definition_ids, branch_ids in terminal_release_bindings:
         for definition_id in definition_ids:

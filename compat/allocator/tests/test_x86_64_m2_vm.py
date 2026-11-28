@@ -179,10 +179,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
 
     @staticmethod
-    def vm_evidence(summary):
+    def vm_evidence(summary, fragment_path=RUNNER.M2_X86_64_VM_FRAGMENT):
         vm = next(component for component in summary["components"] if component["id"] == "vm-primitives")
         producer = RUNNER._m2_x86_64_vm_producer()
-        fragment = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        fragment = RUNNER.read_json(fragment_path)
         anchors = []
         seen = set()
         for definition in fragment["component"]["bounded_source_definitions"]:
@@ -875,8 +875,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
         x86_receipt = self.vm_evidence(self.summary())
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, x86_receipt, architecture="aarch64")
+        arm_anchored = self.vm_evidence(self.summary(), RUNNER.M2_AARCH64_VM_FRAGMENT)
         arm_receipt = json.loads(
-            json.dumps(x86_receipt, default=str)
+            json.dumps(arm_anchored, default=str)
             .replace("x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl")
             .replace("/x86_64/", "/aarch64/")
             .replace("crabc-mimalloc-x86_64-m2-vm-primitives-evidence",
@@ -886,6 +887,105 @@ class NativeVmAssemblyTests(unittest.TestCase):
         arm_receipt["nonclaims"] = summary["components"][0]["remaining_conditions"]
         records = RUNNER._m2_x86_64_vm_check_records(summary, arm_receipt, architecture="aarch64")
         self.assertTrue(all("aarch64-unknown-linux-musl" in record["command"][0] for record in records[:3]))
+
+    @staticmethod
+    def arm_summary():
+        return RUNNER.validate_aarch64_m2_memory_substrate_contract(
+            RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin()
+        )
+
+    @staticmethod
+    def vm_direct_receipts(pin, artifact):
+        evidence = {}
+        for check_id, receiver in RUNNER.M2_AARCH64_VM_DIRECT_RECEIVERS.items():
+            def transcript(values):
+                return "".join(f"{receiver['trace_prefix']}{field}={value}\n" for field, value in values.items())
+            receipt = {}
+            if receiver["c_receipt"] is not None:
+                receipt_key, c_receipt = receiver["c_receipt"]
+                receipt[receipt_key] = (dict(receiver["c_only"]) if c_receipt == "c_only"
+                                        else receiver["c_only"][c_receipt])
+            evidence[check_id] = {
+                "status": "passed", "pinned_revision": pin["revision"], "fixture": artifact,
+                "c_executable": artifact, "rust_test": receiver["rust_test"],
+                "trace": {**receiver["common"], **receiver["rust_only"]},
+                **receipt,
+                "command": ["python3", receiver["target"], "--offline"],
+                "c_stdout": transcript({**receiver["common"], **receiver["c_only"]}), "c_stderr": "",
+                "rust_stdout": "test receiver ... " + transcript({**receiver["common"], **receiver["rust_only"]}),
+                "rust_stderr": "",
+            }
+        return evidence
+
+    def test_arm_vm_direct_receipts_require_both_transcripts_and_retained_owner(self):
+        component = self.arm_summary()["components"][0]
+        pin = {"revision": "pinned-revision"}
+        artifact = {"path": "source-bound", "bytes": 1, "sha256": "a" * 64}
+        evidence = self.vm_direct_receipts(pin, artifact)
+        with mock.patch.object(RUNNER, "artifact_record", return_value=artifact):
+            records = RUNNER._m2_vm_direct_receiver_check_records(component, pin, evidence, "aarch64")
+            self.assertEqual([record["id"] for record in records], list(evidence))
+            for check_id, receiver in RUNNER.M2_AARCH64_VM_DIRECT_RECEIVERS.items():
+                receipt_fields = () if receiver["c_receipt"] is None else (receiver["c_receipt"][0],)
+                for field in ("status", "pinned_revision", "fixture", "c_executable", "rust_test",
+                              "trace", *receipt_fields, "command", "c_stderr", "rust_stderr"):
+                    with self.subTest(check_id=check_id, field=field):
+                        changed = copy.deepcopy(evidence)
+                        changed[check_id][field] = "stale"
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_vm_direct_receiver_check_records(component, pin, changed, "aarch64")
+                for side, values in (("c", {**receiver["common"], **receiver["c_only"]}),
+                                     ("rust", {**receiver["common"], **receiver["rust_only"]})):
+                    field, value = next(reversed(values.items()))
+                    with self.subTest(check_id=check_id, side=side):
+                        changed = copy.deepcopy(evidence)
+                        line = f"{receiver['trace_prefix']}{field}={value}\n"
+                        changed[check_id][f"{side}_stdout"] = changed[check_id][f"{side}_stdout"].replace(
+                            line, f"{receiver['trace_prefix']}{field}={value + 1}\n")
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_vm_direct_receiver_check_records(component, pin, changed, "aarch64")
+            with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+                RUNNER._m2_vm_direct_receiver_check_records(component, pin, {}, "aarch64")
+        self.assertEqual(RUNNER.M2_VM_DIRECT_RECEIVERS["x86_64"], {})
+
+    def test_arm_thp_prctl_failure_receipts_require_shared_and_side_only_relations(self):
+        summary = self.arm_summary()
+        receipts = {}
+        for check_id, receiver in RUNNER.M2_THP_PROCESS_RECEIVERS["aarch64"].items():
+            shared = {field: receiver.get("required_values", {}).get(field, 0) for field in receiver["fields"]}
+            receipts[check_id] = {
+                "c": {**shared, **{field: 0 for field in receiver["c_extra"]}, **receiver.get("c_values", {})},
+                "rust": {**shared, **receiver.get("rust_values", {})},
+                "c_commands": {"build_status": 0, "run_status": 0, "stderr": ""},
+                "rust_commands": {"build_status": 0, "run_status": 0, "stderr": ""},
+                "command": ["python3", receiver["target"], "--offline"],
+                "mismatches": [], "scope": receiver["scope"], "status": "matched",
+            }
+        component = next(item for item in summary["components"] if item["id"] == "vm-primitives")
+        vm = self.vm_evidence(self.summary(), RUNNER.M2_AARCH64_VM_FRAGMENT)
+        with mock.patch.object(RUNNER, "_m2_x86_64_vm_rust_receipt_is_bound", return_value=True), \
+                mock.patch.object(RUNNER, "_m2_x86_64_vm_c_command_is_bound", return_value=True), \
+                mock.patch.object(RUNNER, "_m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound", return_value=True):
+            vm = {**vm, "schema": "crabc-mimalloc-aarch64-m2-vm-primitives-evidence",
+                  "architecture": "aarch64", "nonclaims": component["remaining_conditions"]}
+            records = RUNNER._m2_x86_64_vm_check_records(
+                summary, vm, thp_process_evidence=receipts, architecture="aarch64")
+            self.assertTrue(set(RUNNER.M2_AARCH64_ADDED_THP_PROCESS_RECEIVERS) <= {row["id"] for row in records})
+            for check_id in RUNNER.M2_AARCH64_ADDED_THP_PROCESS_RECEIVERS:
+                for side, field in (("c", "allocation_succeeded"), ("rust", "retry_refused"),
+                                    ("rust", "first_prctl_count")):
+                    with self.subTest(check_id=check_id, side=side, field=field):
+                        changed = copy.deepcopy(receipts)
+                        changed[check_id][side][field] += 1
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_x86_64_vm_check_records(
+                                summary, vm, thp_process_evidence=changed, architecture="aarch64")
+            with self.assertRaises(RUNNER.HarnessError):
+                RUNNER._m2_x86_64_vm_check_records(
+                    summary, vm, thp_process_evidence={
+                        key: value for key, value in receipts.items()
+                        if key in RUNNER.M2_X86_64_THP_PROCESS_RECEIVERS
+                    }, architecture="aarch64")
 
     def test_vm_fragment_reference_and_partial_status_fail_closed(self):
         contract = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
