@@ -9,7 +9,8 @@ import run as harness
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix('.c')
-ARTIFACTS = harness.ARTIFACT_ROOT / 'x86_64/m2-process-owned-decommit-fault'
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / 'm2-process-owned-decommit-fault'
 TEST = 'os::tests::emit_m2_process_owned_decommit_fault_c_rust_trace'
 FIELDS = (
     'allocated', 'full_owner', 'page_size', 'mapping_size', 'request_offset',
@@ -70,7 +71,7 @@ def c_oracle(offline: bool, profile: str = 'release') -> tuple[dict[str, int], d
 def rust_receiver(profile: str = 'release') -> tuple[dict[str, int], dict]:
     if profile == 'debug-1':
         build = harness.command_record(['cargo', 'test', '--locked', '--target',
-            'x86_64-unknown-linux-musl', '-p', 'crabc-mimalloc', '--lib',
+            f'{ARCH}-unknown-linux-musl', '-p', 'crabc-mimalloc', '--lib',
             '--no-default-features', '--features', 'mi-debug-1', '--no-run',
             '--message-format=json'], cwd=ROOT, timeout_seconds=3600)
         harness.require_success(build, 'Rust debug decommit receiver build')
@@ -122,7 +123,7 @@ def expected_values(profile: str = 'release') -> dict[str, int]:
     }
 
 def run(offline: bool, c_only: bool, profile: str = 'release') -> dict:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     if profile not in ('release', 'debug-1'):
         raise harness.HarnessError('unsupported process-owned decommit profile')
     c, c_commands = c_oracle(offline, profile)

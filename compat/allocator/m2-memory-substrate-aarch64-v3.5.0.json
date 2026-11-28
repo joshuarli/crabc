@@ -40,11 +40,10 @@
       ]
     },
     {
-      "id": "fault-injection",
-      "native_status": "not-executed",
-      "remaining_conditions": [
-        "The native AArch64 source-indexed fault-seam inventory has not been produced; the x86-64 fragment is not AArch64 evidence."
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-fault-seam-inventory-aarch64-v3.5.0.fragment.json"
+      },
+      "id": "fault-injection"
     },
     {
       "id": "allocator-recursion",

@@ -226,8 +226,22 @@ static long m2_fault_inventory_mbind_syscall(
     const unsigned long* mask, unsigned long maxnode, unsigned flags);
 #endif
 #if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+#include <fcntl.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
+/* Pinned src/prim/unix/prim.c:84-119 reads its Linux observations through
+ * raw SYS_open/SYS_read/SYS_close where those numbers exist (x86-64) and
+ * through libc open/read/close otherwise (AArch64 has only openat). The
+ * probe intercepts the import the source selects and delegates to it. */
+#if defined(SYS_open)
+#define M2_DETECTION_OPEN(path, flags, mode) syscall(SYS_open, path, flags, mode)
+#define M2_DETECTION_READ(fd, buffer, length) syscall(SYS_read, fd, buffer, length)
+#define M2_DETECTION_CLOSE(fd) syscall(SYS_close, fd)
+#else
+#define M2_DETECTION_OPEN(path, flags, mode) open(path, flags, mode)
+#define M2_DETECTION_READ(fd, buffer, length) read(fd, buffer, length)
+#define M2_DETECTION_CLOSE(fd) close(fd)
+#endif
 static long m2_detection_open(const char* path, int flags, int mode);
 static long m2_detection_read(int fd, void* buffer, size_t length);
 static long m2_detection_close(int fd);
@@ -242,6 +256,11 @@ static int m2_detection_sysinfo(struct sysinfo* info);
 #define M2_RAW_SYS_access(...) syscall(SYS_access, __VA_ARGS__)
 #define M2_RAW_SYS_getcpu(...) syscall(SYS_getcpu, __VA_ARGS__)
 #define M2_RAW_SYS_getrandom(...) syscall(SYS_getrandom, __VA_ARGS__)
+#if !defined(SYS_open)
+#define open(path, flags) m2_detection_open(path, flags, 0)
+#define read(fd, buffer, length) m2_detection_read(fd, buffer, length)
+#define close(fd) m2_detection_close(fd)
+#endif
 #define sysinfo(info) m2_detection_sysinfo(info)
 #endif
 #undef mi_atomic_cas_strong_acq_rel
@@ -251,6 +270,9 @@ static int m2_detection_sysinfo(struct sysinfo* info);
 #include CRABC_M2_FAULT_SEAM_PRIM_PROFILE
 #undef syscall
 #undef sysinfo
+#undef open
+#undef read
+#undef close
 #undef M2_RAW_SYS_open
 #undef M2_RAW_SYS_read
 #undef M2_RAW_SYS_close
@@ -520,20 +542,20 @@ typedef struct memory_detection_probe_s {
 static memory_detection_probe_t memory_detection_probe = {0};
 
 static long m2_detection_open(const char* path, int flags, int mode) {
-  if (!memory_detection_probe.active) return syscall(SYS_open, path, flags, mode);
+  if (!memory_detection_probe.active) return M2_DETECTION_OPEN(path, flags, mode);
   memory_detection_probe_t* p = &memory_detection_probe;
   p->opens++;
   p->valid = p->valid && flags == O_RDONLY && mode == 0 && strcmp(path, p->thp
       ? "/sys/kernel/mm/transparent_hugepage/enabled"
       : "/proc/sys/vm/overcommit_memory") == 0;
   if (p->selected == 0) { errno = EACCES; return -1; }
-  p->descriptor = (int)syscall(SYS_open, "/dev/null", O_RDONLY, 0);
+  p->descriptor = (int)M2_DETECTION_OPEN("/dev/null", O_RDONLY, 0);
   p->valid = p->valid && p->descriptor >= 0;
   return p->descriptor;
 }
 
 static long m2_detection_read(int fd, void* buffer, size_t length) {
-  if (!memory_detection_probe.active) return syscall(SYS_read, fd, buffer, length);
+  if (!memory_detection_probe.active) return M2_DETECTION_READ(fd, buffer, length);
   memory_detection_probe_t* p = &memory_detection_probe;
   p->reads++;
   p->capacity = length;
@@ -557,14 +579,14 @@ static long m2_detection_read(int fd, void* buffer, size_t length) {
 }
 
 static long m2_detection_close(int fd) {
-  if (!memory_detection_probe.active) return syscall(SYS_close, fd);
+  if (!memory_detection_probe.active) return M2_DETECTION_CLOSE(fd);
   memory_detection_probe_t* p = &memory_detection_probe;
   p->closes++;
   p->valid = p->valid && fd == p->descriptor && p->closes == 1;
-  const long result = syscall(SYS_close, fd);
+  const long result = M2_DETECTION_CLOSE(fd);
   p->valid = p->valid && result == 0;
   if (p->selected == 3) {
-    p->replacement = (int)syscall(SYS_open, "/dev/null", O_RDONLY, 0);
+    p->replacement = (int)M2_DETECTION_OPEN("/dev/null", O_RDONLY, 0);
     p->valid = p->valid && p->replacement == fd;
     errno = EINTR;
     return -1;
@@ -600,7 +622,7 @@ static bool emit_memory_detection_fault_matrix(void) {
       bool released = selected == 0;
       if (selected == 3) {
         released = fcntl(p->replacement, F_GETFD) >= 0;
-        released = syscall(SYS_close, p->replacement) == 0 && released;
+        released = M2_DETECTION_CLOSE(p->replacement) == 0 && released;
       } else if (selected != 0) {
         errno = 0;
         released = fcntl(p->descriptor, F_GETFD) == -1 && errno == EBADF;

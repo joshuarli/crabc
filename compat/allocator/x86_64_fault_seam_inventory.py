@@ -28,6 +28,7 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
+ARCHITECTURES = ("x86_64", "aarch64")
 # Format 8 includes the primitive memory-detection failure/lifetime matrix.
 FORMAT = 8
 ROOT = Path(__file__).resolve().parents[2]
@@ -369,25 +370,34 @@ MBIND_PROFILE_DIRECTORY_MODE = 0o700
 MBIND_PROFILE_FILE_MODE = 0o600
 CONTAINER_CHECKOUT_ROOT = Path("/workspace")
 CONTAINER_WORK_ROOT = Path("/workspace/.work/allocator-x86_64")
+CONTAINER_WORK_ROOTS = {
+    architecture: Path(f"/workspace/.work/allocator-{architecture}") for architecture in ARCHITECTURES
+}
 DIRECT_FIXTURE_SOURCE_UNITS = (
     "src/os.c", "src/arena.c", "src/init.c", "src/page.c", "src/prim/prim.c",
 )
 RESOLVED_DIRECT_PRIMITIVE = "src/prim/unix/prim.c"
 RUST_TRACE_SOURCE = "crabc-mimalloc/src/os.rs"
-RUST_TRACE_SOURCE_FILES = (
-    "Cargo.lock", "Cargo.toml", ".cargo/config.toml", "crabc-core/Cargo.toml",
-    "crabc-core/src/error.rs", "crabc-core/src/lib.rs", "crabc-core/src/mm.rs",
-    "crabc-core/src/mm_x86_64.rs", "crabc-core/src/param.rs", "crabc-core/src/syscall.rs",
-    "crabc-core/src/syscall_x86_64.rs", "crabc-core/src/thread.rs",
-    "crabc-core/src/fs.rs", "crabc-core/src/io.rs", "crabc-core/src/system.rs",
-    "crabc-mimalloc/Cargo.toml", "crabc-mimalloc/src/config.rs",
-    "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/invariants.rs",
-    "crabc-mimalloc/src/lib.rs", "crabc-mimalloc/src/lock.rs",
-    "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/random.rs",
-    "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs",
-    "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/page_map.rs",
-    "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/single_thread.rs",
-)
+# The converged crabc-core tree (19827e480) keeps one shared `mm.rs` and the
+# target syscall facts in `syscall/<architecture>.rs`.
+RUST_TRACE_SOURCE_FILES_BY_ARCHITECTURE = {
+    architecture: (
+        "Cargo.lock", "Cargo.toml", ".cargo/config.toml", "crabc-core/Cargo.toml",
+        "crabc-core/src/error.rs", "crabc-core/src/lib.rs", "crabc-core/src/mm.rs",
+        "crabc-core/src/param.rs", "crabc-core/src/syscall.rs",
+        f"crabc-core/src/syscall/{architecture}.rs", "crabc-core/src/thread.rs",
+        "crabc-core/src/fs.rs", "crabc-core/src/io.rs", "crabc-core/src/system.rs",
+        "crabc-mimalloc/Cargo.toml", "crabc-mimalloc/src/config.rs",
+        "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/invariants.rs",
+        "crabc-mimalloc/src/lib.rs", "crabc-mimalloc/src/lock.rs",
+        "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/random.rs",
+        "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs",
+        "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/page_map.rs",
+        "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/single_thread.rs",
+    )
+    for architecture in ARCHITECTURES
+}
+RUST_TRACE_SOURCE_FILES = RUST_TRACE_SOURCE_FILES_BY_ARCHITECTURE["x86_64"]
 METADATA_PUBLICATION_RUST_SOURCE_FILES = (
     "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/process_init.rs",
 )
@@ -412,7 +422,20 @@ NONCLAIMS = (
     "The Linux detection receiver injects file/sysinfo observations at primitive boundaries and checks real descriptor lifetime; it does not qualify ambient hardware data or other initialization callers.",
     "This receipt leaves the fault-injection component and M2 partial.",
 )
+NONCLAIMS_BY_ARCHITECTURE = {
+    "x86_64": NONCLAIMS,
+    "aarch64": tuple(
+        nonclaim.replace("selected x86 libc startup", "selected AArch64 libc startup")
+        for nonclaim in NONCLAIMS
+    ) + (
+        "Every relation is fixed to the qualifying arm64 VM's 4 KiB base pages; 16 KiB and 64 KiB hosts need their own native receipt.",
+    ),
+}
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
+FRAGMENT_PATHS = {
+    architecture: ROOT / f"compat/allocator/m2-fault-seam-inventory-{architecture}-v3.5.0.fragment.json"
+    for architecture in ARCHITECTURES
+}
 FAULT_COMPONENT_CHECK_ID = "source-indexed-fault-seam-inventory"
 FAULT_COMPONENT_SOURCE_MAP_RECORDS = [
     {"unit_id": "page-map-lifecycle", "required_status": "partial"},
@@ -464,6 +487,66 @@ FAULT_COMPONENT_REMAINING_CONDITIONS = [
     "The Linux detection matrix admits only direct overcommit/THP observation and physical-memory sysinfo conversion. Open/read errors retain their source fallback; every successful open closes its exact real descriptor once, including EOF and read/close EINTR, and no close retry may consume a reused descriptor. Process initialization beyond these observations remains unqualified.",
     "The fault-injection component and M2 remain partial.",
 ]
+FAULT_COMPONENT_REMAINING_CONDITIONS_BY_ARCHITECTURE = {
+    "x86_64": FAULT_COMPONENT_REMAINING_CONDITIONS,
+    "aarch64": [
+        FAULT_COMPONENT_REMAINING_CONDITIONS[0],
+        FAULT_COMPONENT_REMAINING_CONDITIONS[1],
+        "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified. The qualifying arm64 VM exposes no hugetlbfs pool and no NUMA node topology, so its huge-page and mbind rows cover only the fixed primitive-response profile.",
+        "The Linux detection matrix admits only direct overcommit/THP observation and physical-memory sysinfo conversion. AArch64 has no SYS_open, so pinned src/prim/unix/prim.c:84-119 reads those files through libc open/read/close; the C receiver intercepts that import, and Rust keeps its raw openat/read/close route. Open/read errors retain their source fallback; every successful open closes its exact real descriptor once, including EOF and read/close EINTR, and no close retry may consume a reused descriptor. Process initialization beyond these observations remains unqualified.",
+        "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts. The executed receivers and their expected relations are fixed to the qualifying arm64 VM's 4 KiB geometry.",
+        "The fault-injection component and M2 remain partial.",
+    ],
+}
+
+
+def _require_architecture(architecture: str) -> str:
+    if architecture not in ARCHITECTURES:
+        raise EvidenceError(f"fault inventory architecture {architecture} is unsupported")
+    return architecture
+
+
+def _schema(architecture: str) -> str:
+    return f"crabc-mimalloc-{_require_architecture(architecture)}-fault-seam-inventory-evidence"
+
+
+def _label(architecture: str) -> str:
+    return "x86" if architecture == "x86_64" else architecture
+
+
+def _container_work_root(architecture: str) -> Path:
+    return CONTAINER_WORK_ROOT if _require_architecture(architecture) == "x86_64" else CONTAINER_WORK_ROOTS[architecture]
+
+
+def _fragment_path(architecture: str) -> Path:
+    return FRAGMENT_PATH if _require_architecture(architecture) == "x86_64" else FRAGMENT_PATHS[architecture]
+
+
+def _rust_trace_source_roster(architecture: str) -> tuple[str, ...]:
+    if _require_architecture(architecture) == "x86_64":
+        return RUST_TRACE_SOURCE_FILES
+    return RUST_TRACE_SOURCE_FILES_BY_ARCHITECTURE[architecture]
+
+
+def _nonclaims(architecture: str) -> tuple[str, ...]:
+    return NONCLAIMS if _require_architecture(architecture) == "x86_64" else NONCLAIMS_BY_ARCHITECTURE[architecture]
+
+
+def _remaining_conditions(architecture: str) -> list[str]:
+    if _require_architecture(architecture) == "x86_64":
+        return FAULT_COMPONENT_REMAINING_CONDITIONS
+    return FAULT_COMPONENT_REMAINING_CONDITIONS_BY_ARCHITECTURE[architecture]
+
+
+def _artifacts(runner: Any, architecture: str) -> Path:
+    return runner.ARTIFACT_ROOT / _require_architecture(architecture) / "fault-seam-inventory"
+
+
+def _require_native(runner: Any, architecture: str) -> None:
+    if _require_architecture(architecture) == "x86_64":
+        runner.require_native_x86_64()
+    else:
+        runner.require_native_evidence(architecture)
 
 
 @dataclass(frozen=True)
@@ -836,9 +919,12 @@ def inventory_definition() -> dict[str, list[str]]:
     }
 
 
-def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
+def load_fragment(path: Path | None = None, architecture: str = "x86_64") -> dict[str, Any]:
     """Load the one fixed partial-M2 fragment without widening its receiver set."""
 
+    _require_architecture(architecture)
+    if path is None:
+        path = _fragment_path(architecture)
     try:
         fragment = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -847,13 +933,13 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     pin = runner.load_pin()
     expected_keys = {"component", "format", "schema", "target", "upstream"}
     expected_target = {
-        "architecture": "x86_64", "endianness": "little", "kernel_baseline": "5.10",
-        "os": "linux", "rust_target": "x86_64-unknown-linux-musl",
+        "architecture": architecture, "endianness": "little", "kernel_baseline": "5.10",
+        "os": "linux", "rust_target": f"{architecture}-unknown-linux-musl",
     }
     if (
         not isinstance(fragment, Mapping)
         or set(fragment) != expected_keys
-        or fragment.get("schema") != "crabc-mimalloc-x86_64-m2-component-evidence"
+        or fragment.get("schema") != f"crabc-mimalloc-{architecture}-m2-component-evidence"
         or fragment.get("format") != 1
         or fragment.get("target") != expected_target
         or fragment.get("upstream") != {
@@ -954,7 +1040,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     if unqualified != FAULT_COMPONENT_UNQUALIFIED_MATRIX:
         raise EvidenceError("fault inventory M2 unqualified receiver roster changed")
     remaining = component.get("remaining_conditions")
-    if remaining != FAULT_COMPONENT_REMAINING_CONDITIONS:
+    if remaining != _remaining_conditions(architecture):
         raise EvidenceError("fault inventory M2 remaining-condition boundary changed")
     return dict(fragment)
 
@@ -1001,7 +1087,7 @@ def _local_file_record(path: Path) -> dict[str, Any]:
     }
 
 
-def _rust_trace_source_files() -> list[dict[str, Any]]:
+def _rust_trace_source_files(architecture: str = "x86_64") -> list[dict[str, Any]]:
     """Bind the finite Rust route and its Cargo configuration inputs.
 
     `source_state_before/after` additionally authenticates the current whole
@@ -1011,10 +1097,10 @@ def _rust_trace_source_files() -> list[dict[str, Any]]:
     cannot be hidden behind the aggregate revision record.
     """
 
-    return [_local_file_record(ROOT / path) for path in RUST_TRACE_SOURCE_FILES]
+    return [_local_file_record(ROOT / path) for path in _rust_trace_source_roster(architecture)]
 
 
-def fault_component_fragment_receipt() -> dict[str, Any]:
+def fault_component_fragment_receipt(architecture: str = "x86_64") -> dict[str, Any]:
     """Bind this report to the exact current fragment and its projection.
 
     `load_fragment` is the fail-closed schema/roster reader used by the M2
@@ -1023,14 +1109,14 @@ def fault_component_fragment_receipt() -> dict[str, Any]:
     under the selected private diagnostic-receiver boundary.
     """
 
-    fragment = load_fragment()
+    fragment = load_fragment(architecture=architecture)
     runner = _load_runner()
     return {
         "canonical_sha256": runner._m1_inventory_digest(fragment),
         "component": dict(fragment["component"]),
         "format": fragment["format"],
         "schema": fragment["schema"],
-        "source": _local_file_record(FRAGMENT_PATH),
+        "source": _local_file_record(_fragment_path(architecture)),
         "target": dict(fragment["target"]),
         "upstream": dict(fragment["upstream"]),
     }
@@ -1061,7 +1147,7 @@ def _validate_process_record(value: object, *, label: str) -> dict[str, Any]:
     return dict(value)
 
 
-def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any]:
+def _validate_huge_branch_receipt(receipt: object, runner: Any, architecture: str = "x86_64") -> dict[str, Any]:
     """Reconstruct the two traces from retained fixed-profile process streams."""
 
     expected_keys = {
@@ -1074,7 +1160,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
     c_build = _validate_process_record(receipt.get("c_build"), label="fault inventory C build")
     c_run = _validate_process_record(receipt.get("c_run"), label="fault inventory C run")
     direct_include = _validate_mbind_profile_record(
-        receipt.get("c_mbind_direct_include_profile"), runner
+        receipt.get("c_mbind_direct_include_profile"), runner, architecture
     )
     source = Path(c_build["cwd"])
     command = c_build["command"]
@@ -1121,7 +1207,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
 
     rust_build = _validate_process_record(receipt.get("rust_build"), label="fault inventory Rust build")
     rust_run = _validate_process_record(receipt.get("rust_run"), label="fault inventory Rust run")
-    expected_build = runner._m2_x86_64_vm_rust_build_command()
+    expected_build = runner._m2_x86_64_vm_rust_build_command(architecture)
     if (
         Path(rust_build["command"][0]).name != "cargo"
         or rust_build["command"][1:] != expected_build[1:]
@@ -1133,7 +1219,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
         rust_run["cwd"] != str(ROOT)
         or len(run_command) != 5
         or run_command[1:] != [RUST_TARGET, "--exact", "--test-threads=1", "--nocapture"]
-        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(run_command[0])
+        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(run_command[0], architecture)
     ):
         raise ValueError("fault inventory Rust target/filter command changed")
     output = _combined_output(rust_run)
@@ -1143,7 +1229,7 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
         raise EvidenceError("retained Rust stream has no exact test summary") from error
     if passed_test_count != 1 or receipt.get("rust_passed_test_count") != 1:
         raise ValueError("fault inventory Rust test count changed")
-    if receipt.get("rust_source_files") != _rust_trace_source_files():
+    if receipt.get("rust_source_files") != _rust_trace_source_files(architecture):
         raise ValueError("fault inventory Rust trace source changed")
     _parse_fixed_trace(
         output, begin=RUST_TRACE_BEGIN, end=RUST_TRACE_END,
@@ -1164,13 +1250,14 @@ def _validate_huge_branch_receipt(receipt: object, runner: Any) -> dict[str, Any
     return dict(receipt)
 
 
-def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
+def validate_report(report: Mapping[str, Any], architecture: str = "x86_64") -> dict[str, Any]:
     """Validate the immutable, current-source fault admission receipt shape."""
 
+    _require_architecture(architecture)
     if report.get("profile") == "os-aligned-page-publication":
-        return validate_os_publication_report(report)
+        return validate_os_publication_report(report, architecture)
     if report.get("profile") == "metadata-page-publication":
-        return validate_metadata_publication_report(report)
+        return validate_metadata_publication_report(report, architecture)
     if "os_publication_receipt" not in report:
         raise ValueError("fault inventory OS publication receipt is missing")
     if "metadata_publication_receipt" not in report:
@@ -1192,9 +1279,9 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory fragment receipt is missing")
     if set(report) != expected_keys:
         raise ValueError("fault inventory receipt fields changed")
-    if report.get("schema") != SCHEMA or report.get("format") != FORMAT:
+    if report.get("schema") != _schema(architecture) or report.get("format") != FORMAT:
         raise ValueError("fault inventory receipt schema changed")
-    if report.get("architecture") != "x86_64" or report.get("status") != "passed":
+    if report.get("architecture") != architecture or report.get("status") != "passed":
         raise ValueError("fault inventory receipt target/status changed")
     if not isinstance(report.get("inventory"), Mapping):
         raise ValueError("fault inventory receipt has no inventory")
@@ -1209,19 +1296,19 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory diagnostic owner boundary changed")
 
     runner = _load_runner()
-    fragment_receipt = fault_component_fragment_receipt()
+    fragment_receipt = fault_component_fragment_receipt(architecture)
     if report.get("fault_component_fragment") != fragment_receipt:
         raise ValueError("fault inventory fragment receipt changed")
-    huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner)
-    os_receipt = validate_os_publication_report(report["os_publication_receipt"])
-    metadata_receipt = validate_metadata_publication_report(report["metadata_publication_receipt"])
+    huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner, architecture)
+    os_receipt = validate_os_publication_report(report["os_publication_receipt"], architecture)
+    metadata_receipt = validate_metadata_publication_report(report["metadata_publication_receipt"], architecture)
     pin = runner.load_pin()
     for transition, target, wrapper in (
         ("map", MAP_TARGET, "-Wl,--wrap=mmap"),
         ("commit", COMMIT_TARGET, "-Wl,--wrap=mprotect"),
         ("decommit", DECOMMIT_TARGET, "-Wl,--wrap=madvise"),
     ):
-        receiver = _process_owned_transition_receiver(transition)
+        receiver = _process_owned_transition_receiver(transition, architecture)
         receipt = report[f"{transition}_receipt"]
         expected_fields = {
             "status", "c", "rust", "mismatches", "c_commands", "rust_commands", "scope",
@@ -1277,7 +1364,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     }:
         raise ValueError("fault inventory VM receipt binding changed")
     if (
-        vm_receipt.get("schema") != "crabc-mimalloc-x86_64-m2-vm-primitives-evidence"
+        vm_receipt.get("schema") != f"crabc-mimalloc-{architecture}-m2-vm-primitives-evidence"
         or vm_receipt.get("status") != "passed"
         or type(vm_receipt.get("compared_value_count")) is not int
         or vm_receipt["compared_value_count"] <= 0
@@ -1285,9 +1372,9 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         or len(vm_receipt["trace_sha256"]) != 64
     ):
         raise ValueError("fault inventory VM receipt is invalid")
-    if report.get("nonclaims") != list(NONCLAIMS):
+    if report.get("nonclaims") != list(_nonclaims(architecture)):
         raise ValueError("fault inventory nonclaims changed")
-    nonclaims = list(NONCLAIMS)
+    nonclaims = list(_nonclaims(architecture))
     try:
         before = runner.validate_runtime_ticket_zero_soak_source_state(
             report.get("source_state_before"), "fault inventory source before"
@@ -1323,7 +1410,7 @@ class EvidenceError(RuntimeError):
     """A fixed fault-inventory source or receipt boundary changed."""
 
 
-def _process_owned_transition_receiver(transition: str) -> Any:
+def _process_owned_transition_receiver(transition: str, architecture: str = "x86_64") -> Any:
     if transition not in ("map", "commit", "decommit"):
         raise EvidenceError("unknown process-owned range transition")
     path = ROOT / f"compat/allocator/m2_process_owned_{transition}_fault_x86_64.py"
@@ -1338,6 +1425,8 @@ def _process_owned_transition_receiver(transition: str) -> Any:
         spec.loader.exec_module(receiver)
     finally:
         sys.path.pop(0)
+    if getattr(receiver, "ARCH", None) != _require_architecture(architecture):
+        raise EvidenceError(f"process-owned {transition} receiver does not target {architecture}")
     return receiver
 
 
@@ -1791,13 +1880,14 @@ def _mbind_profile_record(
     *,
     pre_compile_files: Sequence[Mapping[str, Any]],
     post_compile_files: Sequence[Mapping[str, Any]],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Retain the actual compiler input and its pre/post compilation identity."""
 
     directory = _retained_profile_directory_record(runner, profile)
     profile_path = directory["path"]
     expected = _expected_retained_profile_file_records(profile_path)
-    expected_compiler_input = CONTAINER_WORK_ROOT / profile_path / "prim.c"
+    expected_compiler_input = _container_work_root(architecture) / profile_path / "prim.c"
     if (
         list(pre_compile_files) != expected
         or list(post_compile_files) != expected
@@ -1818,7 +1908,7 @@ def _mbind_profile_record(
     }
 
 
-def _validate_mbind_profile_record(value: object, runner: Any) -> Path:
+def _validate_mbind_profile_record(value: object, runner: Any, architecture: str = "x86_64") -> Path:
     """Re-open the retained C compiler input and bind it to the macro argv."""
 
     expected_keys = {
@@ -1870,7 +1960,7 @@ def _validate_mbind_profile_record(value: object, runner: Any) -> Path:
     if actual_files != expected_files:
         raise ValueError("fault inventory retained profile files changed after compilation")
     compiler_direct_include = value.get("compiler_direct_include")
-    expected_compiler_input = str(CONTAINER_WORK_ROOT / directory["path"] / "prim.c")
+    expected_compiler_input = str(_container_work_root(architecture) / directory["path"] / "prim.c")
     if compiler_direct_include != expected_compiler_input:
         raise ValueError("fault inventory compiler direct include does not join retained profile")
     return Path(compiler_direct_include)
@@ -2454,12 +2544,12 @@ def validate_mbind_boundary_report(report: Mapping[str, Any]) -> dict[str, Any]:
     return dict(report)
 
 
-def _validate_reused_vm_receipt(vm: object) -> dict[str, Any]:
+def _validate_reused_vm_receipt(vm: object, architecture: str = "x86_64") -> dict[str, Any]:
     """Keep one aggregate VM receipt as an input, never a trace-hash substitute."""
 
     if (
         not isinstance(vm, Mapping)
-        or vm.get("schema") != "crabc-mimalloc-x86_64-m2-vm-primitives-evidence"
+        or vm.get("schema") != f"crabc-mimalloc-{architecture}-m2-vm-primitives-evidence"
         or vm.get("status") != "passed"
         or type(vm.get("compared_value_count")) is not int
         or vm["compared_value_count"] <= 0
@@ -2575,12 +2665,12 @@ def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, i
         raise ValueError(f"failed OS PageMap publication values differ: C {c_failed_map} Rust {rust_failed_map}")
 
 
-def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
+def validate_os_publication_report(report: Mapping[str, Any], architecture: str = "x86_64") -> dict[str, Any]:
     """Replay the independent ordinary OS receiver from retained C/Rust streams."""
     expected = {"schema", "format", "profile", "status", "boundary", "upstream",
         "source_state_before", "source_state_after", "c_build", "c_run", "c_source_files",
         "fixture", "rust_build", "rust_run", "rust_source_files"}
-    if set(report) != expected or report.get("schema") != SCHEMA or report.get("format") != FORMAT:
+    if set(report) != expected or report.get("schema") != _schema(architecture) or report.get("format") != FORMAT:
         raise ValueError("OS publication receiver schema changed")
     if (report.get("profile") != "os-aligned-page-publication" or report.get("status") != "passed"
         or report.get("boundary") != OS_PUBLICATION_BOUNDARY):
@@ -2604,14 +2694,14 @@ def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
     rust_build = _validate_process_record(report.get("rust_build"), label="OS publication Rust build")
     rust_run = _validate_process_record(report.get("rust_run"), label="OS publication Rust run")
     if (Path(rust_build["command"][0]).name != "cargo"
-        or rust_build["command"][1:] != runner._m2_x86_64_vm_rust_build_command()[1:]
+        or rust_build["command"][1:] != runner._m2_x86_64_vm_rust_build_command(architecture)[1:]
         or rust_build["cwd"] != str(ROOT)):
         raise ValueError("OS publication Rust build changed")
     if (rust_run["cwd"] != str(ROOT) or len(rust_run["command"]) != 5
         or rust_run["command"][1:] != [OS_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"]
-        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0])
+        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0], architecture)
         or runner.parse_rust_test_count(_combined_output(rust_run)) != 1
-        or report.get("rust_source_files") != _rust_trace_source_files()):
+        or report.get("rust_source_files") != _rust_trace_source_files(architecture)):
         raise ValueError("OS publication Rust receiver changed")
     on_demand_values = []
     for language, record in (("C", c_run), ("Rust", rust_run)):
@@ -2626,15 +2716,17 @@ def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
     return dict(report)
 
 
-def run_os_publication_receiver(*, offline: bool, test_program: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def run_os_publication_receiver(
+    *, offline: bool, test_program: Mapping[str, Any] | None = None, architecture: str = "x86_64",
+) -> dict[str, Any]:
     """Run the ordinary receiver independently; hardware receivers stay required elsewhere."""
     runner = _load_runner()
     try:
-        runner.require_native_x86_64()
+        _require_native(runner, architecture)
         before = runner.m2_memory_substrate_source_state()
         pin = runner.load_pin()
         archive = runner.fetch_archive(pin, offline)
-        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts = _artifacts(runner, architecture)
         artifacts.mkdir(parents=True, exist_ok=True)
         with runner.temporary_directory(prefix="crabc-os-publication-source-") as temporary:
             source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
@@ -2649,21 +2741,21 @@ def run_os_publication_receiver(*, offline: bool, test_program: Mapping[str, Any
             c_build = {**build, "cwd": str(source)}
             c_run = {**c_run, "cwd": str(source)}
         if test_program is None:
-            test_program = runner._x86_64_unit_test_program(runner._m2_x86_64_vm_rust_execution(),
-                runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET, gate_name="OS publication receiver")
+            test_program = runner._x86_64_unit_test_program(runner._m2_x86_64_vm_rust_execution(architecture),
+                runner.m2_memory_substrate_cargo_target(architecture), gate_name="OS publication receiver")
         rust_run = runner.command_record(runner._x86_64_program_check_command(test_program,
             OS_PUBLICATION_TARGET, nocapture=True, gate_name="OS publication receiver"), cwd=ROOT, timeout_seconds=300)
         runner.write_json(artifacts / "os-publication-rust-run.json", rust_run)
         runner.require_success(rust_run, "OS publication Rust receiver")
-        report = {"schema": SCHEMA, "format": FORMAT, "profile": "os-aligned-page-publication",
+        report = {"schema": _schema(architecture), "format": FORMAT, "profile": "os-aligned-page-publication",
             "status": "passed", "boundary": OS_PUBLICATION_BOUNDARY,
             "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
             "source_state_before": before, "source_state_after": runner.m2_memory_substrate_source_state(),
             "c_build": c_build, "c_run": c_run, "c_source_files": c_files,
             "fixture": runner.artifact_record(FIXTURE),
             "rust_build": {**test_program["build"], "cwd": str(ROOT)},
-            "rust_run": {**rust_run, "cwd": str(ROOT)}, "rust_source_files": _rust_trace_source_files()}
-        validate_os_publication_report(report)
+            "rust_run": {**rust_run, "cwd": str(ROOT)}, "rust_source_files": _rust_trace_source_files(architecture)}
+        validate_os_publication_report(report, architecture)
         runner.write_json(artifacts / "os-publication.json", report)
         return report
     except runner.HarnessError as error:
@@ -2676,10 +2768,10 @@ def _metadata_publication_c_command(runner: Any, compiler: str, source: Path, bi
     return command
 
 
-def _metadata_publication_rust_source_files() -> list[dict[str, Any]]:
+def _metadata_publication_rust_source_files(architecture: str = "x86_64") -> list[dict[str, Any]]:
     """The OS receiver roster plus the metadata engine and its process owner."""
 
-    return [*_rust_trace_source_files(), *(
+    return [*_rust_trace_source_files(architecture), *(
         _local_file_record(ROOT / path) for path in METADATA_PUBLICATION_RUST_SOURCE_FILES
     )]
 
@@ -2729,12 +2821,12 @@ def _parse_metadata_recovery(output: str, *, source: str) -> tuple[tuple[int, ..
     return rows
 
 
-def validate_metadata_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
+def validate_metadata_publication_report(report: Mapping[str, Any], architecture: str = "x86_64") -> dict[str, Any]:
     """Replay the metadata-publication receiver from retained C/Rust streams."""
     expected = {"schema", "format", "profile", "status", "boundary", "upstream",
         "source_state_before", "source_state_after", "c_build", "c_run", "c_source_files",
         "fixture", "rust_build", "rust_run", "rust_source_files"}
-    if set(report) != expected or report.get("schema") != SCHEMA or report.get("format") != FORMAT:
+    if set(report) != expected or report.get("schema") != _schema(architecture) or report.get("format") != FORMAT:
         raise ValueError("metadata publication receiver schema changed")
     if (report.get("profile") != "metadata-page-publication" or report.get("status") != "passed"
         or report.get("boundary") != METADATA_PUBLICATION_BOUNDARY):
@@ -2758,14 +2850,14 @@ def validate_metadata_publication_report(report: Mapping[str, Any]) -> dict[str,
     rust_build = _validate_process_record(report.get("rust_build"), label="metadata publication Rust build")
     rust_run = _validate_process_record(report.get("rust_run"), label="metadata publication Rust run")
     if (Path(rust_build["command"][0]).name != "cargo"
-        or rust_build["command"][1:] != runner._m2_x86_64_vm_rust_build_command()[1:]
+        or rust_build["command"][1:] != runner._m2_x86_64_vm_rust_build_command(architecture)[1:]
         or rust_build["cwd"] != str(ROOT)):
         raise ValueError("metadata publication Rust build changed")
     if (rust_run["cwd"] != str(ROOT) or len(rust_run["command"]) != 5
         or rust_run["command"][1:] != [METADATA_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"]
-        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0])
+        or not runner._m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0], architecture)
         or runner.parse_rust_test_count(_combined_output(rust_run)) != 1
-        or report.get("rust_source_files") != _metadata_publication_rust_source_files()):
+        or report.get("rust_source_files") != _metadata_publication_rust_source_files(architecture)):
         raise ValueError("metadata publication Rust receiver changed")
     deltas = []
     recovery = []
@@ -2788,16 +2880,16 @@ def validate_metadata_publication_report(report: Mapping[str, Any]) -> dict[str,
 
 
 def run_metadata_publication_receiver(
-    *, offline: bool, test_program: Mapping[str, Any] | None = None,
+    *, offline: bool, test_program: Mapping[str, Any] | None = None, architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the metadata-publication receiver as its own C/Rust relation."""
     runner = _load_runner()
     try:
-        runner.require_native_x86_64()
+        _require_native(runner, architecture)
         before = runner.m2_memory_substrate_source_state()
         pin = runner.load_pin()
         archive = runner.fetch_archive(pin, offline)
-        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        artifacts = _artifacts(runner, architecture)
         artifacts.mkdir(parents=True, exist_ok=True)
         with runner.temporary_directory(prefix="crabc-metadata-publication-source-") as temporary:
             source = runner.safe_extract(archive, Path(temporary), pin["archive_root"])
@@ -2817,13 +2909,13 @@ def run_metadata_publication_receiver(
         except EvidenceError as error:
             raise EvidenceError(f"{error}:\n{_combined_output(c_run)}") from error
         if test_program is None:
-            test_program = runner._x86_64_unit_test_program(runner._m2_x86_64_vm_rust_execution(),
-                runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET, gate_name="metadata publication receiver")
+            test_program = runner._x86_64_unit_test_program(runner._m2_x86_64_vm_rust_execution(architecture),
+                runner.m2_memory_substrate_cargo_target(architecture), gate_name="metadata publication receiver")
         rust_run = runner.command_record(runner._x86_64_program_check_command(test_program,
             METADATA_PUBLICATION_TARGET, nocapture=True, gate_name="metadata publication receiver"), cwd=ROOT, timeout_seconds=300)
         runner.write_json(artifacts / "metadata-publication-rust-run.json", rust_run)
         runner.require_success(rust_run, "metadata publication Rust receiver")
-        report = {"schema": SCHEMA, "format": FORMAT, "profile": "metadata-page-publication",
+        report = {"schema": _schema(architecture), "format": FORMAT, "profile": "metadata-page-publication",
             "status": "passed", "boundary": METADATA_PUBLICATION_BOUNDARY,
             "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"]},
             "source_state_before": before, "source_state_after": runner.m2_memory_substrate_source_state(),
@@ -2831,9 +2923,9 @@ def run_metadata_publication_receiver(
             "fixture": runner.artifact_record(FIXTURE),
             "rust_build": {**test_program["build"], "cwd": str(ROOT)},
             "rust_run": {**rust_run, "cwd": str(ROOT)},
-            "rust_source_files": _metadata_publication_rust_source_files()}
+            "rust_source_files": _metadata_publication_rust_source_files(architecture)}
         try:
-            validate_metadata_publication_report(report)
+            validate_metadata_publication_report(report, architecture)
         except ValueError as error:
             raise EvidenceError(str(error)) from error
         runner.write_json(artifacts / "metadata-publication.json", report)
@@ -2845,31 +2937,35 @@ def run_metadata_publication_receiver(
 def run_evidence(
     *,
     offline: bool,
-    report_path: Path = REPORT_DEFAULT,
+    report_path: Path | None = None,
     test_program: Mapping[str, Any] | None = None,
     vm_evidence: Mapping[str, Any] | None = None,
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Collect a fixed huge profile, reusing an aggregate VM receipt when supplied."""
 
     runner = _load_runner()
+    label = _label(architecture)
+    if report_path is None:
+        report_path = ROOT / f"compat/reports/allocator/{_require_architecture(architecture)}/fault-seam-inventory.json"
     try:
-        runner.require_native_x86_64()
-        fragment_receipt = fault_component_fragment_receipt()
+        _require_native(runner, architecture)
+        fragment_receipt = fault_component_fragment_receipt(architecture)
         before = runner.m2_memory_substrate_source_state()
         pin = runner.load_pin()
         archive = runner.fetch_archive(pin, offline)
         compiler = runner.require_tool("musl-gcc")
-        execution = runner._m2_x86_64_vm_rust_execution()
-        artifacts = runner.ARTIFACT_ROOT / "x86_64/fault-seam-inventory"
+        execution = runner._m2_x86_64_vm_rust_execution(architecture)
+        artifacts = _artifacts(runner, architecture)
         if test_program is None:
             # The standalone path hands this product to the fixed VM producer,
             # whose provenance contract accepts only the canonical M2 target.
             test_program = runner._x86_64_unit_test_program(
                 execution,
-                runner.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
-                gate_name="native x86 fault seam inventory",
+                runner.m2_memory_substrate_cargo_target(architecture),
+                gate_name=f"native {label} fault seam inventory",
             )
-        elif not runner._m2_x86_64_vm_test_program_is_bound(test_program):
+        elif not runner._m2_x86_64_vm_test_program_is_bound(test_program, architecture):
             raise EvidenceError("fault inventory Rust test-program provenance changed")
         if vm_evidence is None:
             arena_owned_check = next(
@@ -2878,21 +2974,24 @@ def run_evidence(
             )
             vm = runner._run_m2_x86_64_vm_evidence(
                 offline=offline, test_program=test_program, arena_owned_check=arena_owned_check,
+                **({} if architecture == "x86_64" else {"architecture": architecture}),
             )
         else:
-            vm = _validate_reused_vm_receipt(vm_evidence)
+            vm = _validate_reused_vm_receipt(vm_evidence, architecture)
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
 
-    os_receipt = run_os_publication_receiver(offline=offline, test_program=test_program)
-    metadata_receipt = run_metadata_publication_receiver(offline=offline, test_program=test_program)
-    map_receipt = _process_owned_transition_receiver("map").run(offline=offline, c_only=False)
+    os_receipt = run_os_publication_receiver(
+        offline=offline, test_program=test_program, architecture=architecture)
+    metadata_receipt = run_metadata_publication_receiver(
+        offline=offline, test_program=test_program, architecture=architecture)
+    map_receipt = _process_owned_transition_receiver("map", architecture).run(offline=offline, c_only=False)
     if map_receipt["status"] != "matched":
         raise EvidenceError("process-owned map fault relation changed")
-    commit_receipt = _process_owned_transition_receiver("commit").run(offline=offline, c_only=False)
+    commit_receipt = _process_owned_transition_receiver("commit", architecture).run(offline=offline, c_only=False)
     if commit_receipt["status"] != "matched":
         raise EvidenceError("process-owned commit fault relation changed")
-    decommit_receipt = _process_owned_transition_receiver("decommit").run(offline=offline, c_only=False)
+    decommit_receipt = _process_owned_transition_receiver("decommit", architecture).run(offline=offline, c_only=False)
     if decommit_receipt["status"] != "matched":
         raise EvidenceError("process-owned decommit fault relation changed")
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -2909,9 +3008,9 @@ def run_evidence(
                 runner, compiler, source, binary, direct_include=direct_include
             )
             c_build = runner.command_record(c_command, cwd=source, timeout_seconds=300)
-            runner.require_success(c_build, "pinned C native x86 fault-seam huge profile build")
+            runner.require_success(c_build, f"pinned C native {label} fault-seam huge profile build")
             c_run = runner.command_record([str(binary)], cwd=source, timeout_seconds=180)
-            runner.require_success(c_run, "pinned C native x86 fault-seam huge profile")
+            runner.require_success(c_run, f"pinned C native {label} fault-seam huge profile")
             c_trace = _parse_fixed_trace(
                 str(c_run["stdout"]), begin=C_TRACE_BEGIN, end=C_TRACE_END,
                 keys=C_TRACE_KEYS, source="pinned C",
@@ -2920,6 +3019,7 @@ def run_evidence(
             c_mbind_direct_include_profile = _mbind_profile_record(
                 runner, profile, direct_include,
                 pre_compile_files=pre_compile_files, post_compile_files=post_compile_files,
+                architecture=architecture,
             )
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
@@ -2928,17 +3028,17 @@ def run_evidence(
         execution = test_program["execution"]
         rust_command = runner._x86_64_program_check_command(
             test_program, RUST_TARGET, nocapture=True,
-            gate_name="native x86 fault-seam huge profile",
+            gate_name=f"native {label} fault-seam huge profile",
         )
         rust_run = runner.command_record(
             rust_command, cwd=ROOT, timeout_seconds=int(execution["timeout_seconds"])
         )
-        runner.require_success(rust_run, "native x86 fault-seam huge profile")
+        runner.require_success(rust_run, f"native {label} fault-seam huge profile")
         rust_output = str(rust_run["stdout"]) + "\n" + str(rust_run["stderr"])
         rust_passed_test_count = runner.parse_rust_test_count(rust_output)
         if rust_passed_test_count != 1:
             raise EvidenceError(
-                "native x86 fault-seam huge profile did not pass exactly one Rust test"
+                f"native {label} fault-seam huge profile did not pass exactly one Rust test"
             )
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
@@ -2951,7 +3051,7 @@ def run_evidence(
     except runner.HarnessError as error:
         raise EvidenceError(str(error)) from error
     report = {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "os_publication_receipt": os_receipt,
         "metadata_publication_receipt": metadata_receipt,
         "map_receipt": map_receipt,
@@ -2975,12 +3075,12 @@ def run_evidence(
             "rust_build": {**test_program["build"], "cwd": str(ROOT)},
             "rust_passed_test_count": rust_passed_test_count,
             "rust_run": {**rust_run, "cwd": str(ROOT)},
-            "rust_source_files": _rust_trace_source_files(),
+            "rust_source_files": _rust_trace_source_files(architecture),
         },
         "diagnostic_owner_boundary": DIAGNOSTIC_OWNER_BOUNDARY,
         "inventory": inventory_definition(),
-        "nonclaims": list(NONCLAIMS),
-        "schema": SCHEMA,
+        "nonclaims": list(_nonclaims(architecture)),
+        "schema": _schema(architecture),
         "source_state_after": after,
         "source_state_before": before,
         "status": "passed",
@@ -2994,7 +3094,7 @@ def run_evidence(
             "trace_sha256": vm["trace_sha256"],
         },
     }
-    validate_report(report)
+    validate_report(report, architecture)
     runner.write_json(report_path, report)
     return report
 

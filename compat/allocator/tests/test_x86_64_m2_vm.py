@@ -854,16 +854,21 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(page_map["native_status"], "partial")
         self.assertEqual(page_map["checks"], [dict(check) for check in RUNNER.M2_PAGE_MAP_CHECKS["aarch64"]])
         self.assertTrue(any("16 KiB and 64 KiB" in condition for condition in page_map["remaining_conditions"]))
+        fault = summary["components"][6]
+        self.assertEqual(fault["id"], "fault-injection")
+        self.assertEqual(fault["evidence_fragment"], {"path": RUNNER.relative(RUNNER.M2_AARCH64_FAULT_FRAGMENT)})
+        self.assertEqual(fault["native_status"], "partial")
+        self.assertTrue(any("16 KiB and 64 KiB" in condition for condition in fault["remaining_conditions"]))
         self.assertEqual(
             [(component["id"], component["native_status"], component["checks"])
              for component in summary["components"]
              if component["id"] not in RUNNER.M2_AARCH64_EXECUTED_COMPONENT_IDS],
             [(component_id, "not-executed", [])
              for component_id in RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS
-             if component_id not in ("vm-primitives", "page-map", "arenas")],
+             if component_id not in ("vm-primitives", "page-map", "arenas", "fault-injection")],
         )
         self.assertEqual(summary["milestone"]["status"], "partial")
-        for index in (3, 4):
+        for index in (3, 4, 6):
             contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
             contract["components"][index] = RUNNER.read_json(
                 RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)["components"][index]
@@ -961,6 +966,26 @@ class NativeVmAssemblyTests(unittest.TestCase):
                         changed if path == RUNNER.M2_AARCH64_PAGE_MAP_FRAGMENT else read_json(path))):
                     with self.assertRaises(RUNNER.HarnessError):
                         RUNNER._m2_aarch64_page_map_component(reference, pin)
+
+    def test_arm_fault_fragment_is_target_local(self):
+        producer = RUNNER._m2_x86_64_fault_producer()
+        arm = producer.load_fragment(RUNNER.M2_AARCH64_FAULT_FRAGMENT, "aarch64")
+        x86 = producer.load_fragment(RUNNER.M2_X86_64_FAULT_FRAGMENT)
+        self.assertEqual(arm["target"]["rust_target"], "aarch64-unknown-linux-musl")
+        self.assertEqual(arm["component"]["checks"], x86["component"]["checks"])
+        self.assertEqual(arm["component"]["branch_matrix"], x86["component"]["branch_matrix"])
+        self.assertNotEqual(arm["component"]["remaining_conditions"], x86["component"]["remaining_conditions"])
+        with self.assertRaises(producer.EvidenceError):
+            producer.load_fragment(RUNNER.M2_X86_64_FAULT_FRAGMENT, "aarch64")
+        with self.assertRaises(producer.EvidenceError):
+            producer.load_fragment(RUNNER.M2_AARCH64_FAULT_FRAGMENT, "x86_64")
+        self.assertIn("crabc-core/src/syscall/aarch64.rs",
+                      producer.RUST_TRACE_SOURCE_FILES_BY_ARCHITECTURE["aarch64"])
+        for architecture in producer.ARCHITECTURES:
+            for path in producer.RUST_TRACE_SOURCE_FILES_BY_ARCHITECTURE[architecture]:
+                self.assertTrue((RUNNER.ROOT / path).is_file(), path)
+        with self.assertRaises(ValueError):
+            producer.validate_report({"architecture": "x86_64"}, "aarch64")
 
     def test_arm_page_map_records_require_the_arm_test_product_and_physical_runs(self):
         summary = self.arm_summary()

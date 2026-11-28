@@ -10,7 +10,8 @@ import run as harness
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix('.c')
-ARTIFACTS = harness.ARTIFACT_ROOT / 'x86_64/m2-process-owned-commit-fault'
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / 'm2-process-owned-commit-fault'
 TEST = 'os::tests::emit_m2_process_owned_commit_fault_c_rust_trace'
 FIELDS = (
     'allocated',
@@ -155,7 +156,7 @@ def expected_values() -> dict[str, int]:
     }
 
 def run(offline: bool, c_only: bool) -> dict:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     c, c_commands = c_oracle(offline)
     rust, rust_commands = ({}, {}) if c_only else rust_receiver()

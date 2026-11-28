@@ -327,6 +327,8 @@ M2_AARCH64_ARENAS_FRAGMENT = ALLOCATOR_ROOT / "m2-arenas-aarch64-v3.5.0.fragment
 M2_AARCH64_PAGE_MAP_FRAGMENT = ALLOCATOR_ROOT / "m2-page-map-aarch64-v3.5.0.fragment.json"
 M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
 M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
+M2_AARCH64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-aarch64-v3.5.0.fragment.json"
+M2_FAULT_FRAGMENTS = {"x86_64": M2_X86_64_FAULT_FRAGMENT, "aarch64": M2_AARCH64_FAULT_FRAGMENT}
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -13750,22 +13752,23 @@ def _m2_x86_64_initialization_component(
 
 
 def _m2_x86_64_fault_component(
-    raw_component: Mapping[str, Any], pin: Mapping[str, str]
+    raw_component: Mapping[str, Any], pin: Mapping[str, str], architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Materialize the one current-source partial fault receiver inventory."""
 
-    reference = {"path": relative(M2_X86_64_FAULT_FRAGMENT)}
+    label = "x86" if architecture == "x86_64" else architecture
+    reference = {"path": relative(M2_FAULT_FRAGMENTS[architecture])}
     if dict(raw_component) != {"id": "fault-injection", "evidence_fragment": reference}:
-        raise HarnessError("native x86 M2 fault-inventory fragment reference changed")
+        raise HarnessError(f"native {label} M2 fault-inventory fragment reference changed")
     producer = _m2_x86_64_fault_producer()
-    fragment = producer.load_fragment(M2_X86_64_FAULT_FRAGMENT)
+    fragment = producer.load_fragment(M2_FAULT_FRAGMENTS[architecture], architecture)
     if (
         fragment.get("upstream") != {
             "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
         }
-        or fragment.get("target", {}).get("rust_target") != X86_64_RUST_TARGET
+        or fragment.get("target", {}).get("rust_target") != f"{architecture}-unknown-linux-musl"
     ):
-        raise HarnessError("native x86 M2 fault-inventory fragment schema or provenance changed")
+        raise HarnessError(f"native {label} M2 fault-inventory fragment schema or provenance changed")
     component = dict(fragment["component"])
     component["native_status"] = component.pop("completion_status")
     return component
@@ -15015,7 +15018,7 @@ def _m2_x86_64_validated_component(
         raw_component = _m2_x86_64_initialization_component(raw_component, pin)
     elif component_id == "fault-injection":
         fragment_reference = raw_component.get("evidence_fragment")
-        raw_component = _m2_x86_64_fault_component(raw_component, pin)
+        raw_component = _m2_x86_64_fault_component(raw_component, pin, architecture)
     elif component_id == "arenas" and architecture == "aarch64":
         fragment_reference = raw_component.get("evidence_fragment")
         raw_component = _m2_aarch64_arenas_component(raw_component, pin)
@@ -15963,18 +15966,22 @@ def _run_m2_x86_64_initialization_teardown_evidence(
 
 
 def _run_m2_x86_64_fault_evidence(
-    *, offline: bool, test_program: Mapping[str, Any], vm_evidence: Mapping[str, Any]
+    *, offline: bool, test_program: Mapping[str, Any], vm_evidence: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the fixed fault profile while reusing the aggregate VM receipt."""
 
-    if not _m2_x86_64_vm_test_program_is_bound(test_program):
-        raise HarnessError("native x86 M2 fault Rust test-program provenance changed")
+    if not _m2_x86_64_vm_test_program_is_bound(test_program, architecture):
+        raise HarnessError(
+            f"native {'x86' if architecture == 'x86_64' else architecture} M2 fault Rust test-program provenance changed"
+        )
     producer = _m2_x86_64_fault_producer()
     return producer.run_evidence(
         offline=offline,
         test_program=test_program,
         vm_evidence=vm_evidence,
-        report_path=ARTIFACT_ROOT / "x86_64/fault-seam-inventory.json",
+        report_path=ARTIFACT_ROOT / architecture / "fault-seam-inventory.json",
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -17477,9 +17484,13 @@ def _m2_x86_64_initialization_teardown_check_records(
 
 
 def _m2_x86_64_fault_check_records(
-    summary: Mapping[str, Any], evidence: object
+    summary: Mapping[str, Any], evidence: object, architecture: str = "x86_64",
 ) -> list[dict[str, Any]]:
-    """Bind the named partial fault component to retained process streams."""
+    """Bind the named partial fault component to retained process streams.
+
+    On AArch64 every receipt that ran the aggregate test binary must name the
+    target-local `aarch64-unknown-linux-musl` product.
+    """
 
     component = next(item for item in summary["components"] if item["id"] == "fault-injection")
     receipt_keys = ("huge_branch_receipt", "os_publication_receipt",
@@ -17491,7 +17502,7 @@ def _m2_x86_64_fault_check_records(
     if not isinstance(evidence, Mapping):
         raise HarnessError("native x86 M2 fault-inventory producer result is absent")
     try:
-        producer.validate_report(evidence)
+        producer.validate_report(evidence, architecture)
     except (producer.EvidenceError, ValueError) as error:
         raise HarnessError("native x86 M2 fault-inventory producer result is invalid") from error
     records = evidence.get("branch_records")
@@ -17512,6 +17523,12 @@ def _m2_x86_64_fault_check_records(
         command = rust_run.get("command")
         if not isinstance(command, list) or not all(isinstance(argument, str) and argument for argument in command):
             raise HarnessError("native x86 M2 fault-inventory executed receipt changed")
+        if (
+            architecture != "x86_64"
+            and receipt_key not in {"map_receipt", "commit_receipt", "decommit_receipt"}
+            and not _m2_x86_64_vm_rust_binary_path_is_bound(command[0], architecture)
+        ):
+            raise HarnessError(f"native {architecture} M2 fault-inventory receipt did not run the {architecture} test product")
         results.append({
             "comparison_status": "source-specific-relation-verified",
             "component": "fault-injection",
@@ -18096,7 +18113,7 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 
 M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-aarch64-v3.5.0.json"
 M2_AARCH64_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "aarch64/m2-memory-substrate-latest.json"
-M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "page-map", "arenas")
+M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "page-map", "arenas", "fault-injection")
 M2_AARCH64_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "aarch64/m2-page-map-trace"
 M2_AARCH64_PAGE_MAP_EVIDENCE_KEYS = frozenset({
     "cold", "first_map_fallback", "init_cleanup", "lazy", "process", "startup_statistics", "success",
@@ -18646,6 +18663,7 @@ def m2_aarch64_memory_substrate_report(
     vm_direct_evidence: Mapping[str, Any],
     arena_evidence: Mapping[str, Any],
     page_map_evidence: Mapping[str, Any],
+    fault_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Render the executed AArch64 components and keep every other component open."""
 
@@ -18662,6 +18680,7 @@ def m2_aarch64_memory_substrate_report(
     expected_component_records = {
         "vm-primitives": expected_vm_records,
         "page-map": _m2_aarch64_page_map_check_records(summary, page_map_evidence),
+        "fault-injection": _m2_x86_64_fault_check_records(summary, fault_evidence, "aarch64"),
     }
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
@@ -18731,7 +18750,7 @@ def m2_aarch64_memory_substrate_report(
             ]:
                 raise HarnessError(
                     "native aarch64 M2 "
-                    + {"vm-primitives": "VM", "page-map": "PageMap"}[component_id]
+                    + {"vm-primitives": "VM", "page-map": "PageMap", "fault-injection": "fault-inventory"}[component_id]
                     + " executed receipt inventory changed"
                 )
         complete = component["native_status"] == "complete" and not component["remaining_conditions"]
@@ -18781,6 +18800,7 @@ def m2_aarch64_memory_substrate_report(
         },
         "producer_evidence": {
             "arena_evidence": dict(arena_evidence),
+            "fault_evidence": dict(fault_evidence),
             "page_map_evidence": dict(page_map_evidence),
             "vm_direct_evidence": dict(vm_direct_evidence),
             "process_vm_evidence": dict(process_vm_evidence),
@@ -18834,21 +18854,26 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     page_map_evidence = _run_m2_aarch64_page_map_evidence(
         pin=pin, offline=offline, test_program=test_program, summary=summary,
     )
+    fault_evidence = _run_m2_x86_64_fault_evidence(
+        offline=offline, test_program=test_program, vm_evidence=vm_evidence, architecture="aarch64",
+    )
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
         architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
     arena_checks = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
     page_map_checks = _m2_aarch64_page_map_check_records(summary, page_map_evidence)
+    fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence, "aarch64")
     focused_checks = [
         *vm_checks,
         *page_map_checks,
         *arena_checks,
+        *fault_checks,
         *_run_x86_64_focused_source_checks(
             summary,
             test_program,
             already_executed_check_ids=frozenset(
-                check["id"] for check in (*vm_checks, *page_map_checks, *arena_checks)
+                check["id"] for check in (*vm_checks, *page_map_checks, *arena_checks, *fault_checks)
             ),
             gate_name="native aarch64 M2 focused source evidence",
         ),
@@ -18869,6 +18894,7 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         vm_direct_evidence=vm_direct_evidence,
         arena_evidence=arena_evidence,
         page_map_evidence=page_map_evidence,
+        fault_evidence=fault_evidence,
     )
     report["native_execution_provenance"] = native_execution_attestation(
         execution_before, require_native_aarch64_evidence(), architecture="aarch64"
