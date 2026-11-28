@@ -159,8 +159,6 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     unsafe { owner.cached_set(child, binding, main_theap) }.map_err(|_| HeapNewError::Retained)?;
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let image_size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let image_size = size_of::<NonMainHeapImage>();
     // SAFETY: forwarded current-thread obligation.
     let (block, extent_invalid) = unsafe {
         member.with_page_engine(binding, |_child, engine| {
@@ -171,8 +169,6 @@ pub(crate) unsafe fn child_heap_new_in_arena(
             // SAFETY: this engine just returned the exact live private block.
             let extent_invalid = unsafe { engine.usable_size(block) }
                 .is_none_or(|usable| usable < image_size);
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            let extent_invalid = false;
             Some((block, extent_invalid))
         })
     }
@@ -209,8 +205,6 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     // initialization and list publication. A refused child projection retains
     // this allocation and key without reading or dropping its Heap bytes.
     unsafe {
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        Heap::write_bootstrap_empty_at(image.cast());
         core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
     let heap = image.cast::<Heap>();
@@ -222,8 +216,6 @@ pub(crate) unsafe fn child_heap_new_in_arena(
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         unsafe { Heap::write_non_main_at(heap, identity, key, arena.as_ptr(), memory) };
         let heap = unsafe { &mut *heap.as_ptr() };
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        heap.initialize_non_main(identity, key, arena.as_ptr(), memory);
         // SAFETY: the Heap was initialized for this subprocess just above.
         unsafe { identity.heap_list().link_non_main(heap, identity) }
     });
@@ -817,16 +809,12 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     let key = slot.key().raw();
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let image_size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let image_size = size_of::<NonMainHeapImage>();
     let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     let image = block.cast::<NonMainHeapImage>();
     // SAFETY: the forwarded extent and exclusive fresh-storage obligations
     // cover both fields. Retain the slot in its sole release owner before
     // the complete Heap initialization and subsequent list publication.
     unsafe {
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        Heap::write_bootstrap_empty_at(image.cast());
         core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
     let heap = image.cast::<Heap>();
@@ -834,8 +822,6 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe { Heap::write_non_main_at(heap, subprocess, key, exclusive_arena.as_ptr(), memory) };
     let heap_ref = unsafe { &mut *heap.as_ptr() };
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    heap_ref.initialize_non_main(subprocess, key, exclusive_arena.as_ptr(), memory);
     // SAFETY: the Heap was initialized for this subprocess just above.
     unsafe { subprocess.heap_list().link_non_main(heap_ref, subprocess) }.map_err(HeapNewError::List)?;
     Ok(heap)

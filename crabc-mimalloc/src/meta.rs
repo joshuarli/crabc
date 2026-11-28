@@ -2943,8 +2943,6 @@ impl ChildThreadOwner {
     fn thread_local_get(&self, key: crate::thread_local::ThreadLocalKey) -> *mut () {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let block = Self::active_thread_local_backing(&self.thread_locals, self.state);
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let block = self.thread_locals.as_ref();
         let Some(block) = block else { return core::ptr::null_mut() };
         // SAFETY: this owner retains the exact slot image it installed, and
         // only this thread uses it.
@@ -5717,8 +5715,6 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             // image cannot continue child release or regain live capability.
             *stage = ChildMainHeapStage::Terminal;
         }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let _ = stage;
         *heap_storage = Some(ChildHeapStorage::Native(image));
     }
 

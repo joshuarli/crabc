@@ -34,12 +34,13 @@ extern crate std;
     not(miri),
     not(all(
         target_os = "linux",
-        any(target_arch = "aarch64", any(target_arch = "x86_64", target_arch = "aarch64")),
+        any(target_arch = "aarch64", target_arch = "x86_64"),
         target_endian = "little"
     ))
 ))]
 compile_error!("crabc-mimalloc supports Linux/AArch64 and private Linux/x86-64 allocator integration only");
 
+mod arch;
 mod bits;
 mod aligned;
 mod abandoned;

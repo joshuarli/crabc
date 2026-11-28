@@ -1234,8 +1234,6 @@ impl MainStaticTheapAttachment {
 
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let selected = output.is_some();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let selected = false;
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         if let Some(output) = output {
             let result = (|| {

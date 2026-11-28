@@ -1066,8 +1066,6 @@ fn append_os_literal<const N: usize>(
     }
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-use self::append_mbind_bytes as append_os_literal;
 
 #[inline]
 fn append_mbind_bytes(
@@ -1607,8 +1605,6 @@ enum PendingSourceMessage<'message> {
     InvalidOption(SourceOption),
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     DeprecatedOption(SourceOption),
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    Owned(SourceFormattedMessage, core::marker::PhantomData<&'message SourceFormattedMessage>),
 }
 
 impl<'message> PendingSourceMessage<'message> {
@@ -2005,8 +2001,6 @@ impl OutputOwner {
     pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let message = PendingSourceMessage::primary(&message);
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
         {
@@ -2808,8 +2802,6 @@ impl OutputOwner {
         count: &AtomicUsize,
         max_count: isize,
         prefix_head: &[u8],
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        message: SourceFormattedMessage,
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         message: &SourceFormattedMessage,
     ) {
@@ -2882,8 +2874,6 @@ impl OutputOwner {
     pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let message = PendingSourceMessage::primary(&message);
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
         if self.source_options_ready.load(Ordering::Acquire) == 1 {

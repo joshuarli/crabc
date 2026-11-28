@@ -718,8 +718,6 @@ impl<'main> MainHeapThreadAttachment<'main> {
         page_mode: TheapPageMode,
         generic_collect_policy: Option<&'static crate::os::VmPolicy>,
         thread: LiveThreadId,
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        tld: DynamicAttachedThreadLocalData,
     ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
         let destination = destination.as_ptr();
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

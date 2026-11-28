@@ -436,8 +436,6 @@ enum PageCommitError {
 /// that original task; generic Result propagation carries no claim custody.
 #[derive(Debug)]
 enum GenericPathError {
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    FreshInitialization(PendingFreshOsPageInitialization),
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     FreshInitialization,
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -21729,8 +21727,6 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
             .ok_or(ThreadExitMappedRegularPagesPostExitAdoptError::Unmapped)?;
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = target.session.local_field_theap_pointer();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let target_theap = NonNull::from(target.session.theap());
         let Some(target_thread) = target.session.thread_id() else {
             return Err(ThreadExitMappedRegularPagesPostExitAdoptError::MissingTargetThread);
         };
@@ -22494,8 +22490,6 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = target.session.local_field_theap_pointer();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let target_theap = NonNull::from(target.session.theap());
         let Some(target_thread) = target.session.thread_id() else {
             return Err(ThreadExitMappedRegularPostExitAdoptError::MissingTargetThread);
         };
@@ -22724,8 +22718,6 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                         target.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                let extension = free_list.extend_count(plan.extend);
                 match extension {
                     Ok(0) => {
                         return Err(
@@ -38009,8 +38001,6 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.engine.session.local_field_theap_pointer();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let target_theap = NonNull::from(self.engine.session.theap());
         let result = {
             let Some(map) = self.engine.session.mapped_abandoned_page(
                 &self.engine.arena,
@@ -38085,8 +38075,6 @@ impl<'attach, 'heap, 'arena, 'map>
         }
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.engine.session.local_field_theap_pointer();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let target_theap = NonNull::from(self.engine.session.theap());
         let Some(target_thread) = self.engine.session.thread_id() else {
             self.terminal = true;
             return Err(DynamicMappedAdoptFailure::Terminal(self));
@@ -40161,16 +40149,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.session.local_field_theap_pointer();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let target_theap = NonNull::from(self.session.theap());
         let page_map = self.page_map;
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         // SAFETY: the source session retains this exact target Heap and its
         // subprocess throughout the reclaim cursor and excludes retirement.
         let candidates = unsafe { self.arena.reclaim_arenas_for_heap(heap,
             self.requested_arena, self.thread_sequence) };
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
         let Some((page, map)) = claim_child_mapped_regular_from_arenas(
             candidates,
             heap,
@@ -40266,8 +40250,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let target_theap = self.session.local_field_theap_pointer();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let target_theap = NonNull::from(self.session.theap());
         let Some(target_heap) = NonNull::new(self.session.theap().heap()) else {
             source.retain_root();
             return Err(GenericPathError::Lifecycle);
@@ -40279,8 +40261,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // subprocess throughout the reclaim cursor and excludes retirement.
         let candidates = unsafe { self.arena.reclaim_arenas_for_heap(target_heap,
             self.requested_arena, self.thread_sequence) };
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
         for selected in candidates {
             let arena = NonNull::from(selected.arena());
             let mut engine = NonNull::from(&mut *self);
@@ -40796,8 +40776,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     self.session.local_field_theap_pointer(),
                 ) }.map(|word| word as usize)
             });
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            let extension = free_list.extend();
             let extended = extension.map_err(GenericPathError::Local)?;
             drop(free_list);
             if extended == 0 {
@@ -40973,8 +40951,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         self.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                let extension = free_list.extend_count(plan.extend);
                 extension.map_err(PageCommitError::Extension)
                     .map_err(GenericPathError::PageCommit)
             });
@@ -42697,8 +42673,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         error: GenericPathError,
     ) -> GenericPathError {
         let retained_error = match &error {
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            GenericPathError::FreshInitialization(_) => return error,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             GenericPathError::FreshInitialization => return error,
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -43285,8 +43259,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         self.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                let extension = free_list.extend();
                 let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
                 if extended == 0 {
                     return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
@@ -43316,8 +43288,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     self.session.local_field_theap_pointer(),
                 ) }.map(|word| word as usize)
             });
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            let extension = free_list.extend_count(plan.extend);
             let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
             if extended != plan.extend {
                 return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
@@ -43600,8 +43570,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         self.session.local_field_theap_pointer(),
                     ) }.map(|word| word as usize)
                 });
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                let extension = free_list.extend();
                 let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
                 if extended == 0 {
                     return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
@@ -43631,8 +43599,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     self.session.local_field_theap_pointer(),
                 ) }.map(|word| word as usize)
             });
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            let extension = free_list.extend_count(plan.extend);
             let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
             if extended != plan.extend {
                 return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
@@ -45666,8 +45632,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                             self.park_pending_os_release(failure.into_owner());
                             return false;
                         }
-                        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                        self.park_pending_os_release(failure.into_owner());
                         true
                     }
                 }
@@ -45843,8 +45807,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     self.park_pending_os_release(failure.into_owner());
                     return false;
                 }
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                self.park_pending_os_release(failure.into_owner());
                 true
             }
         }
@@ -49454,8 +49416,6 @@ mod tests {
                 // consumed source free; this is fixture-only leak cleanup.
                 unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
             }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            fault.set(fault::Plan::disabled());
         });
     }
 
@@ -52043,9 +52003,9 @@ mod tests {
         }
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     #[test]
-    fn generic_forced_collection_stops_at_one_pending_os_release() {
+    fn generic_forced_collection_stops_at_one_pending_os_release_aarch64() {
         let fault = fault::install(fault::Plan::disabled());
         for request in [7, SMALL_MAX_OBJ_SIZE + 1] {
             with_allocator(|allocator| {
@@ -52229,9 +52189,9 @@ mod tests {
         }
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     #[test]
-    fn captured_local_free_lifecycle_failure_discharges_the_consumed_client() {
+    fn captured_local_free_lifecycle_failure_discharges_the_consumed_client_aarch64() {
         let fault = fault::install(fault::Plan::disabled());
         for captured_entry in [false, true] {
             with_allocator(|allocator| {
@@ -53459,9 +53419,9 @@ mod tests {
         });
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     #[test]
-    fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry() {
+    fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry_aarch64() {
         let fault = fault::install(fault::Plan::disabled());
         with_allocator(|allocator| {
             // Materialize the ordinary direct page before an OS owner can be

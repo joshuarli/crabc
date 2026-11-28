@@ -33,8 +33,6 @@ pub(crate) unsafe fn set_source_page_guard(
             process, config.page_size(), slice_start.wrapping_add(offset), memory,
         ) };
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let _ = (config, process, memory, slice_start, size);
 }
 
 /// Restores a detached Page's tail before metadata or backing is released.
@@ -63,8 +61,6 @@ pub(crate) unsafe fn reset_source_page_guard(
             Ok(false) | Err(_) => 0,
         };
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let _ = (config, process, memory, slice_start, size);
     0
 }
 

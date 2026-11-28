@@ -2783,18 +2783,18 @@ mod tests {
         }
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     #[repr(align(16))]
     struct MixedCollectAbandonRemoteBlock([u8; 16]);
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     impl MixedCollectAbandonRemoteBlock {
         fn pointer(&mut self) -> NonNull<u8> {
             NonNull::from(&mut self.0).cast()
         }
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     fn remotely_freed_page(block_size: usize, used: usize) -> Page {
         let mut page = Page::remote_free_test_page(
             u16::try_from(used).expect("the focused test page fits source capacity"),
@@ -2804,9 +2804,9 @@ mod tests {
         page
     }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(target_arch = "aarch64")]
     #[test]
-    fn generic_collect_abandon_drains_a_mixed_theap_in_source_order() {
+    fn generic_collect_abandon_drains_a_mixed_theap_in_source_order_aarch64() {
         let mut theap = Theap::empty();
         let small_bin = crate::size_class::bin(16).expect("small size has a regular bin");
         let medium_bin = crate::size_class::bin(LARGE_MAX_OBJ_SIZE / 2)

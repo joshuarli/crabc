@@ -1015,10 +1015,6 @@ impl OsAlignedPageClaim {
                     let OsAlignedPageReleaseFailure { error: cleanup_error, owner } = failure;
                     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let cleanup = cleanup_error.operation();
-                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                    let cleanup = failure.error().operation();
-                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                    let owner = failure.into_owner();
                     let OsAlignedPageOwner::Claim(claim) = owner else {
                         unreachable!("unpublished claim cleanup retains that exact claim");
                     };
@@ -1112,10 +1108,6 @@ impl OsAlignedPageClaim {
                     let OsAlignedPageReleaseFailure { error: cleanup_error, owner } = failure;
                     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                     let cleanup = cleanup_error.operation();
-                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                    let cleanup = failure.error().operation();
-                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                    let owner = failure.into_owner();
                     let OsAlignedPageOwner::Claim(claim) = owner else {
                         unreachable!("unpublished claim cleanup retains that exact claim");
                     };
@@ -4435,8 +4427,6 @@ mod tests {
     fn live_claim_commits_only_the_derived_ranges_and_releases_explicitly() {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destinations = [false, true];
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let destinations = [false];
         for _direct in destinations {
             let claim = match {
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -4527,8 +4517,6 @@ mod tests {
     fn commit_failure_with_failed_cleanup_transfers_the_live_claim_owner() {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destinations = [false, true];
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let destinations = [false];
         for _direct in destinations {
             let fault = fault::install(fault::Plan::at_pair(
                 fault::Point::Commit,
@@ -4569,8 +4557,6 @@ mod tests {
     fn block_commit_failure_with_failed_cleanup_retains_the_live_claim_owner() {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let destinations = [false, true];
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let destinations = [false];
         for _direct in destinations {
             let fault = fault::install(fault::Plan::at_pair(
                 fault::Point::Commit,

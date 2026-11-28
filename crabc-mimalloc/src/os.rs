@@ -305,39 +305,7 @@ unsafe fn reset_eager_debug_pages(address: *mut u8, length: usize) {
     }
 }
 
-/// One configured Linux base-page size supplied by the process-start owner.
-///
-/// The AArch64 profile accepts 4, 16, and 64 KiB; the x86-64 profile accepts
-/// only 4 KiB. Keeping the value typed prevents future page-map and OS paths
-/// from accidentally relying on another profile's common configuration.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PageSize(NonZeroUsize);
-
-impl PageSize {
-    /// Validates one base-page size for the selected Linux target profile.
-    #[inline]
-    pub(crate) const fn new(bytes: usize) -> Option<Self> {
-        match bytes {
-            4_096 => {
-                // SAFETY: The enumerated base-page size is non-zero.
-                Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
-            }
-            #[cfg(target_arch = "aarch64")]
-            16_384 | 65_536 => {
-                // SAFETY: Each enumerated base-page size is non-zero.
-                Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the base-page byte size supplied at startup.
-    #[inline]
-    pub(crate) const fn bytes(self) -> usize {
-        self.0.get()
-    }
-}
+pub(crate) use crate::arch::PageSize;
 
 /// The allocation-free fragment of process-start information used here.
 ///
@@ -934,8 +902,6 @@ impl<'a> VmProcess<'a> {
             |error| {
                 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                 if let Some(writer) = self.policy.source_errno_store { writer.store(error); }
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                let _ = error;
             },
         ) }
     }
@@ -11634,8 +11600,6 @@ mod tests {
         drop(fault);
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let warning_order = failed_huge_attempt_warning_relation();
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let warning_order = true;
 
         [
             first_result && warning_order,
@@ -13946,8 +13910,6 @@ mod tests {
                 && custom_mapping_survives && invalid_no_mbind && invalid_no_output
                 && invalid_mapping_survives
         };
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let fault_diagnostic_relation = true;
         assert!(
             fault_diagnostic_relation,
             "the selected source mbind receiver preserves its gate, mapping, and two-fragment delivery relation",

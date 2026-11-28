@@ -999,8 +999,6 @@ fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull
     if !initialized { return None; }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     initialize_source_owned_theap(thread, heap, block.cast())?;
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    MainSubprocess::global().identity().record_statistics_theap_linked();
     Some(block.cast())
 }
 
@@ -1222,8 +1220,6 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
         }
         block
     };
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let block = allocate_main_heap_image(thread, size_of::<NonMainHeapImage>(), align_of::<NonMainHeapImage>())?;
     let keys = HeapKeySource::global();
     let slot = match keys.registry.claim_for_main_subprocess(config, keys.subprocess, keys.metadata) {
         Ok(slot) => slot,

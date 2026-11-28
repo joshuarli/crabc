@@ -450,8 +450,6 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
             || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(thread, sequence, identity);
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity);
         if !identity.is_registered()
             || heap_ref.is_subprocess_main()
             || !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())

@@ -111,7 +111,7 @@ use crate::meta::MetaAllocation;
 #[cfg(any(test, feature = "native-runtime-test-audit", any(target_arch = "x86_64", target_arch = "aarch64")))]
 use crate::meta::MetaAllocator;
 use crate::os::{MemoryConfig, StartupInput};
-#[cfg(any(test, target_arch = "aarch64"))]
+#[cfg(test)]
 use crate::os::PageSize;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
@@ -13298,8 +13298,6 @@ fn native_reallocate_pointer_first_nonlocal(
     let source = source.into_live_allocation();
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let guarded_free = crate::config::GUARDED;
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let guarded_free = false;
     let released = if guarded_free {
         drop(source);
         // SAFETY: the exact old client survived the successful replacement
@@ -20409,8 +20407,6 @@ fn attach_current_thread_after_entry(
         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => deferred_attach_reports(*error),
         _ => None,
     };
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let deferred: Option<[SourceErrorReport; 2]> = None;
     if let Some(reports) = deferred {
         return Some(defer_current_thread_attachment(reports, report_deferred));
     }
@@ -26916,8 +26912,6 @@ mod tests {
                 operation(config);
             },
         );
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        operation(memory_config());
     }
 
     #[test]

@@ -2487,7 +2487,7 @@ mod tests {
             let marked = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(marked.xthread_id(), 16 | PAGE_IN_FULL_QUEUE | PAGE_HAS_INTERIOR_POINTERS);
             assert_eq!(marked.canonical_block(), canonical);
-            #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), feature = "mi-guarded"))]
+            #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
             assert_eq!(marked.os_page_size, Some(4096));
         });
     }

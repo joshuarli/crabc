@@ -211,9 +211,6 @@ impl PageMapLock {
     fn try_lock(&self) -> Option<crate::lock::PrivateLockGuard<'_>> { self.inner.try_lock() }
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-type PageMapLock = PrivateLock;
-
 /// The mapped prefix of the source `mi_page_map_t` flexible-array object.
 ///
 /// `submaps[0]` is the first raw pointer word. Further words immediately

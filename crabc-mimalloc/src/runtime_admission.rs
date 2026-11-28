@@ -1447,10 +1447,10 @@ mod tests {
         // entry and one terminal writer together, the store-buffering race
         // that a missing barrier loses.
         select_asymmetric_entry_fence();
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        #[cfg(target_arch = "x86_64")]
         assert!(!ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
             "native x86 leaves private expedited membarrier unregistered");
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(not(target_arch = "x86_64"))]
         assert!(ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
             "the native test image permits private expedited membarrier");
         const ROUNDS: usize = 20_000;

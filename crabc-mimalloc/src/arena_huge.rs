@@ -477,8 +477,6 @@ impl ProcessArenaBacking {
                 if let Some(warning) = warning {
                     unsafe { warning.huge_warning(message) };
                 } else { process.policy().source_warning(message); }
-                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                process.policy().source_warning(message);
             }
             let result = unsafe { self.finish_prepared_huge_reservation(config, owner, numa_node, exclusive, outcome) };
             // A manage rejection runs the source primitive free pass. Its

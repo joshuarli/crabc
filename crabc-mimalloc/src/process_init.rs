@@ -482,50 +482,6 @@ impl ProcessMainInitializationStorage {
         }
     }
 
-    /// Runs production source startup with the raw Unix environment reader
-    /// retained for lazy option retries.
-    ///
-    /// Pinned `_mi_options_init` does not make a temporarily unavailable
-    /// `_mi_getenv` result terminal: a later `mi_option_get` retries only the
-    /// unresolved descriptor while returning its current default meanwhile.
-    /// This route keeps that precise capability beside the permanent process
-    /// policy instead of rejecting the whole native shadow before any source
-    /// process owner exists.
-    ///
-    /// # Safety
-    ///
-    /// The requirements of [`Self::initialize_with_vm_options`] apply. In
-    /// addition, `environment_reader` must satisfy
-    /// [`VmOptionEnvironmentReader`] for every future policy option read and
-    /// remain associated with this exact process lifetime.
-    #[cfg(target_arch = "aarch64")]
-    pub(crate) unsafe fn initialize_with_vm_options_from_source_environment(
-        &'static self,
-        config: MemoryConfig,
-        options: VmOptions,
-        environment_reader: VmOptionEnvironmentReader,
-    ) -> Result<ProcessMainThread, ProcessMainInitError> {
-        // SAFETY: forwarded from this process-owner boundary; `VmPolicy`
-        // retains the reader only beside the same permanent process policy.
-        let mut policy = Some(unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
-            .map_err(ProcessMainInitError::VmPolicy)?);
-        // SAFETY: the caller upholds the same process-static lifecycle
-        // requirements as `initialize_with_vm_options`; `policy` is moved
-        // into this storage before any source root becomes visible.
-        unsafe {
-            self.initialize_with_components_after_claim(
-                config,
-                VmPolicyStartup::ApplyProcessMemoryPolicy(&mut policy),
-                MainStaticAttachmentStorage::global(),
-                MainSubprocess::global(),
-                MetaAllocator::global(),
-                ProcessPageMapStorage::global(),
-                || {},
-                || {},
-            )
-        }
-    }
-
     /// Runs the selected x86 raw-source startup with its mandatory private
     /// FILE capability. This is the only x86 runtime route that retains an
     /// OutputOwner before source VM/OS/arena work.
@@ -1240,8 +1196,6 @@ impl ProcessMainInitializationStorage {
             // the constructor checked its value against the offered config.
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             config: unsafe { (*self.config.get()).assume_init_ref() },
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            config,
             subprocess,
         })
     }
@@ -1873,8 +1827,6 @@ impl ProcessMainStartup {
     }
 
     fn complete_once_body_inner_with_hook(mut self, before_release: impl FnOnce(), runtime_output: bool) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let _ = runtime_output;
         self.storage.ensure_allocation_ready()?;
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
             return Err(ProcessMainInitError::Retained);
@@ -2028,8 +1980,6 @@ pub(crate) fn process_warning_message(message: crate::diagnostic_output::SourceF
         // no allocator projection across this warning's delivery.
         unsafe { output.warning_from_source_options(message) };
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let _ = message;
 }
 
 /// `_mi_error_message(err, ...)` for one release-live allocation site,
@@ -2052,8 +2002,6 @@ pub(crate) fn process_error_message(
         Some(output) => unsafe { output.error_message(report.error(), report.message()) },
         None => report.default_disposition(),
     };
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let disposition = report.default_disposition();
     #[cfg(feature = "native-runtime-test-audit")]
     record_source_error_for_test_audit(report, disposition);
     disposition
@@ -2688,8 +2636,6 @@ impl ProcessMainAllocationLease {
             // and the READY Acquire above publishes its permanent config slot.
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             config: unsafe { (*self.storage.config.get()).assume_init_ref() },
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            config: self.config,
             subprocess: self.subprocess, page_map: self.page_map,
         })
     }
@@ -2709,8 +2655,6 @@ pub(crate) struct ProcessMainReadyLease {
     // image before an operation actually requests the configuration value.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     config: &'static MemoryConfig,
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
 
@@ -2787,8 +2731,6 @@ impl ProcessMainReadyLease {
             page_map_storage: unsafe { page_map_storage.as_ref() },
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             config: *self.config,
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            config: self.config,
         })
     }
 

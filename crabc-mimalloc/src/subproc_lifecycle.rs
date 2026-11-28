@@ -1360,8 +1360,6 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
         .allocate(core::mem::size_of::<NativeChildSubprocess>())
         .map_err(NativeSubprocessError::RecordAllocation)?;
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let record = storage.pointer().cast::<NativeChildSubprocess>();
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     if record.as_ptr().addr() % core::mem::align_of::<NativeChildSubprocess>() != 0 {
         return match parent_metadata.free(&mut storage) {
             Ok(()) => Err(NativeSubprocessError::RecordAllocation(crate::meta::MetaError::InitializationRetained)),
@@ -3765,8 +3763,6 @@ unsafe fn destroy_record(
                     Err(error) => { *owner = Some(child); return Err(error); }
                 }
             };
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            let tracking = &mut [];
             #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             let arena_destination = unsafe {
                 if no_arena_tracking {
@@ -3781,8 +3777,6 @@ unsafe fn destroy_record(
                     )
                 }
             };
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            let arena_destination = ChildArenaDestroyDestination::ReturnOwned;
             // Source destroys a child under its permanently quiescent
             // threads. Rust TLS can still retain a member after the source
             // registration ended, so actual tokens retain this control record.
