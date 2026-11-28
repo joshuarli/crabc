@@ -25509,8 +25509,8 @@ def x86_64_normal_engine_rlib_from_cargo_output(output: str) -> Path:
     return candidates[0]
 
 
-def x86_64_normal_engine_artifact_command(cargo: str) -> list[str]:
-    """Return the exact unfeatured, lockfile-verified x86 release-rustc command."""
+def x86_64_normal_engine_artifact_command(cargo: str, architecture: str = "x86_64") -> list[str]:
+    """Return the exact unfeatured, lockfile-verified native dist-rustc command."""
 
     return [
         cargo,
@@ -25519,10 +25519,11 @@ def x86_64_normal_engine_artifact_command(cargo: str) -> list[str]:
         "--package",
         "crabc-mimalloc",
         "--lib",
-        "--release",
+        "--profile",
+        "dist",
         "--no-default-features",
         "--target",
-        X86_64_RUST_TARGET,
+        f"{architecture}-unknown-linux-musl",
         "--message-format=json",
     ]
 
@@ -25562,9 +25563,9 @@ def extract_single_rlib_codegen_member(ar: str, archive: Path, destination: Path
 
 
 def x86_64_normal_engine_codegen_member_format(file_output: str) -> str:
-    """Require the normal fat-LTO release rlib's recorded codegen format.
+    """Require the normal fat-LTO dist rlib's recorded codegen format.
 
-    The workspace release profile intentionally uses fat LTO.  Rust therefore
+    The workspace dist profile intentionally uses fat LTO.  Rust therefore
     stores LLVM bitcode in this normal library rlib instead of a final linked
     ELF object.  Treat that distinction as evidence, not as a reason to run a
     non-normal `-Clto=off` build or to overclaim an ELF artifact.
@@ -25579,18 +25580,19 @@ def x86_64_normal_engine_codegen_member_format(file_output: str) -> str:
     return "llvm-ir-bitcode"
 
 
-def x86_64_normal_engine_artifact() -> dict[str, Any]:
+def x86_64_normal_engine_artifact(architecture: str = "x86_64") -> dict[str, Any]:
     """Build and inspect the normal native x86-64 `#![no_std]` engine rlib.
 
     A no_std library has no standalone panic handler, so a staticlib would
     fail before it could prove this boundary. The rlib is therefore the exact
-    normal-library artifact being audited here. The workspace release profile
+    normal-library artifact being audited here. The workspace dist profile
     uses fat LTO, so its codegen member is LLVM bitcode rather than a final
     linked ELF object. This is not a final linked ABI, a public allocator
     artifact, or an integration claim.
     """
 
-    require_native_x86_64()
+    require_native_architecture(architecture)
+    target = f"{architecture}-unknown-linux-musl"
     cargo = require_tool("cargo")
     ar = require_tool("ar")
     file_tool = require_tool("file")
@@ -25598,12 +25600,12 @@ def x86_64_normal_engine_artifact() -> dict[str, Any]:
     if not re.search(r"(?m)^#!\[no_std\]\s*$", crate_root.read_text(encoding="utf-8")):
         raise HarnessError("crabc-mimalloc crate root no longer declares #![no_std]")
 
-    with temporary_directory(prefix="crabc-mimalloc-engine-x86_64-") as temporary:
+    with temporary_directory(prefix=f"crabc-mimalloc-engine-{architecture}-") as temporary:
         temporary_root = Path(temporary)
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(temporary_root / "target")
         environment["CARGO_INCREMENTAL"] = "0"
-        command = x86_64_normal_engine_artifact_command(cargo)
+        command = x86_64_normal_engine_artifact_command(cargo) if architecture == "x86_64" else x86_64_normal_engine_artifact_command(cargo, architecture)
         build = command_record(command, cwd=ROOT, env=environment)
         require_success(build, "Rust allocator x86-64 normal engine rlib")
         rlib = x86_64_normal_engine_rlib_from_cargo_output(
@@ -25612,7 +25614,7 @@ def x86_64_normal_engine_artifact() -> dict[str, Any]:
         if not rlib.is_file():
             raise HarnessError("cargo-reported x86-64 engine rlib is absent")
         release_directory = environment["CARGO_TARGET_DIR"]
-        expected_rlib_directory = Path(release_directory) / X86_64_RUST_TARGET / "release"
+        expected_rlib_directory = Path(release_directory) / target / "dist"
         try:
             rlib.relative_to(expected_rlib_directory)
         except ValueError as error:
@@ -25643,13 +25645,13 @@ def x86_64_normal_engine_artifact() -> dict[str, Any]:
             },
             "dependency_resolution": dict(X86_64_LOCKFILE_RESOLUTION),
             "features": [],
-            "profile": "release",
+            "profile": "dist",
             "scope": (
                 "unfeatured normal crabc-mimalloc fat-LTO rlib only; its LLVM bitcode "
                 "codegen member is not a final linked ELF, staticlib, cdylib, public allocator "
                 "ABI, libc integration, or backend-promotion claim"
             ),
-            "target": X86_64_RUST_TARGET,
+            "target": target,
             "target_directory": "fresh temporary CARGO_TARGET_DIR",
         }
 

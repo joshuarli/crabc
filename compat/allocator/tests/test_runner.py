@@ -1070,7 +1070,8 @@ class InventoryTests(unittest.TestCase):
                 "--package",
                 "crabc-mimalloc",
                 "--lib",
-                "--release",
+                "--profile",
+                "dist",
                 "--no-default-features",
                 "--target",
                 "x86_64-unknown-linux-musl",
@@ -1078,6 +1079,9 @@ class InventoryTests(unittest.TestCase):
             ],
         )
         self.assertNotIn("--offline", command)
+        arm = RUNNER.x86_64_normal_engine_artifact_command("cargo", "aarch64")
+        self.assertEqual(arm[arm.index("--target") + 1], "aarch64-unknown-linux-musl")
+        self.assertEqual(arm[arm.index("--profile") + 1], "dist")
 
     def test_x86_64_normal_engine_artifact_requires_the_normal_fat_lto_bitcode_member(self) -> None:
         self.assertEqual(

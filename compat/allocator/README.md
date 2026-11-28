@@ -123,6 +123,9 @@ Arguments are as `--help` lists them; the launcher rejects anything else.
 
 ### Gates
 
+The normal-engine artifact audit uses the `dist` profile to inspect its single
+fat-LTO LLVM bitcode member.
+
 Gates are fail-closed: they print every unmet prerequisite and exit nonzero
 until all evidence passes. Each has a checked-in contract except M9, which its
 script defines.
