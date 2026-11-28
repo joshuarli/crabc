@@ -47,7 +47,12 @@
         ],
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
-          "arena-second-partial-purge-c-rust-differential"
+          "arena-second-partial-purge-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-commit-retry-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "external-callback-refusal-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ]
       },
       {
@@ -66,7 +71,10 @@
         ],
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
-          "arena-reservation-warnings-c-rust-differential"
+          "arena-reservation-warnings-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential"
         ]
       },
       {
@@ -89,7 +97,12 @@
         ],
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
-          "arena-second-partial-purge-c-rust-differential"
+          "arena-second-partial-purge-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-commit-retry-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ]
       },
       {
@@ -168,7 +181,12 @@
           "arena-delayed-purge-mixed-outcome-c-rust-differential",
           "arena-delayed-purge-expiry-c-rust-differential",
           "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
-          "arena-second-partial-purge-c-rust-differential"
+          "arena-second-partial-purge-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-commit-retry-c-rust-differential",
+          "second-arena-purge-failure-c-rust-differential",
+          "second-arena-reset-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ]
       },
       {
@@ -185,7 +203,10 @@
           "mi_atomic_cas_strong_acq_rel(&subproc->arena_count"
         ],
         "evidence_check_ids": [
-          "arena-destruction-c-rust-differential"
+          "arena-destruction-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ]
       },
       {
@@ -202,7 +223,10 @@
           "arena_count"
         ],
         "evidence_check_ids": [
-          "arena-reservation-lifecycle-c-rust-differential"
+          "arena-reservation-lifecycle-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential"
         ]
       },
       {
@@ -221,7 +245,9 @@
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
           "arena-reservation-warnings-c-rust-differential",
-          "arena-destruction-c-rust-differential"
+          "arena-destruction-c-rust-differential",
+          "external-callback-refusal-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ]
       },
       {
@@ -240,7 +266,10 @@
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
           "arena-reservation-warnings-c-rust-differential",
-          "arena-destruction-c-rust-differential"
+          "arena-destruction-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential"
         ]
       },
       {
@@ -257,7 +286,8 @@
           "_mi_os_alloc_huge_os_pages"
         ],
         "evidence_check_ids": [
-          "arena-startup-huge-failure-warning-c-rust-differential"
+          "arena-startup-huge-failure-warning-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ]
       },
       {
@@ -286,7 +316,10 @@
           "arena-clock-fallback-c-rust-differential",
           "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
           "arena-purge-budget-decommit-failure-c-rust-differential",
-          "arena-second-partial-purge-c-rust-differential"
+          "arena-second-partial-purge-c-rust-differential",
+          "second-arena-purge-failure-c-rust-differential",
+          "second-arena-reset-c-rust-differential",
+          "external-callback-refusal-c-rust-differential"
         ]
       },
       {
@@ -312,7 +345,7 @@
       {
         "id": "arena-reservation-decision-and-registry",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/arena.c:341-410,1573-1611,1676-1923 regular arena reservation: the count/option/headroom/eager-commit/overcommit decision class over every primitive-refusing boundary, exponential count scaling after eight arenas, disallow_os_alloc refusal, clean primary failure with the 128-MiB retry and without it, registry exhaustion and the more-than-MI_MAX_ARENAS-4 automatic refusal, eight-worker concurrent fresh reservation after exhausting the only arena, exclusive sub-arena spans with publication and metadata-commit failure after a published parent, and the failed-reservation `show_errors` warnings.",
+        "source_scope": "src/arena.c:341-410,1573-1611,1676-1923 regular arena reservation: the count/option/headroom/eager-commit/overcommit decision class over every primitive-refusing boundary, exponential count scaling after eight arenas, disallow_os_alloc refusal, clean primary failure with the 128-MiB retry and without it, registry exhaustion and the more-than-MI_MAX_ARENAS-4 automatic refusal, eight-worker concurrent fresh reservation after exhausting the only arena, exclusive sub-arena spans with publication and metadata-commit failure after a published parent, and the failed-reservation `show_errors` warnings; a second regular arena reserved after the first fills, with registry-ordered claims and restored availability; two racing claims that reserve one second arena and take distinct spans; and a refused second-arena mapping, with its OS and aligned-allocation warnings in source order, before a later successful reservation.",
         "source_anchors": [
           {
             "member": "src/arena.c",
@@ -341,7 +374,10 @@
         ],
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
-          "arena-reservation-warnings-c-rust-differential"
+          "arena-reservation-warnings-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential"
         ],
         "missing_conditions": [
           "Large-page and 1-GiB huge-page arena reservation success, residency and their failure continuations need MAP_HUGETLB success, which the qualifying arm64 VM (no hugetlbfs pool) cannot supply.",
@@ -351,7 +387,7 @@
       {
         "id": "arena-search-slice-claim-and-requested-arena",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/arena.c:240-335,416-621 and src/heap.c:128-239 slice claim and commit (fresh, uncommitted, already-committed, mixed and failed first-arena commit with fresh-arena recommit), the source start index and suitability filter including the secure-5 pinned skip and refused pinned request, requested and exclusive arenas including a full requested arena that never reserves, `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, oversized requests, and an exclusive heap-in-arena sibling skip.",
+        "source_scope": "src/arena.c:240-335,416-621 and src/heap.c:128-239 slice claim and commit (fresh, uncommitted, already-committed, mixed and failed first-arena commit with fresh-arena recommit), the source start index and suitability filter including the secure-5 pinned skip and refused pinned request, requested and exclusive arenas including a full requested arena that never reserves, `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, oversized requests, and an exclusive heap-in-arena sibling skip; a failed claim commit beside a live second-arena claim that restores the span before the retry commits the same slices; and an external arena whose metadata-commit callback refuses before a later managed claim commits through the caller callback.",
         "source_anchors": [
           {
             "member": "src/arena.c",
@@ -374,7 +410,11 @@
         ],
         "evidence_check_ids": [
           "arena-reservation-lifecycle-c-rust-differential",
-          "arena-second-partial-purge-c-rust-differential"
+          "arena-second-partial-purge-c-rust-differential",
+          "second-regular-arena-c-rust-differential",
+          "second-arena-commit-retry-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "external-callback-refusal-c-rust-differential"
         ],
         "missing_conditions": [
           "NUMA-matched search with more than one physical node remains open on the qualifying VM."
@@ -429,7 +469,7 @@
       {
         "id": "arena-free-purge-schedule-and-collect",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/arena.c:1433-1495,2242-2435 `_mi_arenas_free` purge scheduling and availability; immediate purge through decommit, reset and mixed commitment; delayed purge before, at and after expiry; the process-wide `_mi_arenas_collect` traversal over three regular arenas through its non-forced, visit-all global-expiry rebase, forced one-visit budget with thread-sequence rotation, forced visit-all drain and final global clear, with its two-slice whole-range-claim fallback; failed delayed and scheduled-expiry decommits that consume their schedule without retry; a mixed failed/successful pair; a three-arena bounded purge with rotated drain after a failed decommit; the monotonic-clock fallback; and a multi-arena partial purge with recommit and sibling-safe reuse.",
+        "source_scope": "src/arena.c:1433-1495,2242-2435 `_mi_arenas_free` purge scheduling and availability; immediate purge through decommit, reset and mixed commitment; delayed purge before, at and after expiry; the process-wide `_mi_arenas_collect` traversal over three regular arenas through its non-forced, visit-all global-expiry rebase, forced one-visit budget with thread-sequence rotation, forced visit-all drain and final global clear, with its two-slice whole-range-claim fallback; failed delayed and scheduled-expiry decommits that consume their schedule without retry; a mixed failed/successful pair; a three-arena bounded purge with rotated drain after a failed decommit; the monotonic-clock fallback; and a multi-arena partial purge with recommit and sibling-safe reuse; a second-arena delayed decommit failure beside a live slice, then a rescheduled successful purge of the same span; a delayed reset of one committed free slice that keeps its commitment; and an external arena purge through the caller callback.",
         "source_anchors": [
           {
             "member": "src/arena.c",
@@ -453,7 +493,10 @@
           "arena-clock-fallback-c-rust-differential",
           "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
           "arena-purge-budget-decommit-failure-c-rust-differential",
-          "arena-second-partial-purge-c-rust-differential"
+          "arena-second-partial-purge-c-rust-differential",
+          "second-arena-purge-failure-c-rust-differential",
+          "second-arena-reset-c-rust-differential",
+          "external-callback-refusal-c-rust-differential"
         ],
         "missing_conditions": [
           "The `mi_arenas_try_purge` visit budget above one arena (five or more registered arenas), concurrent purge-guard refusal, and the pinned-arena, preloading and negative-delay skips have no native AArch64 C/Rust evidence.",
@@ -463,7 +506,7 @@
       {
         "id": "arena-terminal-destroy",
         "disposition": "qualified-fixed-profile",
-        "source_scope": "src/arena.c:1540-1566 and its `_mi_os_free_ex` callers: successful terminal release of committed and reserved regular OS arenas, a skipped external callback arena whose caller mapping survives, the arena-count CAS to zero, a failed parent release of a spanning reservation that leaks the parent, and a three-GiB huge-kind arena whose second per-GiB release fails between two successful ones.",
+        "source_scope": "src/arena.c:1540-1566 and its `_mi_os_free_ex` callers: successful terminal release of committed and reserved regular OS arenas, a skipped external callback arena whose caller mapping survives, the arena-count CAS to zero, a failed parent release of a spanning reservation that leaks the parent, and a three-GiB huge-kind arena whose second per-GiB release fails between two successful ones. The concurrent-reservation and reservation-retry receivers also destroy both of their regular arenas and restore the reserved and committed counters.",
         "source_anchors": [
           {
             "member": "src/arena.c",
@@ -485,27 +528,48 @@
           }
         ],
         "evidence_check_ids": [
-          "arena-destruction-c-rust-differential"
+          "arena-destruction-c-rust-differential",
+          "second-arena-concurrent-reserve-c-rust-differential",
+          "second-arena-reserve-retry-c-rust-differential"
         ],
         "missing_conditions": []
       },
       {
-        "id": "arena-huge-page-startup-failure",
+        "id": "arena-huge-page-reservation",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/arena.c:2170-2235 the empty huge-page reservation's final warning after a primitive failure, reached explicitly and through the interleaved startup reservation.",
+        "source_scope": "src/arena.c:2170-2235 the empty huge-page reservation's final warning after a primitive failure, reached explicitly and through the interleaved startup reservation; and one partial huge primitive progress (the first of three 1-GiB pages maps, the next 1-GiB and 2-MiB attempts fail with their warnings in source order) that `mi_reserve_huge_os_pages_at_ex` publishes as a pinned huge-kind arena whose committed two-slice claim is writable, released to the slice bitmap and destroyed with its parent. The progress receiver substitutes only the successful `MAP_HUGETLB` import with an ordinary exact-address mapping, so it covers software state and accounting, not physical huge pages.",
         "source_anchors": [
           {
             "member": "src/arena.c",
             "start_line": 2170,
             "end_line": 2235,
             "sha256": "d05acfb77af1958e2450f9b4492034da34b31827f73840e54a07fc71ea1435da"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1676,
+            "end_line": 1884,
+            "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 240,
+            "end_line": 335,
+            "sha256": "d7f4fe71718bd3baebb7c31b63a07d867a73eddab2f8efadd976bf940efa175f"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1540,
+            "end_line": 1566,
+            "sha256": "0e372615ae6c03b6f5166ac20b7f779ffde17fa2ad012e3a6389fc14548aae7c"
           }
         ],
         "evidence_check_ids": [
-          "arena-startup-huge-failure-warning-c-rust-differential"
+          "arena-startup-huge-failure-warning-c-rust-differential",
+          "huge-reservation-progress-c-rust-differential"
         ],
         "missing_conditions": [
-          "Huge-page reservation success, partial progress, timeout and per-node interleaving need hugetlbfs pages and NUMA nodes that the qualifying arm64 VM does not expose."
+          "Physical huge-page reservation success, residency, timeout and per-node interleaving need hugetlbfs pages and NUMA nodes that the qualifying arm64 VM does not expose."
         ]
       }
     ],
@@ -591,11 +655,59 @@
         "id": "arena-second-partial-purge-c-rust-differential",
         "kind": "c-rust-arena-lifecycle-differential",
         "target": "compat/allocator/m2_second_arena_partial_purge_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "second-regular-arena-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_regular_arena_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "second-arena-commit-retry-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_commit_retry_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "second-arena-concurrent-reserve-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_concurrent_reserve_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "second-arena-reserve-retry-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_reserve_retry_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "second-arena-purge-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_second_arena_purge_failure_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "second-arena-reset-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_second_arena_reset_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "external-callback-refusal-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_external_callback_refusal_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "huge-reservation-progress-c-rust-differential",
+        "kind": "c-rust-arena-huge-reservation-progress-differential",
+        "target": "compat/allocator/m2_huge_reservation_progress_x86_64.py"
       }
     ],
     "remaining_conditions": [
-      "Qualify arena page abandonment, abandoned-page search/claim/unabandon and cross-thread reclamation beyond the lifecycle differential's managed small, medium and large mapped abandonment, held-owner claim refusal, retry and reassociation, foreign remote-free collection and natural-exit replacement-owner reclaim, and arena purge beyond the process-purge differential's three-regular-arena delayed purge and two-slice whole-range-claim fallback and the selected delayed, scheduled-expiry, budgeted and partial purge receivers, through native AArch64 C/Rust lifecycle and failure evidence.",
-      "Qualify large-page and huge-page arena reservation success against pinned C (see the VM huge-page/NUMA condition): the qualifying arm64 VM exposes no hugetlbfs pool and no NUMA node topology, so MAP_HUGETLB success, 1-GiB huge-page arenas with real partial progress or timeout, and NUMA second-pass placement across physical nodes stay open here. Automatic reservation and count scaling, commit and eager-commit policy, disallow_os_alloc, requested and exclusive arenas including an exclusive sub-arena span, oversized requests, clean primary failure with and without the 128-MiB fallback, the single-node NUMA second pass, registry exhaustion, eight-worker concurrent fresh reservation after exhausting the only arena, sub-arena publication and metadata-commit failure after a published parent, requested-arena `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, and the `_mi_theap_alloc` exclusive-arena arm are covered natively on AArch64 by the arena-reservation lifecycle differential, and the failed-reservation `show_errors` output by the reservation warning differential.",
+      "Qualify arena page abandonment, abandoned-page search/claim/unabandon and cross-thread reclamation beyond the lifecycle differential's managed small, medium and large mapped abandonment, held-owner claim refusal, retry and reassociation, foreign remote-free collection and natural-exit replacement-owner reclaim, and arena purge beyond the process-purge differential's three-regular-arena delayed purge and two-slice whole-range-claim fallback and the selected delayed, scheduled-expiry, budgeted, partial, second-arena failed-decommit-retry and reset purge receivers, through native AArch64 C/Rust lifecycle and failure evidence.",
+      "Qualify large-page and huge-page arena reservation success against pinned C (see the VM huge-page/NUMA condition): the qualifying arm64 VM exposes no hugetlbfs pool and no NUMA node topology, so MAP_HUGETLB success, 1-GiB huge-page arenas with real partial progress or timeout, and NUMA second-pass placement across physical nodes stay open here; one partial huge primitive progress into a published pinned huge-kind arena is compared over a substituted mapping, which covers software state and accounting only. Automatic reservation and count scaling, commit and eager-commit policy, disallow_os_alloc, requested and exclusive arenas including an exclusive sub-arena span, oversized requests, clean primary failure with and without the 128-MiB fallback, the single-node NUMA second pass, registry exhaustion, eight-worker concurrent fresh reservation after exhausting the only arena, sub-arena publication and metadata-commit failure after a published parent, requested-arena `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, and the `_mi_theap_alloc` exclusive-arena arm are covered natively on AArch64 by the arena-reservation lifecycle differential, and the failed-reservation `show_errors` output by the reservation warning differential.",
       "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts. The executed receivers and their expected relations are fixed to the qualifying arm64 VM's 4 KiB geometry."
     ]
   }

@@ -11,6 +11,7 @@ import run as harness
 
 
 FIXTURE = Path(__file__).with_suffix(".c")
+ARCH = harness.native_evidence_architecture()
 TARGET = "process_arena::tests::emit_m2_second_arena_commit_retry_c_rust_trace"
 C_ONLY = ("failed_protect_exact", "protect_exact")
 FIELDS = (
@@ -59,10 +60,10 @@ def parse_trace(output: str, source: str, fields: set[str]) -> dict[str, int]:
 
 
 def run(offline: bool) -> Path:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-second-arena-commit-retry"
+    artifacts = harness.ARTIFACT_ROOT / ARCH / "m2-second-arena-commit-retry"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "pinned-c-oracle"
     with harness.temporary_directory(prefix="m2-second-arena-commit-retry-") as directory:

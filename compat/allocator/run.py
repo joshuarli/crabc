@@ -759,15 +759,212 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
 # Arena checks that only the AArch64 fragment admits. Each receiver runs
 # unchanged pinned source against the shared engine; its x86 admission waits
 # for a native x86 run, so the x86 inventories above stay unchanged.
-M2_AARCH64_ADDED_ARENA_CHECKS: tuple[dict[str, Any], ...] = ()
-M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {}
+# Their records use the direct-receiver format of the VM component: shared
+# relations on both sides, plus a pinned-C-only primitive receipt or a
+# Rust-only retained count where the receiver reports one.
+M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
+    "second-regular-arena-c-rust-differential": {
+        "artifact": "m2-second-regular-arena",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_regular_arena_x86_64.py",
+        "fixture": "compat/allocator/m2_second_regular_arena_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_regular_arena_c_rust_trace",
+        "trace_prefix": "m2.arena_scale.",
+        "common": {
+            **{
+                f"claim{index}_{field}": values[index]
+                for field, values in (
+                    ("registry", (1, 1, 1, 2)), ("arena", (0, 0, 0, 1)),
+                    ("slice", (9, 512, 768, 9)), ("count", (256,) * 4), ("occupied", (1,) * 4),
+                )
+                for index in range(4)
+            },
+            "registry_final": 2, "distinct": 1, "owners": 1, "first_exhausted_for_256": 1,
+            "arena_size": 64 * 1024 * 1024, "reserved_bytes": 128 * 1024 * 1024,
+            "arena_count": 2, "restored": 1, "purge_calls": 4,
+            "purged_bytes": 64 * 1024 * 1024, "mapped_both": 1, "reserved_still": 1,
+            "registry_still": 1,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-second-regular-arena-reservation-after-the-first-fills-with-registry-order-claims-and-restored-availability",
+    },
+    "second-arena-commit-retry-c-rust-differential": {
+        "artifact": "m2-second-arena-commit-retry",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_commit_retry_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_commit_retry_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_commit_retry_c_rust_trace",
+        "trace_prefix": "m2.second_commit_retry.",
+        "common": {
+            "setup": 1, "failed_null": 1, "failed_free": 1, "failed_dirty": 1,
+            "failed_uncommitted": 1, "failed_protect_calls": 1, "failed_warnings": 1,
+            "failed_warning_order": 1, "failed_commit_calls": 1, "failed_committed_delta": 0,
+            "retry_same": 1, "retry_committed": 1, "retry_dirty": 1, "retry_zero_flag": 1,
+            "protect_calls": 2, "warning_calls": 1, "commit_calls": 2, "committed_delta": 64 * 1024,
+            "purge_calls": 0, "arena_purges": 0, "reserved_delta": 0, "maps_live": 1,
+            "failed_slice": 266, "survivor_slice": 265,
+        },
+        "c_only": {"failed_protect_exact": 1, "protect_exact": 2},
+        "rust_only": {},
+        "c_receipt": ("c_primitive_range", "c_only"),
+        "scope": "pinned-c-rust-failed-claim-commit-beside-a-live-second-arena-claim-restores-the-span-then-retry-commits-the-same-slices",
+    },
+    "second-arena-concurrent-reserve-c-rust-differential": {
+        "artifact": "m2-second-arena-concurrent-reserve",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_concurrent_reserve_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_concurrent_reserve_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_concurrent_reserve_c_rust_trace",
+        "trace_prefix": "m2.second_concurrent.",
+        "common": {
+            "first_full": 1, "registry_claimed": 2, "registry_order": 1, "both_claimed": 1,
+            "both_second": 1, "distinct_claims": 1, "low_slice": 9, "high_slice": 512,
+            "first_claims_live": 1, "mapped_both": 1, "warnings": 0,
+            "reserved_delta": 64 * 1024 * 1024, "committed_delta": 589824, "mmap_calls": 1,
+            "commit_calls": 1, "purge_calls": 0, "arena_delta": 1, "worker_released": 1,
+            "initial_released": 1, "retained_both": 1, "terminal_unmapped": 1,
+            "terminal_registry": 0, "terminal_reserved_delta": -(64 * 1024 * 1024),
+            "terminal_committed_delta": -133627904,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-two-racing-claims-after-the-first-arena-has-no-fitting-span-reserve-one-second-arena-and-claim-distinct-spans",
+    },
+    "second-arena-reserve-retry-c-rust-differential": {
+        "artifact": "m2-second-arena-reserve-retry",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_reserve_retry_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_reserve_retry_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_reserve_retry_c_rust_trace",
+        "trace_prefix": "m2.second_reserve_retry.",
+        "common": {
+            "first_full": 1, "failed_null": 1, "failed_registry": 1, "first_claims_live": 1,
+            "failed_map_absent": 1, "failed_mmap_calls": 2, "failed_commit_calls": 0,
+            "failed_committed_delta": 0, "failed_arena_delta": 0, "os_warnings": 2,
+            "aligned_warnings": 1, "failed_warning_order": 121, "failed_warning_counter_order": 11,
+            "retry_second": 1, "registry_order": 1, "mapped_both": 1,
+            "reserved_delta": 64 * 1024 * 1024, "arena_delta": 1, "purge_calls": 0, "released": 1,
+            "mappings_retained": 1, "terminal_unmapped": 1, "terminal_registry": 0,
+            "terminal_reserved_delta": -(64 * 1024 * 1024), "terminal_committed_delta": -133627904,
+        },
+        "c_only": {"failed_maps": 4, "failed_direct": 2, "failed_overmap": 2, "failed_unmaps": 0},
+        "rust_only": {"rust_failed_map_attempts": 2},
+        "c_receipt": ("c_primitive_calls", "c_only"),
+        "scope": "pinned-c-rust-refused-second-arena-mapping-with-os-and-aligned-warnings-then-a-later-successful-reservation",
+    },
+    "second-arena-purge-failure-c-rust-differential": {
+        "artifact": "m2-second-arena-purge-failure",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_second_arena_purge_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_purge_failure_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_purge_failure_c_rust_trace",
+        "trace_prefix": "m2.second_purge_failure.",
+        "common": {
+            "setup": 1, "pending": 1, "failed_state": 1, "failed_calls": 1, "failed_exact": 1,
+            "failed_warnings": 1, "failed_warning_order": 1, "same_span": 1, "retry_pending": 1,
+            "retried_state": 1, "advice_calls": 2, "advice_exact": 2, "warning_calls": 1,
+            "maps_live": 1, "released_slice": 265, "survivor_slice": 266, "purge_calls": 2,
+            "purged_bytes": 2 * 64 * 1024, "arena_purges": 2,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-second-arena-delayed-decommit-failure-beside-a-live-slice-then-a-rescheduled-successful-purge-of-the-same-span",
+    },
+    "second-arena-reset-c-rust-differential": {
+        "artifact": "m2-second-arena-reset",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_second_arena_reset_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_reset_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_reset_c_rust_trace",
+        "trace_prefix": "m2.second_reset.",
+        "common": {
+            "setup": 1, "pending": 1, "reset_state": 1, "advice_calls": 1, "advice_exact": 1,
+            "advice_kind": 8, "reset_calls": 1, "reset_bytes": 64 * 1024, "purge_calls": 1,
+            "purged_bytes": 64 * 1024, "arena_purges": 1, "committed_delta": 0, "maps_live": 1,
+            "released_slice": 265, "survivor_slice": 266,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-delayed-reset-of-one-committed-free-slice-beside-a-live-second-arena-claim-keeps-its-commitment",
+    },
+    "external-callback-refusal-c-rust-differential": {
+        "artifact": "m2-external-callback-refusal",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_external_callback_refusal_x86_64.py",
+        "fixture": "compat/allocator/m2_external_callback_refusal_x86_64.c",
+        "rust_test": "arena::tests::emit_m2_external_callback_refusal_c_rust_trace",
+        "trace_prefix": "m2.external_refusal.",
+        "common": {
+            "refused": 1, "owner": 1, "initial_bitmap": 1, "claimed": 1, "purge_state": 1,
+            "released_external_live": 1, "callback_order": 1112, "callback_count": 4,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-external-arena-metadata-commit-refusal-then-managed-claim-commit-purge-and-release-through-the-caller-callback",
+    },
+}
+# The huge-progress receiver writes a matched C/Rust report. It substitutes
+# only the successful `MAP_HUGETLB` import of `_mi_os_alloc_huge_os_pages`
+# with an ordinary exact-address mapping, so it qualifies software state and
+# accounting of a partial huge arena, not physical huge-page success.
+M2_AARCH64_HUGE_PROGRESS_RECEIVER: dict[str, Any] = {
+    "id": "huge-reservation-progress-c-rust-differential",
+    "artifact": "m2-huge-reservation-progress",
+    "kind": "c-rust-arena-huge-reservation-progress-differential",
+    "target": "compat/allocator/m2_huge_reservation_progress_x86_64.py",
+    "fixture": "compat/allocator/m2_huge_reservation_progress_x86_64.c",
+    "rust_tests": (
+        "os::tests::emit_m2_huge_reservation_progress_c_rust_trace",
+        "arena::owned::huge::tests::huge_partial_reservation_publishes_claims_and_releases_the_source_arena",
+    ),
+    "trace_prefix": "m2.huge_reservation_progress.",
+    "trace": {
+        "pages": 1, "size_gib": 1, "base_exact": 1, "memory_huge": 1, "memory_pinned": 1,
+        "memory_committed": 1, "memory_zero": 1, "huge_calls": 3, "huge_1g_calls": 2,
+        "huge_2m_calls": 1, "exact_hints": 3, "warning_fragments": 4, "warning_order": 12,
+        "warning_after_first": 2, "first_live": 1, "second_absent": 1, "reserved_after": 1,
+        "committed_after": 1, "mmap_after": 0, "arena_after": 0, "ordinary_live": 1,
+        "ordinary_memory": 1, "reserved_with_ordinary": 1, "committed_with_ordinary": 1,
+        "ordinary_gone": 1, "huge_gone": 1, "reserved_terminal": 0, "committed_terminal": 0,
+        "mmap_terminal": 1, "arena_terminal": 0, "arena_published": 1, "arena_partial": 1,
+        "arena_base_exact": 1, "arena_memory_huge": 1, "arena_memory_pinned": 1,
+        "arena_reserved_after": 1, "arena_committed_after": 1, "arena_count_after": 1,
+        "arena_claim_writable": 1, "arena_claim_pinned": 1, "arena_claim_committed": 1,
+        "arena_claim_released": 1, "arena_terminal_released": 1, "arena_terminal_registry": 0,
+        "arena_reserved_terminal": 0, "arena_committed_terminal": 0, "arena_terminal_absent": 1,
+    },
+    "scope": "pinned-c-rust-partial-huge-primitive-progress-into-a-published-huge-kind-arena-with-pinned-claim-release-and-terminal-destruction-over-a-substituted-mapping",
+}
+M2_AARCH64_ADDED_ARENA_CHECKS: tuple[dict[str, Any], ...] = (
+    *(
+        {
+            "expected_passed_test_count": 1,
+            "id": check_id,
+            "kind": receiver["kind"],
+            "target": receiver["target"],
+        }
+        for check_id, receiver in M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS.items()
+    ),
+    {
+        "expected_passed_test_count": 1,
+        "id": M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"],
+        "kind": M2_AARCH64_HUGE_PROGRESS_RECEIVER["kind"],
+        "target": M2_AARCH64_HUGE_PROGRESS_RECEIVER["target"],
+    },
+)
 M2_ARENA_CHECKS = {
     "x86_64": M2_X86_64_ARENA_CHECKS,
     "aarch64": (*M2_X86_64_ARENA_CHECKS, *M2_AARCH64_ADDED_ARENA_CHECKS),
 }
 M2_ARENA_DIRECT_RECEIVERS = {
     "x86_64": M2_X86_64_ARENA_DIRECT_RECEIVERS,
-    "aarch64": {**M2_X86_64_ARENA_DIRECT_RECEIVERS, **M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS},
+    "aarch64": M2_X86_64_ARENA_DIRECT_RECEIVERS,
 }
 M2_X86_64_RECURSION_CHECKS = (
     {
@@ -14788,6 +14985,7 @@ def _m2_x86_64_validated_component(
                 "c-rust-process-arena-purge-differential",
                 "c-rust-arena-delayed-purge-failure-differential",
                 "c-rust-arena-startup-huge-failure-differential",
+                "c-rust-arena-huge-reservation-progress-differential",
                 "c-rust-arena-lifecycle-differential",
                 "c-rust-arena-destruction-differential",
                 "c-rust-reservation-warnings-differential",
@@ -14904,6 +15102,26 @@ def _m2_x86_64_validated_component(
                 or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
             ):
                 raise HarnessError("native x86 M2 process-arena evidence target is absent")
+        elif architecture == "aarch64" and raw_check.get("id") in M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS:
+            receiver = M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS[raw_check["id"]]
+            if (
+                component_id != "arenas"
+                or raw_check.get("kind") != receiver["kind"]
+                or raw_check.get("target") != receiver["target"]
+                or not (ROOT / receiver["target"]).is_file()
+                or not (ROOT / receiver["fixture"]).is_file()
+            ):
+                raise HarnessError("native aarch64 M2 added arena receiver is absent")
+        elif architecture == "aarch64" and raw_check.get("id") == M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"]:
+            receiver = M2_AARCH64_HUGE_PROGRESS_RECEIVER
+            if (
+                component_id != "arenas"
+                or raw_check.get("kind") != receiver["kind"]
+                or raw_check.get("target") != receiver["target"]
+                or not (ROOT / receiver["target"]).is_file()
+                or not (ROOT / receiver["fixture"]).is_file()
+            ):
+                raise HarnessError("native aarch64 M2 huge-progress receiver is absent")
         elif raw_check.get("id") in M2_ARENA_DIRECT_RECEIVERS[architecture]:
             receiver = M2_ARENA_DIRECT_RECEIVERS[architecture][raw_check["id"]]
             if (
@@ -15482,12 +15700,17 @@ def _run_m2_x86_64_process_vm_evidence(
 
 
 def _run_m2_vm_direct_receiver_evidence(
-    *, offline: bool, architecture: str,
+    *, offline: bool, architecture: str, receivers: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Execute the direct pinned-C/Rust VM receivers with raw transcripts."""
+    """Execute direct pinned-C/Rust receivers with raw transcripts.
+
+    `receivers` defaults to the VM component's inventory; the AArch64 arenas
+    component passes its own added receivers in the same record format.
+    """
 
     results: dict[str, dict[str, Any]] = {}
-    for check_id, receiver in M2_VM_DIRECT_RECEIVERS[architecture].items():
+    selected = M2_VM_DIRECT_RECEIVERS[architecture] if receivers is None else receivers
+    for check_id, receiver in selected.items():
         command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
         execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
         require_success(execution, "direct VM C/Rust receiver")
@@ -16550,6 +16773,7 @@ def _m2_x86_64_vm_check_records(
 
 def _m2_vm_direct_receiver_check_records(
     component: Mapping[str, Any], pin: Mapping[str, str], evidence: object, architecture: str,
+    receivers: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Bind each direct VM receipt to its two physical transcripts.
 
@@ -16560,10 +16784,12 @@ def _m2_vm_direct_receiver_check_records(
     src/os.c:240-258): pinned C leaks the failed range, and Rust retains a
     raw-retry owner for it. The policy-first trim receiver fails one aligned
     overmap release under `mi_arena_reserve` (src/arena.c:341-406,
-    src/os.c:303-430) and has no side-only fields.
+    src/os.c:303-430) and has no side-only fields. Each record names the
+    component that owns its checks.
     """
 
-    receivers = M2_VM_DIRECT_RECEIVERS[architecture]
+    if receivers is None:
+        receivers = M2_VM_DIRECT_RECEIVERS[architecture]
     if not isinstance(evidence, Mapping) or set(evidence) != set(receivers):
         raise HarnessError(f"native {architecture} M2 direct VM receipt inventory is invalid")
     records: list[dict[str, Any]] = []
@@ -16610,7 +16836,7 @@ def _m2_vm_direct_receiver_check_records(
                 candidate = line.rsplit(" ... ", 1)[-1]
                 if not candidate.startswith(receiver["trace_prefix"]):
                     continue
-                match = re.fullmatch(r"([a-z_.]+)=(-?[0-9]+)", candidate[len(receiver["trace_prefix"]):])
+                match = re.fullmatch(r"([a-z][a-z0-9_.]*)=(-?[0-9]+)", candidate[len(receiver["trace_prefix"]):])
                 if match is None or match.group(1) in values:
                     raise HarnessError(f"native {architecture} M2 direct VM transcript is invalid")
                 values[match.group(1)] = int(match.group(2))
@@ -16618,7 +16844,7 @@ def _m2_vm_direct_receiver_check_records(
                 raise HarnessError(f"native {architecture} M2 direct VM trace differs from its receipt")
         records.append({
             "comparison_status": "matched",
-            "component": "vm-primitives",
+            "component": component["id"],
             "command": list(observed["command"]),
             "evidence_scope": receiver["scope"],
             "id": check_id,
@@ -17694,7 +17920,9 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-aarch64-v3.5.0.json"
 M2_AARCH64_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "aarch64/m2-memory-substrate-latest.json"
 M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "arenas")
-M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset({"destruction", "direct", "lifecycle", "reservation_warnings"})
+M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset(
+    {"added_direct", "destruction", "direct", "huge_progress", "lifecycle", "reservation_warnings"}
+)
 M2_AARCH64_GLOBAL_EVIDENCE = (
     "aarch64-source-contract-inventories",
     "aarch64-bounded-component-source-definitions",
@@ -17850,6 +18078,91 @@ def _run_m2_aarch64_arena_evidence(
             architecture="aarch64",
         ),
         "direct": _run_m2_x86_64_arena_direct_evidence(offline=offline, architecture="aarch64"),
+        "added_direct": _run_m2_vm_direct_receiver_evidence(
+            offline=offline, architecture="aarch64", receivers=M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS,
+        ),
+        "huge_progress": _run_m2_aarch64_huge_progress_evidence(offline=offline),
+    }
+
+
+def _run_m2_aarch64_huge_progress_evidence(*, offline: bool) -> dict[str, Any]:
+    """Execute the huge-progress receiver and retain its physical transcripts."""
+
+    receiver = M2_AARCH64_HUGE_PROGRESS_RECEIVER
+    command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
+    execution = command_record(command, cwd=ROOT, timeout_seconds=1800)
+    require_success(execution, "huge-progress C/Rust receiver")
+    artifacts = ARTIFACT_ROOT / "aarch64" / receiver["artifact"]
+    return {
+        **read_json(artifacts / "evidence.json"),
+        "command": command,
+        "c_stdout": (artifacts / "pinned-c.stdout").read_text(encoding="utf-8"),
+        "c_stderr": (artifacts / "pinned-c.stderr").read_text(encoding="utf-8"),
+        "rust_stdout": (artifacts / "rust.stdout").read_text(encoding="utf-8"),
+        "rust_stderr": (artifacts / "rust.stderr").read_text(encoding="utf-8"),
+    }
+
+
+def _m2_aarch64_huge_progress_check_record(
+    component: Mapping[str, Any], evidence: object,
+) -> dict[str, Any]:
+    """Bind the huge-progress report to its fixed relations and both transcripts.
+
+    Each side's physical output must carry exactly the selected fields: the
+    `_mi_os_alloc_huge_os_pages` partial-progress observations
+    (src/os.c:729-834) and the `mi_reserve_huge_os_pages_at_ex` arena
+    publication, pinned claim, release and destruction observations
+    (src/arena.c:2170-2190, 1540-1566).
+    """
+
+    receiver = M2_AARCH64_HUGE_PROGRESS_RECEIVER
+    check = next((item for item in component["checks"] if item["id"] == receiver["id"]), None)
+    expected_command = ["python3", receiver["target"]]
+    expected_rust_commands = [
+        ["python3", "compat/allocator/run_unit_x86_64.py", target] for target in receiver["rust_tests"]
+    ]
+    if (
+        check is None
+        or check.get("kind") != receiver["kind"]
+        or check.get("target") != receiver["target"]
+        or not isinstance(evidence, Mapping)
+        or set(evidence) != {
+            "status", "c", "rust", "mismatches", "c_commands", "rust_commands", "scope",
+            "command", "c_stdout", "c_stderr", "rust_stdout", "rust_stderr",
+        }
+        or evidence.get("status") != "matched"
+        or evidence.get("mismatches") != []
+        or evidence.get("c") != receiver["trace"]
+        or evidence.get("rust") != receiver["trace"]
+        or evidence.get("c_commands") != {"build_status": 0, "run_status": 0, "stderr": ""}
+        or evidence.get("rust_commands") != {"run_status": 0, "stderr": "", "commands": expected_rust_commands}
+        or evidence.get("command") not in (expected_command, expected_command + ["--offline"])
+        or evidence.get("c_stderr") != ""
+        or evidence.get("rust_stderr") != ""
+        or not isinstance(evidence.get("scope"), str)
+        or not evidence["scope"]
+    ):
+        raise HarnessError("native aarch64 M2 huge-progress receipt is invalid")
+    for side in ("c", "rust"):
+        values: dict[str, int] = {}
+        for line in str(evidence[f"{side}_stdout"]).splitlines():
+            candidate = line.rsplit(" ... ", 1)[-1]
+            if not candidate.startswith(receiver["trace_prefix"]):
+                continue
+            match = re.fullmatch(r"([a-z][a-z0-9_]*)=(-?[0-9]+)", candidate[len(receiver["trace_prefix"]):])
+            if match is None or match.group(1) in values:
+                raise HarnessError("native aarch64 M2 huge-progress transcript is invalid")
+            values[match.group(1)] = int(match.group(2))
+        if values != receiver["trace"]:
+            raise HarnessError("native aarch64 M2 huge-progress trace differs from its receipt")
+    return {
+        "comparison_status": "matched",
+        "component": "arenas",
+        "command": list(evidence["command"]),
+        "evidence_scope": receiver["scope"],
+        "id": receiver["id"],
+        "passed_test_count": 1,
+        "target": receiver["target"],
     }
 
 
@@ -17891,6 +18204,15 @@ def _m2_aarch64_arena_check_records(
         *_m2_x86_64_process_arena_collect_check_records(summary, vm_evidence, "aarch64"),
         *aggregate,
         *_m2_x86_64_arena_direct_check_records(summary, pin, arena_evidence["direct"], "aarch64"),
+        *_m2_vm_direct_receiver_check_records(
+            next(component for component in summary["components"] if component["id"] == "arenas"),
+            pin, arena_evidence["added_direct"], "aarch64",
+            receivers=M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS,
+        ),
+        _m2_aarch64_huge_progress_check_record(
+            next(component for component in summary["components"] if component["id"] == "arenas"),
+            arena_evidence["huge_progress"],
+        ),
     ]
     by_id = {record["id"]: record for record in records}
     order = [check["id"] for check in M2_ARENA_CHECKS["aarch64"]]

@@ -942,7 +942,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                       "rust_command": [binary, target, "--exact", "--test-threads=1", "--nocapture"]}
                 for key, target in targets.items()
             }
-            return {**rows, "direct": {}}
+            return {**rows, "direct": {}, "added_direct": {}, "huge_progress": {}}
 
         def record(check_id):
             check = RUNNER._m2_x86_64_check_by_id(summary, check_id)[1]
@@ -951,7 +951,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
 
         purge = [record("process-wide-arena-purge-c-rust-differential")]
         direct = [record(check_id) for check_id in reversed(list(RUNNER.M2_ARENA_DIRECT_RECEIVERS["aarch64"]))]
+        added = [record(check_id) for check_id in RUNNER.M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS]
+        huge = record(RUNNER.M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"])
         with mock.patch.object(RUNNER, "_m2_x86_64_process_arena_collect_check_records", return_value=purge), \
+                mock.patch.object(RUNNER, "_m2_vm_direct_receiver_check_records", return_value=added), \
+                mock.patch.object(RUNNER, "_m2_aarch64_huge_progress_check_record", return_value=huge), \
                 mock.patch.object(RUNNER, "_m2_x86_64_arena_direct_check_records", return_value=direct):
             records = RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(arm_binary))
             self.assertEqual([row["id"] for row in records],
@@ -962,6 +966,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 RUNNER._m2_aarch64_arena_check_records(
                     summary, pin, {}, {key: value for key, value in evidence(arm_binary).items() if key != "direct"})
         with mock.patch.object(RUNNER, "_m2_x86_64_process_arena_collect_check_records", return_value=purge), \
+                mock.patch.object(RUNNER, "_m2_vm_direct_receiver_check_records", return_value=added), \
+                mock.patch.object(RUNNER, "_m2_aarch64_huge_progress_check_record", return_value=huge), \
                 mock.patch.object(RUNNER, "_m2_x86_64_arena_direct_check_records", return_value=direct[1:]):
             with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
                 RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(arm_binary))
@@ -993,9 +999,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
 
     @staticmethod
-    def vm_direct_receipts(pin, artifact):
+    def vm_direct_receipts(pin, artifact, receivers=RUNNER.M2_AARCH64_VM_DIRECT_RECEIVERS):
         evidence = {}
-        for check_id, receiver in RUNNER.M2_AARCH64_VM_DIRECT_RECEIVERS.items():
+        for check_id, receiver in receivers.items():
             def transcript(values):
                 return "".join(f"{receiver['trace_prefix']}{field}={value}\n" for field, value in values.items())
             receipt = {}
@@ -1045,6 +1051,80 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
                 RUNNER._m2_vm_direct_receiver_check_records(component, pin, {}, "aarch64")
         self.assertEqual(RUNNER.M2_VM_DIRECT_RECEIVERS["x86_64"], {})
+
+    def test_arm_added_arena_receipts_require_both_transcripts_and_side_only_values(self):
+        component = next(item for item in self.arm_summary()["components"] if item["id"] == "arenas")
+        receivers = RUNNER.M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS
+        self.assertEqual([check["id"] for check in component["checks"][-len(receivers) - 1:-1]], list(receivers))
+        x86 = RUNNER.validate_x86_64_m2_memory_substrate_contract(
+            RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin())
+        x86_ids = {check["id"] for item in x86["components"] for check in item["checks"]}
+        self.assertFalse(set(receivers) & x86_ids)
+        pin = {"revision": "pinned-revision"}
+        artifact = {"path": "source-bound", "bytes": 1, "sha256": "a" * 64}
+        evidence = self.vm_direct_receipts(pin, artifact, receivers)
+        with mock.patch.object(RUNNER, "artifact_record", return_value=artifact):
+            records = RUNNER._m2_vm_direct_receiver_check_records(
+                component, pin, evidence, "aarch64", receivers=receivers)
+            self.assertEqual([record["id"] for record in records], list(receivers))
+            self.assertEqual({record["component"] for record in records}, {"arenas"})
+            for check_id, receiver in receivers.items():
+                for side, values in (("c", {**receiver["common"], **receiver["c_only"]}),
+                                     ("rust", {**receiver["common"], **receiver["rust_only"]})):
+                    field, value = next(reversed(values.items()))
+                    with self.subTest(check_id=check_id, side=side):
+                        changed = copy.deepcopy(evidence)
+                        line = f"{receiver['trace_prefix']}{field}={value}\n"
+                        changed[check_id][f"{side}_stdout"] = changed[check_id][f"{side}_stdout"].replace(
+                            line, f"{receiver['trace_prefix']}{field}={value + 1}\n")
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_vm_direct_receiver_check_records(
+                                component, pin, changed, "aarch64", receivers=receivers)
+                with self.subTest(check_id=check_id, field="c_stderr"):
+                    changed = copy.deepcopy(evidence)
+                    changed[check_id]["c_stderr"] = "stale"
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_vm_direct_receiver_check_records(
+                            component, pin, changed, "aarch64", receivers=receivers)
+            with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+                RUNNER._m2_vm_direct_receiver_check_records(
+                    component, pin, evidence, "aarch64")
+
+    def test_arm_huge_progress_receipt_requires_the_report_and_both_transcripts(self):
+        component = next(item for item in self.arm_summary()["components"] if item["id"] == "arenas")
+        receiver = RUNNER.M2_AARCH64_HUGE_PROGRESS_RECEIVER
+        transcript = "".join(f"{receiver['trace_prefix']}{field}={value}\n"
+                             for field, value in receiver["trace"].items())
+        evidence = {
+            "status": "matched", "c": dict(receiver["trace"]), "rust": dict(receiver["trace"]),
+            "mismatches": [], "c_commands": {"build_status": 0, "run_status": 0, "stderr": ""},
+            "rust_commands": {"run_status": 0, "stderr": "", "commands": [
+                ["python3", "compat/allocator/run_unit_x86_64.py", target] for target in receiver["rust_tests"]]},
+            "scope": "software state only", "command": ["python3", receiver["target"], "--offline"],
+            "c_stdout": transcript, "c_stderr": "", "rust_stdout": "test receiver ... " + transcript,
+            "rust_stderr": "",
+        }
+        record = RUNNER._m2_aarch64_huge_progress_check_record(component, evidence)
+        self.assertEqual(record["id"], receiver["id"])
+        self.assertEqual(record["component"], "arenas")
+        mutations = {
+            "status": lambda e: e.__setitem__("status", "red"),
+            "mismatch": lambda e: e.__setitem__("mismatches", ["c.pages"]),
+            "c-value": lambda e: e["c"].__setitem__("pages", 2),
+            "rust-value": lambda e: e["rust"].__setitem__("arena_published", 0),
+            "c-stderr": lambda e: e.__setitem__("c_stderr", "warning"),
+            "rust-command": lambda e: e["rust_commands"]["commands"].pop(),
+            "c-transcript": lambda e: e.__setitem__("c_stdout", e["c_stdout"].replace(
+                f"{receiver['trace_prefix']}pages=1\n", f"{receiver['trace_prefix']}pages=2\n")),
+            "rust-transcript": lambda e: e.__setitem__("rust_stdout", e["rust_stdout"] + transcript),
+            "extra-key": lambda e: e.__setitem__("architecture", "x86_64"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(evidence)
+                mutate(changed)
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER._m2_aarch64_huge_progress_check_record(component, changed)
 
     def test_arm_thp_prctl_failure_receipts_require_shared_and_side_only_relations(self):
         summary = self.arm_summary()

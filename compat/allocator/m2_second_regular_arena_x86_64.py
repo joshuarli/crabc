@@ -11,6 +11,7 @@ import run as harness
 
 
 FIXTURE = Path(__file__).with_suffix(".c")
+ARCH = harness.native_evidence_architecture()
 TARGET = "process_arena::tests::emit_m2_second_regular_arena_c_rust_trace"
 CLAIM_FIELDS = ("registry", "arena", "slice", "count", "occupied")
 FINAL_FIELDS = (
@@ -67,10 +68,10 @@ def parse_trace(output: str, source: str) -> dict[str, int]:
 
 
 def run(offline: bool) -> Path:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-second-regular-arena"
+    artifacts = harness.ARTIFACT_ROOT / ARCH / "m2-second-regular-arena"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "pinned-c-oracle"
     with harness.temporary_directory(prefix="m2-second-regular-arena-") as directory:

@@ -372,12 +372,46 @@ of the fragment's bounded definitions. `allocator-m2` runs:
 - the lifecycle, destruction and reservation-warning differentials against the
   aggregate's `aarch64-unknown-linux-musl` test binary (the record refuses any
   other Rust product);
-- the eight direct arena receivers, which re-parse their physical C and Rust
-  transcripts under `target/compat/allocator/aarch64/`.
+- the eight x86-inventory direct arena receivers and the eight arm-admitted
+  receivers below, whose physical C and Rust transcripts the aggregate
+  re-parses under `target/compat/allocator/aarch64/`.
 
 The receivers take their architecture from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a
-direct x86 invocation keeps its historical paths and messages. The x86 manifest
-and inventory are unchanged. The component stays partial: abandonment, reclaim
+direct x86 invocation keeps its historical paths and messages.
+
+The AArch64 fragment adds eight checks to the x86 inventory, each an unchanged
+pinned-C/Rust receiver that ran natively on arm. All eight are pending on x86
+until a native x86 run admits them into the x86 arenas record, whose manifest
+and inventory are unchanged:
+
+- `second-regular-arena-c-rust-differential`,
+  `second-arena-concurrent-reserve-c-rust-differential` and
+  `second-arena-reserve-retry-c-rust-differential`
+  (`m2_second_regular_arena_x86_64.py`,
+  `m2_second_arena_concurrent_reserve_x86_64.py`,
+  `m2_second_arena_reserve_retry_x86_64.py`) reserve a second regular arena
+  after the first fills, through two racing claims, and after one refused
+  mapping with its warnings.
+- `second-arena-commit-retry-c-rust-differential`
+  (`m2_second_arena_commit_retry_x86_64.py`) fails one claim commit beside a
+  live second-arena claim and retries it.
+- `second-arena-purge-failure-c-rust-differential` and
+  `second-arena-reset-c-rust-differential`
+  (`m2_second_arena_purge_failure_x86_64.py`,
+  `m2_second_arena_reset_x86_64.py`) fail a delayed decommit and later purge
+  the same span, or reset one committed free slice, beside a live claim.
+- `external-callback-refusal-c-rust-differential`
+  (`m2_external_callback_refusal_x86_64.py`) refuses an external arena's
+  metadata commit, then claims, purges and releases through the callback.
+- `huge-reservation-progress-c-rust-differential`
+  (`m2_huge_reservation_progress_x86_64.py`) publishes one partial huge
+  primitive progress as a pinned huge-kind arena. It substitutes the
+  successful `MAP_HUGETLB` import with an ordinary mapping, so it covers
+  software state and accounting only.
+
+Pinned-C-only primitive receipts and Rust-only retained counts use the VM
+direct-receiver record; the aggregate re-parses every physical transcript.
+The component stays partial: abandonment, reclaim
 and purge transitions beyond the selected relations remain open, and so do
 large-page and huge-page reservation success, NUMA placement and the 16 KiB and
 64 KiB base-page geometries, which this VM cannot supply.

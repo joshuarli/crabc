@@ -12,7 +12,8 @@ import run as harness
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix(".c")
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-huge-reservation-progress"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-huge-reservation-progress"
 TEST = "os::tests::emit_m2_huge_reservation_progress_c_rust_trace"
 ARENA_TEST = "arena::owned::huge::tests::huge_partial_reservation_publishes_claims_and_releases_the_source_arena"
 FIELDS = (
@@ -94,7 +95,7 @@ def rust_receiver() -> tuple[dict[str, int], dict]:
 
 
 def run(offline: bool, c_only: bool) -> dict:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     c, c_commands = c_oracle(offline)
     rust, rust_commands = ({}, {}) if c_only else rust_receiver()
