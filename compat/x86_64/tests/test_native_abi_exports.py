@@ -56,7 +56,7 @@ def report(
 ) -> dict[str, object]:
     return {
         "schema": inventory.SCHEMA,
-        "target": inventory.TARGET,
+        "target": "x86_64-unknown-linux-musl",
         "triage": {
             "shared_dynamic": {
                 "extra": shared_extra or [],
@@ -85,6 +85,9 @@ class NativeAbiExportsTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.report_path = self.root / "report.json"
         self.tracked_path = self.root / "tracked.json"
+        target = patch.object(exports, "TARGET", "x86_64-unknown-linux-musl")
+        target.start()
+        self.addCleanup(target.stop)
 
     def write(self, value: dict[str, object]) -> None:
         self.report_path.write_text(json.dumps(value), encoding="utf-8")
@@ -132,6 +135,35 @@ class NativeAbiExportsTests(unittest.TestCase):
             passed, output = self.check(value)
             self.assertFalse(passed, output)
             self.assertIn("shared_dynamic.extra", output)
+
+    def test_arm_update_recollects_only_anonymous_rosters(self) -> None:
+        delta = json.loads(exports.ARM_STATIC_DELTA.read_text())
+        original = report(shared_extra=[dynamic("tgkill")],
+                          static_extra=[static(name) for name in delta["extra_remove"]],
+                          static_missing=[static(name) for name in delta["missing_remove"]])
+        self.seed(original)
+        value = report(shared_extra=[dynamic("tgkill")],
+                       static_extra=[static(name) for name in delta["extra_add"]] + [static("anon.renamed.0.llvm.7")],
+                       static_missing=[static(name) for name in delta["missing_add"]])
+        value["target"] = "aarch64-unknown-linux-musl"
+        path = self.root / "arm-report.json"
+        path.write_text(json.dumps(value))
+        arm_delta = self.root / "arm-delta.json"
+        arm_delta.write_text(json.dumps(delta))
+        with patch.object(exports, "TARGET", "aarch64-unknown-linux-musl"), \
+                patch.object(exports, "ARM_STATIC_DELTA", arm_delta):
+            self.assertFalse(self.check(value)[0])
+            exports.update(path, tracked_path=self.tracked_path)
+            updated = json.loads(arm_delta.read_text())
+            self.assertEqual(updated["anonymous_extra"], ["anon.renamed.0.llvm.7"])
+            self.assertEqual(updated["anonymous_missing"], [])
+            self.assertEqual({key: updated[key] for key in updated if not key.startswith("anonymous_")},
+                             {key: delta[key] for key in delta if not key.startswith("anonymous_")})
+            self.assertTrue(self.check(value)[0])
+            value["triage"]["static_archive"]["extra"].append(static("unreviewed_named"))
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(exports.ExportsError, "named export delta differs"):
+                exports.update(path, tracked_path=self.tracked_path)
 
     def test_new_static_extra_fails(self) -> None:
         self.seed(report(static_extra=[static("owned")]))

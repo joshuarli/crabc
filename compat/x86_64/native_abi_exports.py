@@ -199,7 +199,40 @@ def check(report_path: Path, *, tracked_path: Path | None = None, stream: Any = 
     return False
 
 
+def update_arm_anonymous(report_path: Path, *, tracked_path: Path | None = None,
+                         delta_path: Path | None = None) -> Path:
+    """Re-collect only the reviewed ARM anonymous static rosters.
+
+    Anonymous constants are renamed by any libc change. Every named export,
+    dynamic entry and class difference must already match the reviewed delta;
+    otherwise this refuses and the named delta needs review.
+    """
+
+    require(TARGET == "aarch64-unknown-linux-musl", "reviewed ARM anonymous rosters require native ARM collection")
+    delta_path = ARM_STATIC_DELTA if delta_path is None else delta_path
+    raw = inventory.require_exact_keys(load_report(report_path).get("triage"), {"shared_dynamic", "static_archive", "disposition"},
+                                       "native ABI inventory triage")["static_archive"]
+    named_changes = {}
+    for category, change in differences(report_path, tracked_path=tracked_path).items():
+        kept = {side: [item for item in items if not (isinstance(item, str) and item.startswith("anon."))]
+                for side, items in change.items()}
+        if kept["added"] or kept["removed"]:
+            named_changes[category] = kept
+    require(not named_changes, "native ARM named export delta differs: " + ", ".join(sorted(named_changes)))
+    delta = inventory.read_json(delta_path, "reviewed native ARM static delta")
+    for category in ("extra", "missing"):
+        delta["anonymous_" + category] = sorted(
+            {row["name"] for row in raw[category] if row["name"].startswith("anon.")})
+    try:
+        delta_path.write_bytes((json.dumps(delta, sort_keys=True, indent=2) + "\n").encode("utf-8"))
+    except OSError as error:
+        raise ExportsError(f"cannot write reviewed native ARM static delta: {delta_path}") from error
+    return delta_path
+
+
 def update(report_path: Path, *, tracked_path: Path | None = None) -> Path:
+    if TARGET == "aarch64-unknown-linux-musl":
+        return update_arm_anonymous(report_path, tracked_path=tracked_path)
     require(TARGET == "x86_64-unknown-linux-musl", "reviewed x86 export delta requires native x86 collection")
     tracked_path = TRACKED_PATH if tracked_path is None else tracked_path
     tracked = {"schema": SCHEMA, "target": TARGET, **project(load_report(report_path))}
