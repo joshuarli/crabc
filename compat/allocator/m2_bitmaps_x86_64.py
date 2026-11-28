@@ -90,12 +90,17 @@ def bitmap_test_roster(list_output: str, run_output: str) -> list[str]:
     return names
 
 
-def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
+def run_evidence(harness, *, offline: bool, test_program=None, architecture: str = "x86_64") -> dict:
     """Run the scalar bitmap differential inside the native allocator image."""
-    harness.require_native_x86_64()
+    if architecture == "x86_64":
+        harness.require_native_x86_64()
+    elif architecture == "aarch64":
+        harness.require_native_aarch64_evidence()
+    else:
+        raise harness.HarnessError(f"unsupported bitmap architecture: {architecture}")
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-bitmaps"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-bitmaps"
     artifacts.mkdir(parents=True, exist_ok=True)
     fixture = Path(__file__).with_suffix(".c")
     compiler = harness.require_tool("musl-gcc")
@@ -120,7 +125,7 @@ def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
     if program is None:
         program = harness._m1_foundations_test_program(
             {"package": "crabc-mimalloc", "features": [], "no_default_features": True,
-             "rust_target": "x86_64-unknown-linux-musl", "test_threads": 1,
+             "rust_target": f"{architecture}-unknown-linux-musl", "test_threads": 1,
              "timeout_seconds": 600}, harness.WORK_ROOT / "target")
     listed = harness.command_record([str(program["path"]), "bitmap::", "--list"],
                                     cwd=ROOT, timeout_seconds=30)
@@ -145,8 +150,8 @@ def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
             f"(counts {len(expected)}/{len(observed)})")
     payload = "\n".join(str(value) for value in expected).encode()
     report = {
-        "schema": "crabc-mimalloc-x86_64-m2-bitmaps-evidence", "format": 1,
-        "status": "passed", "architecture": "x86_64", "profile": "scalar-release-stat0",
+        "schema": f"crabc-mimalloc-{architecture}-m2-bitmaps-evidence", "format": 1,
+        "status": "passed", "architecture": architecture, "profile": "scalar-release-stat0",
         "upstream": {"revision": pin["revision"], "archive_sha256": pin["sha256"]},
         "c_source_files": sources, "c_command": command,
         "fixture": harness.artifact_record(fixture),
