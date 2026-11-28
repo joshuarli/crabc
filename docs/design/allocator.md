@@ -394,7 +394,9 @@ zero by intent, not as alternate counters.
   unpinned arenas (`schedule_purge` in `arena_purge.rs`). Nothing is scheduled
   for a pinned arena, a negative delay, or while the process is still preloading
   (before startup completes or after process-done); a zero delay purges synchronously; expiry is set by
-  a per-arena CAS and the global expiry only if that CAS won. `collect_purge`
+  a per-arena CAS and the global expiry only if that CAS won. A deadline that
+  would overflow `i64` leaves the range unscheduled, where pinned C has signed
+  overflow (`CRABC-MI-ARENA-PURGE-DEADLINE-OVERFLOW`). `collect_purge`
   returns early while preloading or when the delay is not positive. Forced
   collection owns the free-bitmap range while
   applying the non-owning decommit, and a decommit advisory error leaves the
