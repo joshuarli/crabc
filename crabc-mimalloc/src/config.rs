@@ -1258,7 +1258,7 @@ mod tests {
             assert_eq!(MAX_VABITS, 48);
             assert_eq!(PAGE_MAP_SHIFT, 19);
         }
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        #[cfg(target_arch = "x86_64")]
         {
             assert_eq!(MAX_VABITS, 47);
             assert_eq!(PAGE_MAP_SHIFT, 18);

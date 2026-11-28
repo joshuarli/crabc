@@ -165,7 +165,7 @@ mod tests {
 
         assert_eq!(SIZE_BITS, 64);
         assert_eq!(WORD_SIZE, 8);
-        assert_eq!(MAX_VABITS, 47);
+        assert_eq!(MAX_VABITS, if cfg!(target_arch = "x86_64") { 47 } else { 48 });
         assert_eq!(MIN_VABITS, 43);
 
         let geometry = [

@@ -943,7 +943,7 @@ mod tests {
         }.unwrap();
         let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
             8 * 1024 * 1024, true, false);
-        let mut map = PageMap::initialize(config, 47, true).unwrap();
+        let mut map = PageMap::initialize(config, crate::config::MAX_VABITS, true).unwrap();
         // SAFETY: publication and map mutation are exclusive. The storage
         // and all owner images remain live through the test callback.
         unsafe { map.register_range(page.as_ptr().cast::<u8>().add(offset), ARENA_SLICE_SIZE, page) }.unwrap();
@@ -1054,7 +1054,7 @@ mod tests {
         assert!(state.free.is_null());
         let area = state.area;
         let area_bytes = state.area_bytes;
-        let mut map = PageMap::initialize(config, 47, true).unwrap();
+        let mut map = PageMap::initialize(config, crate::config::MAX_VABITS, true).unwrap();
         // SAFETY: original ownership and source publication precede this
         // isolated map registration; no client or producer sees the page.
         unsafe { map.register_range(area.as_ptr(), area_bytes, page) }.unwrap();

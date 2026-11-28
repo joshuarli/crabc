@@ -12170,7 +12170,7 @@ mod tests {
         assert!(write_linux_numa_node_path(256, &mut path).is_none());
     }
 
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_64_startup_page_size_accepts_only_the_four_kib_profile() {
         assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);
