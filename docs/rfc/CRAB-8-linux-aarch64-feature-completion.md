@@ -241,6 +241,14 @@ its VM worktree from the `main` mirror. Run `scripts/lanes/prepare-worktree.sh`
 through the relay in the `main` mirror first to seed the source oracles,
 package corpus, Lua archive and Rust std/LTO vendors.
 
+OrbStack remains the host. When work needs a guest capability that OrbStack
+lacks, file a feature request in the owner's OrbStack alternative ctrs
+(`~/repos/ctrs`, with `todo add` in its `TODO.md`): say what crabc needs, the
+blocked condition, and a container-level proof. Then record the condition as
+host-limited here or in its fragment. Filed so far: hugetlbfs pools
+(CTRS-17), NUMA nodes (CTRS-18), a 16 KiB-page kernel (CTRS-19; Apple Silicon
+has no 64 KiB granule) and SCHED_FIFO progress (CTRS-20).
+
 ### A0 tasks, on `lane/a0-aarch64-image`
 
 1. Create `docker/Dockerfile.aarch64` from `docker/Dockerfile.x86_64` with the
