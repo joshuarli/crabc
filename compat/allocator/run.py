@@ -323,6 +323,7 @@ M2_X86_64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-x86_64-v3.5.0.fragment.
 M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 M2_AARCH64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-aarch64-v3.5.0.fragment.json"
 M2_VM_FRAGMENTS = {"x86_64": M2_X86_64_VM_FRAGMENT, "aarch64": M2_AARCH64_VM_FRAGMENT}
+M2_AARCH64_ARENAS_FRAGMENT = ALLOCATOR_ROOT / "m2-arenas-aarch64-v3.5.0.fragment.json"
 M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
 M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
@@ -754,6 +755,19 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
         },
         "scope": "pinned-c-rust-multi-arena-eligibility-partial-purge-recommit-and-sibling-safe-reuse"
     },
+}
+# Arena checks that only the AArch64 fragment admits. Each receiver runs
+# unchanged pinned source against the shared engine; its x86 admission waits
+# for a native x86 run, so the x86 inventories above stay unchanged.
+M2_AARCH64_ADDED_ARENA_CHECKS: tuple[dict[str, Any], ...] = ()
+M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {}
+M2_ARENA_CHECKS = {
+    "x86_64": M2_X86_64_ARENA_CHECKS,
+    "aarch64": (*M2_X86_64_ARENA_CHECKS, *M2_AARCH64_ADDED_ARENA_CHECKS),
+}
+M2_ARENA_DIRECT_RECEIVERS = {
+    "x86_64": M2_X86_64_ARENA_DIRECT_RECEIVERS,
+    "aarch64": {**M2_X86_64_ARENA_DIRECT_RECEIVERS, **M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS},
 }
 M2_X86_64_RECURSION_CHECKS = (
     {
@@ -14333,11 +14347,13 @@ def _m2_x86_64_arena_destruction_producer() -> Any:
 
 def _run_m2_x86_64_arena_destruction_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the arena destruction producer against the aggregate's native binary."""
 
     return _m2_x86_64_arena_destruction_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -14377,11 +14393,13 @@ def _m2_x86_64_reservation_warnings_producer() -> Any:
 
 def _run_m2_x86_64_reservation_warnings_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the reservation warning producer against the aggregate's binary."""
 
     return _m2_x86_64_reservation_warnings_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -14504,6 +14522,109 @@ def _m2_x86_64_vm_component(
     return component
 
 
+M2_AARCH64_ARENAS_SOURCE_UNITS = ("src/arena.c", "src/heap.c")
+M2_AARCH64_ARENAS_BRANCH_DISPOSITIONS = frozenset(
+    {"qualified-fixed-profile", "partial-fixed-profile", "unqualified"}
+)
+
+
+def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Materialize the AArch64 arena fragment without importing x86 status.
+
+    Every branch row names only checks this fragment executes, and each of its
+    source anchors is one of the fragment's bounded source definitions, whose
+    digests the aggregate re-reads from the pinned archive. An unqualified row
+    names no evidence; a partial row keeps at least one missing condition.
+    """
+
+    reference = {"path": relative(M2_AARCH64_ARENAS_FRAGMENT)}
+    if dict(raw_component) != {"id": "arenas", "evidence_fragment": reference}:
+        raise HarnessError("native aarch64 M2 arena fragment reference changed")
+    fragment = read_json(M2_AARCH64_ARENAS_FRAGMENT)
+    if (
+        set(fragment) != {"component", "format", "schema", "target", "upstream"}
+        or fragment.get("schema") != "crabc-mimalloc-aarch64-m2-component-evidence"
+        or type(fragment.get("format")) is not int
+        or fragment.get("format") != 1
+        or fragment.get("upstream") != {
+            "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
+        }
+        or fragment.get("target") != {
+            "architecture": "aarch64", "endianness": "little", "kernel_baseline": "5.10",
+            "os": "linux", "rust_target": "aarch64-unknown-linux-musl",
+        }
+    ):
+        raise HarnessError("native aarch64 M2 arena fragment schema or provenance changed")
+    component = fragment.get("component")
+    if not isinstance(component, Mapping) or set(component) != {
+        "bounded_source_definitions", "branch_matrix", "checks", "completion_status", "id",
+        "remaining_conditions", "source_map_records", "source_units", "unqualified_failure_matrix",
+    }:
+        raise HarnessError("native aarch64 M2 arena fragment fields changed")
+    if component.get("id") != "arenas" or component.get("completion_status") != "partial":
+        raise HarnessError("native aarch64 M2 arena fragment must remain the partial arenas component")
+    if component.get("source_units") != list(M2_AARCH64_ARENAS_SOURCE_UNITS):
+        raise HarnessError("native aarch64 M2 arena fragment source units changed")
+    if component.get("checks") != [dict(check) for check in M2_ARENA_CHECKS["aarch64"]]:
+        raise HarnessError("native aarch64 M2 arena check inventory changed")
+    check_ids = [check["id"] for check in M2_ARENA_CHECKS["aarch64"]]
+    definitions = component.get("bounded_source_definitions")
+    if not isinstance(definitions, list) or not definitions:
+        raise HarnessError("native aarch64 M2 arena fragment lacks bounded source definitions")
+    definition_anchors: list[Mapping[str, Any]] = []
+    defined_evidence: set[str] = set()
+    for definition in definitions:
+        if not isinstance(definition, Mapping) or not isinstance(definition.get("source_anchor"), Mapping):
+            raise HarnessError("native aarch64 M2 arena bounded source definition is invalid")
+        definition_anchors.append(definition["source_anchor"])
+        evidence = definition.get("evidence_check_ids")
+        if isinstance(evidence, list):
+            defined_evidence.update(item for item in evidence if isinstance(item, str))
+    branches = component.get("branch_matrix")
+    if not isinstance(branches, list) or not branches:
+        raise HarnessError("native aarch64 M2 arena fragment lacks its branch matrix")
+    branch_ids: set[str] = set()
+    branch_evidence: set[str] = set()
+    for branch in branches:
+        if not isinstance(branch, Mapping) or set(branch) != {
+            "disposition", "evidence_check_ids", "id", "missing_conditions", "source_anchors", "source_scope",
+        }:
+            raise HarnessError("native aarch64 M2 arena branch row fields changed")
+        branch_id = branch.get("id")
+        evidence = branch.get("evidence_check_ids")
+        missing = branch.get("missing_conditions")
+        anchors = branch.get("source_anchors")
+        disposition = branch.get("disposition")
+        if (
+            not isinstance(branch_id, str)
+            or re.fullmatch(r"[a-z][a-z0-9-]*", branch_id) is None
+            or branch_id in branch_ids
+            or disposition not in M2_AARCH64_ARENAS_BRANCH_DISPOSITIONS
+            or not isinstance(branch.get("source_scope"), str)
+            or not branch["source_scope"]
+            or not isinstance(evidence, list)
+            or not all(isinstance(item, str) and item in check_ids for item in evidence)
+            or len(set(evidence)) != len(evidence)
+            or not isinstance(missing, list)
+            or not all(isinstance(item, str) and item for item in missing)
+            or len(set(missing)) != len(missing)
+            or not isinstance(anchors, list)
+            or not anchors
+            or any(anchor not in definition_anchors for anchor in anchors)
+            or (disposition == "qualified-fixed-profile" and (not evidence or missing))
+            or (disposition == "partial-fixed-profile" and (not evidence or not missing))
+            or (disposition == "unqualified" and (evidence or not missing))
+        ):
+            raise HarnessError(f"native aarch64 M2 arena branch row {branch_id} is invalid")
+        branch_ids.add(branch_id)
+        branch_evidence.update(evidence)
+    if branch_evidence != set(check_ids) or defined_evidence != set(check_ids):
+        raise HarnessError("native aarch64 M2 arena fragment does not bind every executed check")
+    materialized = dict(component)
+    materialized["native_status"] = materialized.pop("completion_status")
+    return materialized
+
+
 def _m2_x86_64_validated_component(
     raw_component: object,
     *,
@@ -14532,6 +14653,9 @@ def _m2_x86_64_validated_component(
     elif component_id == "fault-injection":
         fragment_reference = raw_component.get("evidence_fragment")
         raw_component = _m2_x86_64_fault_component(raw_component, pin)
+    elif component_id == "arenas" and architecture == "aarch64":
+        fragment_reference = raw_component.get("evidence_fragment")
+        raw_component = _m2_aarch64_arenas_component(raw_component, pin)
     # Completion is the component's own recorded state: a complete row
     # must carry bounded source definitions and a failure matrix whose
     # every row names an executed check, and no remaining condition.
@@ -14613,7 +14737,7 @@ def _m2_x86_64_validated_component(
         if raw_checks != list(M2_X86_64_RECURSION_CHECKS):
             raise HarnessError("native x86 M2 recursion check inventory changed")
     elif component_id == "arenas":
-        if raw_checks != list(M2_X86_64_ARENA_CHECKS):
+        if raw_checks != list(M2_ARENA_CHECKS[architecture]):
             raise HarnessError("native x86 M2 process-arena check inventory changed")
     elif not complete and not partial_evidence_component and raw_checks:
         raise HarnessError(
@@ -14780,8 +14904,8 @@ def _m2_x86_64_validated_component(
                 or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
             ):
                 raise HarnessError("native x86 M2 process-arena evidence target is absent")
-        elif raw_check.get("id") in M2_X86_64_ARENA_DIRECT_RECEIVERS:
-            receiver = M2_X86_64_ARENA_DIRECT_RECEIVERS[raw_check["id"]]
+        elif raw_check.get("id") in M2_ARENA_DIRECT_RECEIVERS[architecture]:
+            receiver = M2_ARENA_DIRECT_RECEIVERS[architecture][raw_check["id"]]
             if (
                 component_id != "arenas"
                 or raw_check.get("kind") != receiver["kind"]
@@ -15304,11 +15428,13 @@ def _run_m2_x86_64_metadata_ownership_evidence(
 
 def _run_m2_x86_64_arena_lifecycle_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the arena lifecycle producer against the aggregate's native binary."""
 
     return _m2_x86_64_arena_lifecycle_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -16503,7 +16629,7 @@ def _m2_vm_direct_receiver_check_records(
 
 
 def _m2_x86_64_process_arena_collect_check_records(
-    summary: Mapping[str, Any], evidence: object,
+    summary: Mapping[str, Any], evidence: object, architecture: str = "x86_64",
 ) -> list[dict[str, Any]]:
     """Bind the finite process-wide arena purge relation to its two sources."""
 
@@ -16528,7 +16654,8 @@ def _m2_x86_64_process_arena_collect_check_records(
         or not isinstance(evidence.get("arena_owned_trace_sha256"), str)
         or re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("arena_owned_trace_sha256"))) is None
         or not _m2_x86_64_vm_c_command_is_bound(
-            evidence.get("arena_owned_c_command"), producer, arena_owned=True
+            evidence.get("arena_owned_c_command"), producer, arena_owned=True,
+            architecture=architecture,
         )
         or not _m2_x86_64_vm_rust_receipt_is_bound(
             evidence.get("rust_build_command"),
@@ -16536,6 +16663,7 @@ def _m2_x86_64_process_arena_collect_check_records(
             evidence.get("arena_owned_rust_command"),
             evidence.get("rust_test_binary"),
             target=check["target"],
+            architecture=architecture,
         )
     ):
         raise HarnessError("native x86 M2 process-arena purge receipt is invalid")
@@ -16560,15 +16688,17 @@ def _m2_x86_64_process_arena_collect_check_records(
     }]
 
 
-def _run_m2_x86_64_arena_direct_evidence(*, offline: bool) -> dict[str, dict[str, Any]]:
+def _run_m2_x86_64_arena_direct_evidence(
+    *, offline: bool, architecture: str = "x86_64",
+) -> dict[str, dict[str, Any]]:
     """Execute source-built arena receivers and retain their raw transcripts."""
 
     results: dict[str, dict[str, Any]] = {}
-    for check_id, receiver in M2_X86_64_ARENA_DIRECT_RECEIVERS.items():
+    for check_id, receiver in M2_ARENA_DIRECT_RECEIVERS[architecture].items():
         command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
         execution = command_record(command, cwd=ROOT, timeout_seconds=900)
         require_success(execution, "direct arena C/Rust receiver")
-        artifacts = ARTIFACT_ROOT / "x86_64" / receiver["artifact"]
+        artifacts = ARTIFACT_ROOT / architecture / receiver["artifact"]
         evidence = read_json(artifacts / "evidence.json")
         results[check_id] = {
             **evidence,
@@ -16583,17 +16713,19 @@ def _run_m2_x86_64_arena_direct_evidence(*, offline: bool) -> dict[str, dict[str
 
 def _m2_x86_64_arena_direct_check_records(
     summary: Mapping[str, Any], pin: Mapping[str, str], evidence: object,
+    architecture: str = "x86_64",
 ) -> list[dict[str, Any]]:
     """Bind direct arena receipts to their source files and physical traces."""
 
-    if not isinstance(evidence, Mapping) or set(evidence) != set(M2_X86_64_ARENA_DIRECT_RECEIVERS):
+    receivers = M2_ARENA_DIRECT_RECEIVERS[architecture]
+    if not isinstance(evidence, Mapping) or set(evidence) != set(receivers):
         raise HarnessError("native x86 M2 direct arena receipt inventory is invalid")
     component = next(item for item in summary["components"] if item["id"] == "arenas")
     records: list[dict[str, Any]] = []
-    for check_id, receiver in M2_X86_64_ARENA_DIRECT_RECEIVERS.items():
+    for check_id, receiver in receivers.items():
         check = next((item for item in component["checks"] if item["id"] == check_id), None)
         observed = evidence[check_id]
-        artifacts = ARTIFACT_ROOT / "x86_64" / receiver["artifact"]
+        artifacts = ARTIFACT_ROOT / architecture / receiver["artifact"]
         expected_command = ["python3", receiver["target"]]
         if (
             check is None or check.get("kind") != receiver["kind"]
@@ -17561,7 +17693,8 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 
 M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-aarch64-v3.5.0.json"
 M2_AARCH64_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "aarch64/m2-memory-substrate-latest.json"
-M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives",)
+M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "arenas")
+M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset({"destruction", "direct", "lifecycle", "reservation_warnings"})
 M2_AARCH64_GLOBAL_EVIDENCE = (
     "aarch64-source-contract-inventories",
     "aarch64-bounded-component-source-definitions",
@@ -17692,6 +17825,80 @@ def validate_aarch64_m2_memory_substrate_contract(
     }
 
 
+def _run_m2_aarch64_arena_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Execute each AArch64 arena receiver once; the purge trace runs in the VM producer."""
+
+    checks = {
+        key: _m2_x86_64_check_by_id(summary, check_id)[1]
+        for key, check_id in (
+            ("lifecycle", "arena-reservation-lifecycle-c-rust-differential"),
+            ("destruction", "arena-destruction-c-rust-differential"),
+            ("reservation_warnings", "arena-reservation-warnings-c-rust-differential"),
+        )
+    }
+    return {
+        "lifecycle": _run_m2_x86_64_arena_lifecycle_evidence(
+            offline=offline, test_program=test_program, check=checks["lifecycle"], architecture="aarch64",
+        ),
+        "destruction": _run_m2_x86_64_arena_destruction_evidence(
+            offline=offline, test_program=test_program, check=checks["destruction"], architecture="aarch64",
+        ),
+        "reservation_warnings": _run_m2_x86_64_reservation_warnings_evidence(
+            offline=offline, test_program=test_program, check=checks["reservation_warnings"],
+            architecture="aarch64",
+        ),
+        "direct": _run_m2_x86_64_arena_direct_evidence(offline=offline, architecture="aarch64"),
+    }
+
+
+def _m2_aarch64_arena_check_records(
+    summary: Mapping[str, Any], pin: Mapping[str, str], vm_evidence: object, arena_evidence: object,
+) -> list[dict[str, Any]]:
+    """Bind every executed AArch64 arena receipt in the fragment's check order.
+
+    The aggregate-binary differentials must have run the AArch64 Cargo test
+    product; the direct receivers carry their target-local oracle and their
+    physical C and Rust transcripts.
+    """
+
+    if not isinstance(arena_evidence, Mapping) or set(arena_evidence) != M2_AARCH64_ARENA_EVIDENCE_KEYS:
+        raise HarnessError("native aarch64 M2 arena receipt inventory is invalid")
+    aggregate = [
+        _m2_x86_64_arena_lifecycle_check_record(
+            _m2_x86_64_check_by_id(summary, "arena-reservation-lifecycle-c-rust-differential")[1],
+            arena_evidence["lifecycle"],
+        ),
+        _m2_x86_64_arena_destruction_check_record(
+            _m2_x86_64_check_by_id(summary, "arena-destruction-c-rust-differential")[1],
+            arena_evidence["destruction"],
+        ),
+        _m2_x86_64_reservation_warnings_check_record(
+            _m2_x86_64_check_by_id(summary, "arena-reservation-warnings-c-rust-differential")[1],
+            arena_evidence["reservation_warnings"],
+        ),
+    ]
+    for record in aggregate:
+        command = record["command"]
+        if (
+            not command
+            or not _m2_x86_64_vm_rust_binary_path_is_bound(command[0], "aarch64")
+            or command[1:] != [record["target"], "--exact", "--test-threads=1", "--nocapture"]
+        ):
+            raise HarnessError(f"native aarch64 M2 arena receipt {record['id']} did not run the aarch64 test product")
+    records = [
+        *_m2_x86_64_process_arena_collect_check_records(summary, vm_evidence, "aarch64"),
+        *aggregate,
+        *_m2_x86_64_arena_direct_check_records(summary, pin, arena_evidence["direct"], "aarch64"),
+    ]
+    by_id = {record["id"]: record for record in records}
+    order = [check["id"] for check in M2_ARENA_CHECKS["aarch64"]]
+    if len(by_id) != len(records) or set(by_id) != set(order):
+        raise HarnessError("native aarch64 M2 arena executed receipt inventory changed")
+    return [by_id[check_id] for check_id in order]
+
+
 def m2_aarch64_memory_substrate_report(
     *,
     contract: Mapping[str, Any],
@@ -17706,6 +17913,7 @@ def m2_aarch64_memory_substrate_report(
     thp_process_evidence: Mapping[str, Any],
     process_vm_evidence: Mapping[str, Any],
     vm_direct_evidence: Mapping[str, Any],
+    arena_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Render the executed AArch64 components and keep every other component open."""
 
@@ -17718,6 +17926,7 @@ def m2_aarch64_memory_substrate_report(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
         architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
+    expected_arena_records = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
         for component in summary["components"]
@@ -17767,7 +17976,10 @@ def m2_aarch64_memory_substrate_report(
                     or check.get("passed_test_count") != expected["expected_passed_test_count"]
                     or check.get("target") != expected["target"]):
                 raise HarnessError(f"native aarch64 M2 component {component_id} executed check count or target changed")
-        if checks != expected_vm_records + [
+        if component_id == "arenas":
+            if checks != expected_arena_records:
+                raise HarnessError("native aarch64 M2 arena executed receipt inventory changed")
+        elif checks != expected_vm_records + [
             {
                 "component": "vm-primitives",
                 "command": check["command"],
@@ -17826,6 +18038,7 @@ def m2_aarch64_memory_substrate_report(
             "aarch64-vm-primitives-fixed-profile-c-rust-and-owner-evidence": dict(vm_evidence),
         },
         "producer_evidence": {
+            "arena_evidence": dict(arena_evidence),
             "vm_direct_evidence": dict(vm_direct_evidence),
             "process_vm_evidence": dict(process_vm_evidence),
             "thp_process_evidence": dict(thp_process_evidence),
@@ -17859,8 +18072,12 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         m2_memory_substrate_cargo_target("aarch64"),
         gate_name="native aarch64 M2",
     )
+    _, arena_owned_check = _m2_x86_64_check_by_id(
+        summary, "process-wide-arena-purge-c-rust-differential"
+    )
     vm_evidence = _run_m2_x86_64_vm_evidence(
-        offline=offline, test_program=test_program, arena_owned_check=None, architecture="aarch64",
+        offline=offline, test_program=test_program, arena_owned_check=arena_owned_check,
+        architecture="aarch64",
     )
     runtime_thp_evidence = _run_m2_x86_64_runtime_thp_configuration_evidence("aarch64")
     thp_process_evidence = _run_m2_x86_64_thp_process_evidence(offline=offline, architecture="aarch64")
@@ -17868,16 +18085,23 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     vm_direct_evidence = _run_m2_vm_direct_receiver_evidence(
         offline=offline, architecture="aarch64",
     )
+    arena_evidence = _run_m2_aarch64_arena_evidence(
+        offline=offline, test_program=test_program, summary=summary,
+    )
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
         architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
+    arena_checks = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
     focused_checks = [
         *vm_checks,
+        *arena_checks,
         *_run_x86_64_focused_source_checks(
             summary,
             test_program,
-            already_executed_check_ids=frozenset(check["id"] for check in vm_checks),
+            already_executed_check_ids=frozenset(
+                check["id"] for check in (*vm_checks, *arena_checks)
+            ),
             gate_name="native aarch64 M2 focused source evidence",
         ),
     ]
@@ -17895,6 +18119,7 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         thp_process_evidence=thp_process_evidence,
         process_vm_evidence=process_vm_evidence,
         vm_direct_evidence=vm_direct_evidence,
+        arena_evidence=arena_evidence,
     )
     report["native_execution_provenance"] = native_execution_attestation(
         execution_before, require_native_aarch64_evidence(), architecture="aarch64"

@@ -443,7 +443,7 @@ def expected_rust(c_trace: list[int]) -> list[int]:
     return expected
 
 
-def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
+def compare(c_trace: list[int], rust_trace: list[int], *, label: str = "x86") -> dict[str, Any]:
     """Require field-for-field equality with the recorded divergence and name the first differences."""
 
     c_trace = expected_rust(c_trace)
@@ -456,7 +456,11 @@ def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
     ][:16]
     if len(c_trace) != len(rust_trace):
         mismatches.append(f"field count: C={len(c_trace)}, Rust={len(rust_trace)}")
-    raise ValueError("native x86 arena lifecycle differs from pinned C: " + "; ".join(mismatches))
+    raise ValueError(f"native {label} arena lifecycle differs from pinned C: " + "; ".join(mismatches))
+
+
+def _label(architecture: str) -> str:
+    return "x86" if architecture == "x86_64" else architecture
 
 
 def retention_environment(arena_reserve: int | None) -> dict[str, str]:
@@ -470,7 +474,7 @@ def retention_environment(arena_reserve: int | None) -> dict[str, str]:
     return environment
 
 
-def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_retention: bool = False, last_cycle: int = 32, arena_reserve: int | None = None) -> tuple[list[str], Any]:
+def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_retention: bool = False, last_cycle: int = 32, arena_reserve: int | None = None, architecture: str = "x86_64") -> tuple[list[str], Any]:
     """Build the fixture against the pinned archive and return its trace."""
 
     if profile not in PROFILES:
@@ -479,7 +483,7 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
 
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-arena-lifecycle"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-arena-lifecycle"
     if profile != "release":
         artifacts /= profile
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -505,12 +509,12 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
         ]
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
         harness.write_json(artifacts / "c-build.json", build)
-        harness.require_success(build, "pinned C native x86 arena lifecycle oracle build")
+        harness.require_success(build, f"pinned C native {_label(architecture)} arena lifecycle oracle build")
         options = (["--source-root-bound", str(last_cycle)] if last_cycle != 32 else ["--repeat-retention"]) if repeat_retention else []
         run = harness.command_record([str(binary)] + options, cwd=source, env=retention_environment(arena_reserve if repeat_retention else None), timeout_seconds=180)
         harness.write_json(artifacts / "c-execute.json", run)
         (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
-        harness.require_success(run, "pinned C native x86 arena lifecycle oracle")
+        harness.require_success(run, f"pinned C native {_label(architecture)} arena lifecycle oracle")
     (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
     rows = (parse_attributed_retention(str(run["stdout"]), source="pinned C", last_cycle=last_cycle) if repeat_retention
             else parse_trace(str(run["stdout"]), source="pinned C"))
@@ -523,18 +527,20 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
 
 def run_evidence(
     harness: Any, *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the differential against the aggregate gate's prebuilt test binary."""
 
-    harness.require_native_x86_64()
+    harness.require_native_evidence(architecture)
+    label = _label(architecture)
     if check.get("id") != CHECK_ID or check.get("target") != TARGET:
-        raise harness.HarnessError("native x86 arena lifecycle check changed")
+        raise harness.HarnessError(f"native {label} arena lifecycle check changed")
     try:
-        c_command, c_trace = run_oracle(harness, offline=offline)
+        c_command, c_trace = run_oracle(harness, offline=offline, architecture=architecture)
         rust, rust_output = harness._x86_64_run_exact_program_check(
-            test_program, check, nocapture=True, gate_name="native x86 M2 arena lifecycle",
+            test_program, check, nocapture=True, gate_name=f"native {label} M2 arena lifecycle",
         )
-        comparison = compare(c_trace, parse_trace(rust_output, source="Rust"))
+        comparison = compare(c_trace, parse_trace(rust_output, source="Rust"), label=label)
     except ValueError as error:
         raise harness.HarnessError(str(error)) from error
     evidence = {
@@ -548,7 +554,7 @@ def run_evidence(
             json.dumps(c_trace, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
     }
-    harness.write_json(harness.ARTIFACT_ROOT / "x86_64/m2-arena-lifecycle/evidence.json", evidence)
+    harness.write_json(harness.ARTIFACT_ROOT / architecture / "m2-arena-lifecycle/evidence.json", evidence)
     return evidence
 
 

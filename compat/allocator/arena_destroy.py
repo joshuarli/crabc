@@ -34,10 +34,12 @@ def trace(output: str, *, source: str) -> list[int]:
     return [int(value) for _, value in rows]
 
 
-def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int], Path]:
+def run_oracle(
+    harness: Any, *, offline: bool, architecture: str = "x86_64",
+) -> tuple[list[str], list[int], Path]:
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/arena-destroy"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "arena-destroy"
     artifacts.mkdir(parents=True, exist_ok=True)
     with harness.temporary_directory(prefix="arena-destroy-source-") as directory:
         source = harness.safe_extract(archive, Path(directory), pin["archive_root"])
@@ -58,16 +60,18 @@ def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int], Pa
 
 def run_evidence(
     harness: Any, *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the differential against the aggregate gate's prebuilt test binary."""
 
-    harness.require_native_x86_64()
+    harness.require_native_evidence(architecture)
+    label = "x86" if architecture == "x86_64" else architecture
     if check.get("id") != CHECK_ID or check.get("target") != TARGET:
-        raise harness.HarnessError("native x86 arena destruction check changed")
+        raise harness.HarnessError(f"native {label} arena destruction check changed")
     try:
-        c_command, c_trace, artifacts = run_oracle(harness, offline=offline)
+        c_command, c_trace, artifacts = run_oracle(harness, offline=offline, architecture=architecture)
         rust, rust_output = harness._x86_64_run_exact_program_check(
-            test_program, check, nocapture=True, gate_name="native x86 M2 arena destruction",
+            test_program, check, nocapture=True, gate_name=f"native {label} M2 arena destruction",
         )
         if c_trace != trace(rust_output, source="Rust"):
             raise ValueError("pinned C/Rust arena destruction differs")

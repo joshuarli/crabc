@@ -11,6 +11,7 @@ import run as harness
 
 
 FIXTURE = Path(__file__).with_suffix(".c")
+ARCH = harness.native_evidence_architecture()
 TARGET = "arena::owned::huge::tests::failed_startup_huge_reservation_reports_the_source_failure_warning"
 FIELD = re.compile(r"^m2\.startup_huge_failure\.([a-z_]+)=([0-9]+)$")
 
@@ -29,10 +30,10 @@ def fields(output: str) -> dict[str, int]:
 
 
 def run(offline: bool) -> Path:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-startup-huge-failure"
+    artifacts = harness.ARTIFACT_ROOT / ARCH / "m2-startup-huge-failure"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "pinned-c-oracle"
     with harness.temporary_directory(prefix="m2-startup-huge-failure-") as directory:

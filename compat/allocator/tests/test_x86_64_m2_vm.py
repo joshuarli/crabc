@@ -842,13 +842,25 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["evidence_fragment"], {"path": RUNNER.relative(RUNNER.M2_AARCH64_VM_FRAGMENT)})
         self.assertEqual(vm["native_status"], "partial")
+        arenas = summary["components"][4]
+        self.assertEqual(arenas["id"], "arenas")
+        self.assertEqual(arenas["evidence_fragment"], {"path": RUNNER.relative(RUNNER.M2_AARCH64_ARENAS_FRAGMENT)})
+        self.assertEqual(arenas["native_status"], "partial")
+        self.assertEqual(arenas["checks"], [dict(check) for check in RUNNER.M2_ARENA_CHECKS["aarch64"]])
+        self.assertTrue(arenas["remaining_conditions"])
         self.assertEqual(
             [(component["id"], component["native_status"], component["checks"])
-             for component in summary["components"][1:]],
+             for component in summary["components"]
+             if component["id"] not in RUNNER.M2_AARCH64_EXECUTED_COMPONENT_IDS],
             [(component_id, "not-executed", [])
-             for component_id in RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS[1:]],
+             for component_id in RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS
+             if component_id not in ("vm-primitives", "arenas")],
         )
         self.assertEqual(summary["milestone"]["status"], "partial")
+        contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
+        contract["components"][4] = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)["components"][4]
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_aarch64_m2_memory_substrate_contract(contract, pin)
 
         contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
         contract["components"][0]["evidence_fragment"]["path"] = RUNNER.relative(RUNNER.M2_X86_64_VM_FRAGMENT)
@@ -867,6 +879,92 @@ class NativeVmAssemblyTests(unittest.TestCase):
             producer.load_fragment(RUNNER.M2_X86_64_VM_FRAGMENT, "aarch64")
         with self.assertRaises(ValueError):
             producer.load_fragment(RUNNER.M2_AARCH64_VM_FRAGMENT, "x86_64")
+
+    def test_arm_arena_fragment_fails_closed(self):
+        pin = RUNNER.load_pin()
+        original = RUNNER.read_json(RUNNER.M2_AARCH64_ARENAS_FRAGMENT)
+        reference = {"id": "arenas", "evidence_fragment": {"path": RUNNER.relative(RUNNER.M2_AARCH64_ARENAS_FRAGMENT)}}
+        component = RUNNER._m2_aarch64_arenas_component(reference, pin)
+        self.assertEqual(component["native_status"], "partial")
+        branch_ids = {branch["id"] for branch in component["branch_matrix"]}
+        self.assertIn("arena-page-abandonment-claim-and-reclaim", branch_ids)
+
+        def first_branch(fragment, disposition):
+            return next(branch for branch in fragment["component"]["branch_matrix"]
+                        if branch["disposition"] == disposition)
+
+        definition_anchor = original["component"]["bounded_source_definitions"][0]["source_anchor"]
+        mutations = {
+            "x86-schema": lambda f: f.__setitem__("schema", "crabc-mimalloc-x86_64-m2-component-evidence"),
+            "x86-target": lambda f: f["target"].__setitem__("rust_target", "x86_64-unknown-linux-musl"),
+            "complete": lambda f: f["component"].__setitem__("completion_status", "complete"),
+            "dropped-check": lambda f: f["component"]["checks"].pop(),
+            "unknown-branch-evidence": lambda f: first_branch(f, "partial-fixed-profile")["evidence_check_ids"].append("x"),
+            "unbound-anchor": lambda f: first_branch(f, "partial-fixed-profile")["source_anchors"].append(
+                {**definition_anchor, "end_line": definition_anchor["end_line"] + 1}),
+            "qualified-with-missing": lambda f: first_branch(f, "qualified-fixed-profile")["missing_conditions"].append("open"),
+            "partial-without-missing": lambda f: first_branch(f, "partial-fixed-profile").__setitem__("missing_conditions", []),
+            "unqualified-with-evidence": lambda f: f["component"]["branch_matrix"].append({
+                **first_branch(f, "partial-fixed-profile"), "id": "unqualified-row", "disposition": "unqualified"}),
+            "unbound-check": lambda f: [branch["evidence_check_ids"].remove("arena-destruction-c-rust-differential")
+                                        for branch in f["component"]["branch_matrix"]
+                                        if "arena-destruction-c-rust-differential" in branch["evidence_check_ids"]],
+        }
+        read_json = RUNNER.read_json
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(original)
+                mutate(changed)
+                with mock.patch.object(RUNNER, "read_json", side_effect=lambda path: (
+                        changed if path == RUNNER.M2_AARCH64_ARENAS_FRAGMENT else read_json(path))):
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_aarch64_arenas_component(reference, pin)
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_aarch64_arenas_component(
+                {"id": "arenas", "evidence_fragment": {"path": RUNNER.relative(RUNNER.M2_X86_64_VM_FRAGMENT)}}, pin)
+
+    def test_arm_arena_records_require_the_arm_test_product_in_check_order(self):
+        summary = self.arm_summary()
+        pin = RUNNER.load_pin()
+        arm_binary = str(RUNNER.m2_memory_substrate_cargo_target("aarch64")
+                         / "aarch64-unknown-linux-musl/debug/deps/crabc_mimalloc-0123456789abcdef")
+        x86_binary = str(RUNNER.m2_memory_substrate_cargo_target("x86_64")
+                         / "x86_64-unknown-linux-musl/debug/deps/crabc_mimalloc-0123456789abcdef")
+        targets = {
+            "lifecycle": "arena::owned::tests::emit_native_arena_lifecycle_trace",
+            "destruction": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries",
+            "reservation_warnings": "arena::owned::tests::emit_m2_reservation_warnings_c_rust_trace",
+        }
+
+        def evidence(binary):
+            rows = {
+                key: {"status": "passed", "comparison": {"status": "matched"}, "rust_passed_test_count": 1,
+                      "rust_command": [binary, target, "--exact", "--test-threads=1", "--nocapture"]}
+                for key, target in targets.items()
+            }
+            return {**rows, "direct": {}}
+
+        def record(check_id):
+            check = RUNNER._m2_x86_64_check_by_id(summary, check_id)[1]
+            return {"comparison_status": "matched", "component": "arenas", "command": ["python3"],
+                    "evidence_scope": "fixed", "id": check_id, "passed_test_count": 1, "target": check["target"]}
+
+        purge = [record("process-wide-arena-purge-c-rust-differential")]
+        direct = [record(check_id) for check_id in reversed(list(RUNNER.M2_ARENA_DIRECT_RECEIVERS["aarch64"]))]
+        with mock.patch.object(RUNNER, "_m2_x86_64_process_arena_collect_check_records", return_value=purge), \
+                mock.patch.object(RUNNER, "_m2_x86_64_arena_direct_check_records", return_value=direct):
+            records = RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(arm_binary))
+            self.assertEqual([row["id"] for row in records],
+                             [check["id"] for check in RUNNER.M2_ARENA_CHECKS["aarch64"]])
+            with self.assertRaisesRegex(RUNNER.HarnessError, "aarch64 test product"):
+                RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(x86_binary))
+            with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+                RUNNER._m2_aarch64_arena_check_records(
+                    summary, pin, {}, {key: value for key, value in evidence(arm_binary).items() if key != "direct"})
+        with mock.patch.object(RUNNER, "_m2_x86_64_process_arena_collect_check_records", return_value=purge), \
+                mock.patch.object(RUNNER, "_m2_x86_64_arena_direct_check_records", return_value=direct[1:]):
+            with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+                RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(arm_binary))
 
     def test_arm_vm_receipt_requires_arm_commands_and_binary(self):
         summary = RUNNER.validate_aarch64_m2_memory_substrate_contract(

@@ -11,6 +11,7 @@ import run as harness
 
 
 FIXTURE = Path(__file__).with_suffix(".c")
+ARCH = harness.native_evidence_architecture()
 TARGET = "arena::tests::emit_m2_delayed_purge_mixed_outcome_c_rust_trace"
 FIELDS = (
     "setup", "pending", "pending_quiet", "ordered", "bitmaps",
@@ -44,10 +45,10 @@ def parse_trace(output: str, source: str) -> dict[str, int]:
 
 
 def run(offline: bool, c_only: bool = False) -> Path:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-delayed-purge-mixed-outcome"
+    artifacts = harness.ARTIFACT_ROOT / ARCH / "m2-delayed-purge-mixed-outcome"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "pinned-c-oracle"
     with harness.temporary_directory(prefix="m2-delayed-purge-mixed-") as directory:

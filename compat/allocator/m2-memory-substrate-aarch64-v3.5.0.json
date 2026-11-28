@@ -28,11 +28,10 @@
       ]
     },
     {
-      "id": "arenas",
-      "native_status": "not-executed",
-      "remaining_conditions": [
-        "Native AArch64 arena reservation, purge, lifecycle, destruction and warning C/Rust evidence has not been produced; the x86-64 component record is not AArch64 evidence."
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-arenas-aarch64-v3.5.0.fragment.json"
+      },
+      "id": "arenas"
     },
     {
       "id": "initialization",

@@ -11,6 +11,7 @@ import run as harness
 
 
 FIXTURE = Path(__file__).with_suffix(".c")
+ARCH = harness.native_evidence_architecture()
 TARGET = "arena::owned::tests::process_arena_purge_uses_process_cpu_clock_after_monotonic_fault"
 EXPECTED = {"schedule_clock": 1, "scheduled": 1, "purge_clock": 1, "cleared": 1, "purges": 1}
 LINE = re.compile(r"^m2\.arena_clock\.([a-z_]+)=([0-9]+)$")
@@ -35,10 +36,10 @@ def parse_trace(output: str, source: str) -> dict[str, int]:
 
 
 def run(offline: bool) -> Path:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-arena-clock-fallback"
+    artifacts = harness.ARTIFACT_ROOT / ARCH / "m2-arena-clock-fallback"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "pinned-c-oracle"
     with harness.temporary_directory(prefix="m2-arena-clock-fallback-") as directory:

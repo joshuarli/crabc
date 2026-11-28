@@ -1,0 +1,602 @@
+{
+  "schema": "crabc-mimalloc-aarch64-m2-component-evidence",
+  "format": 1,
+  "upstream": {
+    "version": "3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
+  },
+  "target": {
+    "architecture": "aarch64",
+    "endianness": "little",
+    "kernel_baseline": "5.10",
+    "os": "linux",
+    "rust_target": "aarch64-unknown-linux-musl"
+  },
+  "component": {
+    "id": "arenas",
+    "completion_status": "partial",
+    "source_units": [
+      "src/arena.c",
+      "src/heap.c"
+    ],
+    "source_map_records": [
+      {
+        "required_status": "partial",
+        "unit_id": "arena-lifecycle"
+      },
+      {
+        "required_status": "partial",
+        "unit_id": "heap-lifecycle"
+      }
+    ],
+    "bounded_source_definitions": [
+      {
+        "id": "arena-slice-claim-and-commit",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 240,
+          "end_line": 335,
+          "sha256": "d7f4fe71718bd3baebb7c31b63a07d867a73eddab2f8efadd976bf940efa175f"
+        },
+        "required_definitions": [
+          "static mi_decl_noinline void* mi_arena_try_alloc_at",
+          "mi_bbitmap_try_find_and_clearN",
+          "mi_arena_commit",
+          "_mi_os_has_overcommit"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-reserve-policy",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 341,
+          "end_line": 410,
+          "sha256": "f53e8e80bf2e1bd749fc5d3aa21f3f774f6b1dbb5c652276d9b83d3c78dc2dd1"
+        },
+        "required_definitions": [
+          "static bool mi_arena_reserve",
+          "mi_option_arena_reserve",
+          "mi_option_arena_eager_commit",
+          "small_arena_reserve"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-reservation-warnings-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-search-and-requested-allocation",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 416,
+          "end_line": 621,
+          "sha256": "fc3dc698516b3efe321fcb09ea29a7c15df99032231bcc4f1984b25b9d4f095e"
+        },
+        "required_definitions": [
+          "static inline bool mi_arena_is_suitable_ex",
+          "static size_t mi_arena_start_idx",
+          "static mi_decl_noinline void* mi_arenas_try_find_free",
+          "static mi_decl_noinline void* mi_arenas_try_alloc",
+          "void* _mi_arenas_alloc_aligned",
+          "void* _mi_arenas_alloc",
+          "mi_option_disallow_os_alloc",
+          "arena_reserve_lock"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-abandoned-unown-claim-and-search",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 631,
+          "end_line": 779,
+          "sha256": "6b2648297c61dda86e1aeb0e8611c7542276c137ef70f18fb824584da2c38f14"
+        },
+        "required_definitions": [
+          "static bool mi_abandoned_page_unown",
+          "static bool mi_arena_try_claim_abandoned",
+          "static mi_page_t* mi_arenas_page_try_find_abandoned",
+          "mi_bitmap_try_find_and_claim"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-fresh-page-allocation",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 781,
+          "end_line": 1214,
+          "sha256": "bfad65d0938a39e50e49106deef25ed8cf1da14227caed10237bab144389df72"
+        },
+        "required_definitions": [
+          "static uint8_t* mi_arenas_page_alloc_fresh_area",
+          "static mi_page_t* mi_arenas_page_alloc_fresh",
+          "static mi_page_t* mi_arenas_page_regular_alloc",
+          "mi_page_t* _mi_arenas_page_alloc"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-page-free-abandon-and-unabandon",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1216,
+          "end_line": 1424,
+          "sha256": "e540fdd7cb804611f20897cc3c442177e825c2a1c156d71ec8e8fd492253fc0d"
+        },
+        "required_definitions": [
+          "static void mi_arenas_page_free_prim",
+          "void _mi_arenas_page_free",
+          "void _mi_arenas_page_abandon",
+          "bool _mi_arenas_page_try_reabandon_to_mapped",
+          "void _mi_arenas_page_unabandon",
+          "mi_bitmap_clear_once_set"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-free-and-collect",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1433,
+          "end_line": 1495,
+          "sha256": "29c5eb9af10f67d1d654771b1afa9917c6473172c8086c2a81237451411036d0"
+        },
+        "required_definitions": [
+          "void _mi_arenas_free",
+          "mi_arena_schedule_purge",
+          "void _mi_arenas_collect"
+        ],
+        "evidence_check_ids": [
+          "process-wide-arena-purge-c-rust-differential",
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-delayed-purge-decommit-failure-c-rust-differential",
+          "arena-delayed-purge-mixed-outcome-c-rust-differential",
+          "arena-delayed-purge-expiry-c-rust-differential",
+          "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-terminal-destroy",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1540,
+          "end_line": 1566,
+          "sha256": "0e372615ae6c03b6f5166ac20b7f779ffde17fa2ad012e3a6389fc14548aae7c"
+        },
+        "required_definitions": [
+          "static void mi_arenas_unsafe_destroy",
+          "void _mi_arenas_unsafe_destroy_all",
+          "mi_atomic_cas_strong_acq_rel(&subproc->arena_count"
+        ],
+        "evidence_check_ids": [
+          "arena-destruction-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-registry-add",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1573,
+          "end_line": 1611,
+          "sha256": "ff5a4dbbaf0e260668151d714f45392f5f40c0e84c7da5367b5c49334157caa0"
+        },
+        "required_definitions": [
+          "static bool mi_arenas_add",
+          "MI_MAX_ARENAS",
+          "arena_count"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-initialize-and-manage",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1676,
+          "end_line": 1884,
+          "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb"
+        },
+        "required_definitions": [
+          "static mi_arena_t* mi_arena_initialize",
+          "static bool mi_manage_os_memory_ex2",
+          "bool mi_manage_memory"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-reservation-warnings-c-rust-differential",
+          "arena-destruction-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-reserve-os-memory",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1886,
+          "end_line": 1923,
+          "sha256": "fce50a25f1393afd45c6fcc32187cef1b5411ffac30c948def9168457f9d5015"
+        },
+        "required_definitions": [
+          "static int mi_reserve_os_memory_ex2",
+          "int mi_reserve_os_memory_ex",
+          "_mi_os_alloc_aligned"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-reservation-warnings-c-rust-differential",
+          "arena-destruction-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-huge-page-reservation",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 2170,
+          "end_line": 2235,
+          "sha256": "d05acfb77af1958e2450f9b4492034da34b31827f73840e54a07fc71ea1435da"
+        },
+        "required_definitions": [
+          "int mi_reserve_huge_os_pages_at_ex",
+          "int mi_reserve_huge_os_pages_interleave",
+          "_mi_os_alloc_huge_os_pages"
+        ],
+        "evidence_check_ids": [
+          "arena-startup-huge-failure-warning-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-purge-delay-schedule-and-collect",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 2242,
+          "end_line": 2435,
+          "sha256": "ad5af3b6a2486990869791b8b2813a22c8ad4b4d33d1994343f35d8870e70c7b"
+        },
+        "required_definitions": [
+          "static long mi_arena_purge_delay",
+          "static bool mi_arena_purge",
+          "static void mi_arena_schedule_purge",
+          "static bool mi_arena_try_purge_range",
+          "static bool mi_arena_try_purge_visitor",
+          "static int mi_arena_try_purge",
+          "static void mi_arenas_try_purge",
+          "mi_atomic_guard(&purge_guard)"
+        ],
+        "evidence_check_ids": [
+          "process-wide-arena-purge-c-rust-differential",
+          "arena-delayed-purge-decommit-failure-c-rust-differential",
+          "arena-delayed-purge-mixed-outcome-c-rust-differential",
+          "arena-delayed-purge-expiry-c-rust-differential",
+          "arena-clock-fallback-c-rust-differential",
+          "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
+          "arena-purge-budget-decommit-failure-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ]
+      },
+      {
+        "id": "heap-new-in-arena-and-delete",
+        "source_anchor": {
+          "member": "src/heap.c",
+          "start_line": 128,
+          "end_line": 239,
+          "sha256": "06ec8086476b505caec9f008acdd08ac2c7298b2683b5f8696f594d61c672fd4"
+        },
+        "required_definitions": [
+          "mi_heap_t* _mi_heap_new_for_subproc",
+          "mi_heap_t* mi_heap_new_in_arena",
+          "void mi_heap_delete"
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ]
+      }
+    ],
+    "branch_matrix": [
+      {
+        "id": "arena-reservation-decision-and-registry",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:341-410,1573-1611,1676-1923 regular arena reservation: the count/option/headroom/eager-commit/overcommit decision class over every primitive-refusing boundary, exponential count scaling after eight arenas, disallow_os_alloc refusal, clean primary failure with the 128-MiB retry and without it, registry exhaustion and the more-than-MI_MAX_ARENAS-4 automatic refusal, eight-worker concurrent fresh reservation after exhausting the only arena, exclusive sub-arena spans with publication and metadata-commit failure after a published parent, and the failed-reservation `show_errors` warnings.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 341,
+            "end_line": 410,
+            "sha256": "f53e8e80bf2e1bd749fc5d3aa21f3f774f6b1dbb5c652276d9b83d3c78dc2dd1"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1573,
+            "end_line": 1611,
+            "sha256": "ff5a4dbbaf0e260668151d714f45392f5f40c0e84c7da5367b5c49334157caa0"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1676,
+            "end_line": 1884,
+            "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1886,
+            "end_line": 1923,
+            "sha256": "fce50a25f1393afd45c6fcc32187cef1b5411ffac30c948def9168457f9d5015"
+          }
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-reservation-warnings-c-rust-differential"
+        ],
+        "missing_conditions": [
+          "Large-page and 1-GiB huge-page arena reservation success, residency and their failure continuations need MAP_HUGETLB success, which the qualifying arm64 VM (no hugetlbfs pool) cannot supply.",
+          "The NUMA-local reservation and the numa_node-matched second pass run against the VM's single unconfigured node; physical multi-node placement remains open."
+        ]
+      },
+      {
+        "id": "arena-search-slice-claim-and-requested-arena",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:240-335,416-621 and src/heap.c:128-239 slice claim and commit (fresh, uncommitted, already-committed, mixed and failed first-arena commit with fresh-arena recommit), the source start index and suitability filter including the secure-5 pinned skip and refused pinned request, requested and exclusive arenas including a full requested arena that never reserves, `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, oversized requests, and an exclusive heap-in-arena sibling skip.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 240,
+            "end_line": 335,
+            "sha256": "d7f4fe71718bd3baebb7c31b63a07d867a73eddab2f8efadd976bf940efa175f"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 416,
+            "end_line": 621,
+            "sha256": "fc3dc698516b3efe321fcb09ea29a7c15df99032231bcc4f1984b25b9d4f095e"
+          },
+          {
+            "member": "src/heap.c",
+            "start_line": 128,
+            "end_line": 239,
+            "sha256": "06ec8086476b505caec9f008acdd08ac2c7298b2683b5f8696f594d61c672fd4"
+          }
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ],
+        "missing_conditions": [
+          "NUMA-matched search with more than one physical node remains open on the qualifying VM."
+        ]
+      },
+      {
+        "id": "arena-fresh-page-allocation",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:781-1214 fresh arena page allocation as driven by the lifecycle differential: the fresh OS page caller, the `_mi_theap_alloc` exclusive-arena arm with its disallow_arena_alloc gate and commit-failure NUMA second pass, and the managed-arena small, medium and large page allocations that the abandonment scenarios reclaim.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 781,
+            "end_line": 1214,
+            "sha256": "bfad65d0938a39e50e49106deef25ed8cf1da14227caed10237bab144389df72"
+          }
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential"
+        ],
+        "missing_conditions": [
+          "Other fresh-page callers (singleton, aligned and on-demand page commitment beyond the selected receivers) belong to the M3 local-engine allocation path and are not claimed here."
+        ]
+      },
+      {
+        "id": "arena-page-abandonment-claim-and-reclaim",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:631-779,1216-1424 managed-arena small, medium and large regular-page abandonment into `pages_abandoned`, a foreign held-owner claim refusal that keeps the abandoned bit and count, retry, same-owner reassociation through `_mi_theap_page_reclaim`, foreign remote-free publication and owner collection, natural owner exit with a distinct replacement owner reclaiming on allocation, and terminal page and span release.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 631,
+            "end_line": 779,
+            "sha256": "6b2648297c61dda86e1aeb0e8611c7542276c137ef70f18fb824584da2c38f14"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1216,
+            "end_line": 1424,
+            "sha256": "e540fdd7cb804611f20897cc3c442177e825c2a1c156d71ec8e8fd492253fc0d"
+          }
+        ],
+        "evidence_check_ids": [
+          "arena-reservation-lifecycle-c-rust-differential"
+        ],
+        "missing_conditions": [
+          "The `mi_abandoned_page_unown` collection of remote frees that arrive before the release CAS, including its all-free unabandon-and-free arm (src/arena.c:637-650), has no native AArch64 C/Rust evidence.",
+          "Full, singleton and non-arena page abandonment (the unmapped arm and the `heap->os_abandoned_pages` list, src/arena.c:1339-1354), `_mi_arenas_page_try_reabandon_to_mapped` (src/arena.c:1359-1382) and free-triggered `_mi_arenas_page_unabandon`, including its `mi_bitmap_clear_once_set` wait for a concurrent reader and the OS-list unlink (src/arena.c:1384-1424), have no native AArch64 C/Rust evidence in this component.",
+          "Abandoned-page search across several arenas and heaps, and the empty-count and singleton-bin refusals of `mi_arenas_page_try_find_abandoned`, are not compared."
+        ]
+      },
+      {
+        "id": "arena-free-purge-schedule-and-collect",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:1433-1495,2242-2435 `_mi_arenas_free` purge scheduling and availability; immediate purge through decommit, reset and mixed commitment; delayed purge before, at and after expiry; the process-wide `_mi_arenas_collect` traversal over three regular arenas through its non-forced, visit-all global-expiry rebase, forced one-visit budget with thread-sequence rotation, forced visit-all drain and final global clear, with its two-slice whole-range-claim fallback; failed delayed and scheduled-expiry decommits that consume their schedule without retry; a mixed failed/successful pair; a three-arena bounded purge with rotated drain after a failed decommit; the monotonic-clock fallback; and a multi-arena partial purge with recommit and sibling-safe reuse.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 1433,
+            "end_line": 1495,
+            "sha256": "29c5eb9af10f67d1d654771b1afa9917c6473172c8086c2a81237451411036d0"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 2242,
+            "end_line": 2435,
+            "sha256": "ad5af3b6a2486990869791b8b2813a22c8ad4b4d33d1994343f35d8870e70c7b"
+          }
+        ],
+        "evidence_check_ids": [
+          "process-wide-arena-purge-c-rust-differential",
+          "arena-reservation-lifecycle-c-rust-differential",
+          "arena-delayed-purge-decommit-failure-c-rust-differential",
+          "arena-delayed-purge-mixed-outcome-c-rust-differential",
+          "arena-delayed-purge-expiry-c-rust-differential",
+          "arena-clock-fallback-c-rust-differential",
+          "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
+          "arena-purge-budget-decommit-failure-c-rust-differential",
+          "arena-second-partial-purge-c-rust-differential"
+        ],
+        "missing_conditions": [
+          "The `mi_arenas_try_purge` visit budget above one arena (five or more registered arenas), concurrent purge-guard refusal, and the pinned-arena, preloading and negative-delay skips have no native AArch64 C/Rust evidence.",
+          "The `mi_arena_purge_delay` option product and its overflow fallback are checked only by Rust units, not against pinned C."
+        ]
+      },
+      {
+        "id": "arena-terminal-destroy",
+        "disposition": "qualified-fixed-profile",
+        "source_scope": "src/arena.c:1540-1566 and its `_mi_os_free_ex` callers: successful terminal release of committed and reserved regular OS arenas, a skipped external callback arena whose caller mapping survives, the arena-count CAS to zero, a failed parent release of a spanning reservation that leaks the parent, and a three-GiB huge-kind arena whose second per-GiB release fails between two successful ones.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 1540,
+            "end_line": 1566,
+            "sha256": "0e372615ae6c03b6f5166ac20b7f779ffde17fa2ad012e3a6389fc14548aae7c"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1676,
+            "end_line": 1884,
+            "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1886,
+            "end_line": 1923,
+            "sha256": "fce50a25f1393afd45c6fcc32187cef1b5411ffac30c948def9168457f9d5015"
+          }
+        ],
+        "evidence_check_ids": [
+          "arena-destruction-c-rust-differential"
+        ],
+        "missing_conditions": []
+      },
+      {
+        "id": "arena-huge-page-startup-failure",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:2170-2235 the empty huge-page reservation's final warning after a primitive failure, reached explicitly and through the interleaved startup reservation.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 2170,
+            "end_line": 2235,
+            "sha256": "d05acfb77af1958e2450f9b4492034da34b31827f73840e54a07fc71ea1435da"
+          }
+        ],
+        "evidence_check_ids": [
+          "arena-startup-huge-failure-warning-c-rust-differential"
+        ],
+        "missing_conditions": [
+          "Huge-page reservation success, partial progress, timeout and per-node interleaving need hugetlbfs pages and NUMA nodes that the qualifying arm64 VM does not expose."
+        ]
+      }
+    ],
+    "unqualified_failure_matrix": [
+      {
+        "id": "arena-reservation-and-reclaim",
+        "source_scope": "src/arena.c abandoned-page visitation, claim/unabandon, purge/reclaim paths, and the reservation branches named in remaining_conditions",
+        "required_evidence": [
+          "abandonment and reclaim failure matrix",
+          "native differential for the remaining reservation branches"
+        ]
+      }
+    ],
+    "checks": [
+      {
+        "expected_passed_test_count": 1,
+        "id": "process-wide-arena-purge-c-rust-differential",
+        "kind": "c-rust-process-arena-purge-differential",
+        "target": "arena::owned::tests::emit_native_owned_arena_purge_trace"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-reservation-lifecycle-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "arena::owned::tests::emit_native_arena_lifecycle_trace"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-destruction-c-rust-differential",
+        "kind": "c-rust-arena-destruction-differential",
+        "target": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-reservation-warnings-c-rust-differential",
+        "kind": "c-rust-reservation-warnings-differential",
+        "target": "arena::owned::tests::emit_m2_reservation_warnings_c_rust_trace"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-startup-huge-failure-warning-c-rust-differential",
+        "kind": "c-rust-arena-startup-huge-failure-differential",
+        "target": "compat/allocator/m2_startup_huge_failure_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-mixed-outcome-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_mixed_outcome_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-expiry-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_expiry_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-clock-fallback-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_clock_fallback_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/medium_pressure_delayed_purge_fault.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-purge-budget-decommit-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_purge_budget_failure_x86_64.py"
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "arena-second-partial-purge-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_partial_purge_x86_64.py"
+      }
+    ],
+    "remaining_conditions": [
+      "Qualify arena page abandonment, abandoned-page search/claim/unabandon and cross-thread reclamation beyond the lifecycle differential's managed small, medium and large mapped abandonment, held-owner claim refusal, retry and reassociation, foreign remote-free collection and natural-exit replacement-owner reclaim, and arena purge beyond the process-purge differential's three-regular-arena delayed purge and two-slice whole-range-claim fallback and the selected delayed, scheduled-expiry, budgeted and partial purge receivers, through native AArch64 C/Rust lifecycle and failure evidence.",
+      "Qualify large-page and huge-page arena reservation success against pinned C (see the VM huge-page/NUMA condition): the qualifying arm64 VM exposes no hugetlbfs pool and no NUMA node topology, so MAP_HUGETLB success, 1-GiB huge-page arenas with real partial progress or timeout, and NUMA second-pass placement across physical nodes stay open here. Automatic reservation and count scaling, commit and eager-commit policy, disallow_os_alloc, requested and exclusive arenas including an exclusive sub-arena span, oversized requests, clean primary failure with and without the 128-MiB fallback, the single-node NUMA second pass, registry exhaustion, eight-worker concurrent fresh reservation after exhausting the only arena, sub-arena publication and metadata-commit failure after a published parent, requested-arena `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, and the `_mi_theap_alloc` exclusive-arena arm are covered natively on AArch64 by the arena-reservation lifecycle differential, and the failed-reservation `show_errors` output by the reservation warning differential.",
+      "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts. The executed receivers and their expected relations are fixed to the qualifying arm64 VM's 4 KiB geometry."
+    ]
+  }
+}
