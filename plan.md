@@ -187,8 +187,8 @@ not host-limited: the VM reserve/commit/purge/reuse callers, explicit
 reservations beyond the compared trims and the narrowed hint, THP and
 statistics rows; installed-product initialization; and the remaining
 fault-injection receivers. The arena unown retry for unmapped and OS-list pages
-closed with an arm64 hardware-watchpoint pause (`a61a94f93`), and the OS-page
-prefix trim has a receiver (`767bc726b`); arenas now keep only host-limited
+closed with an arm64 hardware-watchpoint pause (`6785d275c`), and the OS-page
+prefix trim has a receiver (`69425dba9`); arenas now keep only host-limited
 conditions. Pending for x86: the interleaving and prefix-trim receivers, the
 two concurrent-reserve fields, and an x86 route for the unown-retry pause
 (x86 data breakpoints trap after the access).
