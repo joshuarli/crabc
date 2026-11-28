@@ -215,24 +215,30 @@ orb create alpine crabc                  # arm64 Linux machine
 orb -m crabc
 # Inside the machine. Install Docker Engine here, not the Mac's OrbStack engine,
 # so every mounted path is on the machine's own disk.
-git clone https://github.com/joshuarli/crabc ~/crabc   # under ~, never /Users/...
-cd ~/crabc && git switch -c lane/a0-aarch64-image
-git config receive.denyCurrentBranch updateInstead
-stat -f -c %T .                          # ext2/ext3 or btrfs, never virtiofs/fuse
-uname -m; uname -r; getconf PAGESIZE; nproc; df -h ~
+sudo apk add docker e2fsprogs rsync python3 git && sudo rc-update add docker default
+sudo rc-service docker start && sudo addgroup "$USER" docker
+# The machine's own disk is btrfs, which reports zero free inodes; the harness
+# needs an ext4 work volume with about 40M inodes.
+sudo mkdir -p /var/lib/crabc-disk /mnt/crabc
+sudo truncate -s 320G /var/lib/crabc-disk/ext4.img
+sudo mkfs.ext4 -q -F -i 8192 -m 0 /var/lib/crabc-disk/ext4.img
+echo '/var/lib/crabc-disk/ext4.img /mnt/crabc ext4 loop,noatime 0 0' | sudo tee -a /etc/fstab
+sudo mount /mnt/crabc && sudo chown "$USER" /mnt/crabc
+git clone /Users/$USER/d/crabc /mnt/crabc/crabc  # one-time clone of the Mac checkout
+uname -m; uname -r; getconf PAGESIZE; nproc; df -i /mnt/crabc
 ```
 
-Record the last line's values in the A0 commit. Never pass
-`--platform linux/amd64` on the Mac.
+Never pass `--platform linux/amd64` on the Mac. The VM holds no GitHub
+credentials; commits are made and pushed from the Mac.
 
-The VM holds no GitHub credentials. The Mac reaches the VM clone over
-OrbStack's SSH and relays branches to GitHub:
-
-```sh
-git remote add a64 crabc@orb:crabc       # on the Mac, in the main checkout
-git fetch a64 && git push origin a64/lane/a1-aarch64-inventory:lane/a1-aarch64-inventory
-git push a64 HEAD:lane/a1-aarch64-inventory   # Mac edits; updates the VM checkout
-```
+From a Mac worktree, `scripts/lanes/orb-vm-run.sh <command...>` mirrors that
+worktree into its VM worktree `/mnt/crabc/wt/<name>` (`main` for the primary
+checkout), detached at the Mac HEAD with uncommitted edits copied over, and runs
+the command there; wrap builds in `scripts/lanes/rust-check.sh`.
+`scripts/lanes/orb-vm-lane.sh <name> <commit>` creates a paired lane and seeds
+its VM worktree from the `main` mirror. Run `scripts/lanes/prepare-worktree.sh`
+through the relay in the `main` mirror first to seed the source oracles,
+package corpus, Lua archive and Rust std/LTO vendors.
 
 ### A0 tasks, on `lane/a0-aarch64-image`
 
@@ -374,13 +380,8 @@ Open, in dependency order:
   governs. Implemented in `builtins/src/aarch64_binary128.rs`; the long-double
   completion evidence now reports zero differences with no allowlist.
 
-Host workflow: the VM clone is `~/crabc`, reachable from the Mac as git remote
-`a64` (`crabc@orb:crabc`) with `receive.denyCurrentBranch updateInstead`.
-`scripts/lanes/orb-vm-lane.sh <name> <commit>` creates the paired worktrees,
-and `scripts/lanes/orb-vm-run.sh <command...>` mirrors a Mac worktree into its
-VM worktree (git HEAD and index follow the Mac commit) and runs the command
-there; wrap builds in `scripts/lanes/rust-check.sh`. The pinned musl trees go
-in the VM's `~/crabc/.work/aarch64/musl-src/`: the `[musl]` release tarball
+Host workflow: see [Host setup](#host-setup-orbstack). The pinned musl trees go
+in the VM worktree's `.work/aarch64/musl-src/`: the `[musl]` release tarball
 (the generators' tree digest) and the `[musl_native]` snapshot (scanf and
 float-parse generators), both downloaded from `compat/upstreams.toml` and
 SHA-256 checked. `cargo check` does not assemble `global_asm!` text, so

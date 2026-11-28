@@ -1,13 +1,29 @@
 #!/bin/sh
-# CRAB-8: create a Mac worktree on lane/<name> plus the matching VM worktree
-# with Cargo dependencies, the pinned musl source trees and the verified
-# mimalloc archive cache, so
+# CRAB-8: create a Mac worktree on lane/<name> plus the matching worktree in
+# the OrbStack Linux/arm64 machine `crabc` at /mnt/crabc/wt/<name>, seeded
+# from the VM's main mirror with the pinned musl source trees, source oracles,
+# package-corpus input and verified mimalloc archive, so
 # scripts/lanes/orb-vm-run.sh can drive it. Usage: orb-vm-lane.sh <name> <commit>
 set -eu
-name=$1 rev=$2
+[ "$#" -eq 2 ] || { printf 'usage: orb-vm-lane.sh <name> <commit>\n' >&2; exit 2; }
+name=$1
 root=$(git rev-parse --show-toplevel)
-cd "$root"
-git push -q a64 "$rev:refs/heads/crab8/lane-base-$name"
-git worktree add -q -b "lane/$name" ".work/wt/$name" "$rev"
-ssh crabc@orb "set -e; cd crabc && git worktree add -q --detach .work/wt/$name $rev && git branch -q -D crab8/lane-base-$name && mkdir -p .work/wt/$name/.work/aarch64 && cp -a .work/aarch64/musl-src .work/wt/$name/.work/aarch64/ && for seed in source-oracles owned-package-corpus-input; do [ ! -d .work/aarch64/\$seed ] || cp -r .work/aarch64/\$seed .work/wt/$name/.work/aarch64/; done && mkdir -p .work/wt/$name/compat/allocator/.cache && cp compat/allocator/.cache/mimalloc-3.5.0.tar.gz .work/wt/$name/compat/allocator/.cache/ && cd .work/wt/$name && scripts/lanes/rust-check.sh cargo fetch --locked -q >/dev/null 2>&1"
-echo "lane $name ready at $rev"
+rev=$(git -C "$root" rev-parse --verify "$2^{commit}")
+common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)
+git -C "$root" worktree add -q -b "lane/$name" "$root/.work/wt/$name" "$rev"
+orb -m crabc sh -c "set -eu
+    cd /mnt/crabc/crabc
+    git cat-file -e $rev^{commit} 2>/dev/null || git fetch -q '$common' $rev
+    git worktree add -q --detach /mnt/crabc/wt/$name $rev
+    seed=/mnt/crabc/wt/main
+    lane=/mnt/crabc/wt/$name
+    mkdir -p \$lane/.work/aarch64
+    for item in musl-src source-oracles owned-package-corpus-input; do
+        [ ! -d \$seed/.work/aarch64/\$item ] || cp -a \$seed/.work/aarch64/\$item \$lane/.work/aarch64/
+    done
+    for cache in compat/allocator/.cache compat/corpus/.cache compat/lua/.cache; do
+        [ ! -d \$seed/\$cache ] || { mkdir -p \$lane/\$cache; cp -a \$seed/\$cache/. \$lane/\$cache/; }
+    done
+    cd \$lane
+    scripts/lanes/rust-check.sh cargo fetch --locked -q >/dev/null"
+printf 'lane %s ready at %s\n' "$name" "$rev"
