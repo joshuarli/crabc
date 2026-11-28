@@ -245,9 +245,10 @@ def load_mimalloc_pin() -> dict[str, str]:
     return pin
 
 
-def load_contract() -> dict[str, Any]:
+def load_contract(architecture: str = "x86_64") -> dict[str, Any]:
+    path = CONTRACT_PATH if architecture == "x86_64" else ROOT / f"compat/allocator/{architecture}-source-map-v3.5.0.json"
     try:
-        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        contract = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise SourceMapError(f"missing checked-in x86-64 source map: {CONTRACT_PATH}") from error
     if not isinstance(contract, dict):
@@ -392,7 +393,7 @@ def validate_evidence(value: object, unit_id: str) -> list[str]:
 
 
 def validate_units(
-    contract: Mapping[str, Any], sources: Mapping[str, bytes]
+    contract: Mapping[str, Any], sources: Mapping[str, bytes], architecture: str = "x86_64"
 ) -> list[dict[str, Any]]:
     units = contract.get("units")
     if not isinstance(units, list):
@@ -444,7 +445,8 @@ def validate_units(
             raise SourceMapError(f"x86-64 source-map unit {unit_id} source anchor drifted")
 
         if status == "implemented":
-            requirement = IMPLEMENTED_SOURCE_REQUIREMENTS.get(unit_id)
+            requirement_id = "x86-64-width-and-bit-operations" if architecture == "aarch64" and unit_id == "aarch64-width-and-bit-operations" else unit_id
+            requirement = IMPLEMENTED_SOURCE_REQUIREMENTS.get(requirement_id)
             if requirement is None:
                 raise SourceMapError(
                     f"x86-64 source-map unit {unit_id} cannot claim implemented status before a reviewed ratchet expansion"
@@ -478,12 +480,14 @@ def validate_units(
             )
         normalized.append(unit)
 
-    if tuple(unit["id"] for unit in normalized) != REQUIRED_UNIT_IDS:
+    expected_ids = tuple("aarch64-width-and-bit-operations" if architecture == "aarch64" and unit == "x86-64-width-and-bit-operations" else unit for unit in REQUIRED_UNIT_IDS)
+    if tuple(unit["id"] for unit in normalized) != expected_ids:
         raise SourceMapError("x86-64 source-map unit inventory changed")
     implemented_unit_ids = tuple(
         unit["id"] for unit in normalized if unit["status"] == "implemented"
     )
-    if implemented_unit_ids != REQUIRED_IMPLEMENTED_UNIT_IDS:
+    expected_implemented = tuple("aarch64-width-and-bit-operations" if architecture == "aarch64" and unit == "x86-64-width-and-bit-operations" else unit for unit in REQUIRED_IMPLEMENTED_UNIT_IDS)
+    if implemented_unit_ids != expected_implemented:
         raise SourceMapError("x86-64 source-map implemented-status baseline changed")
     if tuple(unit["source_anchor"]["member"] for unit in normalized) != REQUIRED_SOURCE_MEMBERS:
         raise SourceMapError(
@@ -523,7 +527,7 @@ def validate_status_model(contract: Mapping[str, Any]) -> None:
 
 
 def validate_ratchet(
-    contract: Mapping[str, Any], sources: list[dict[str, Any]], units: list[dict[str, Any]]
+    contract: Mapping[str, Any], sources: list[dict[str, Any]], units: list[dict[str, Any]], architecture: str = "x86_64"
 ) -> None:
     ratchet = contract.get("ratchet")
     expected_fields = {
@@ -559,7 +563,7 @@ def validate_ratchet(
         "status_counts": counts,
         "unfinished_unit_count": unfinished,
         "unit_count": len(units),
-        "unit_ids_sha256": sha256_bytes("\n".join(REQUIRED_UNIT_IDS).encode("utf-8")),
+        "unit_ids_sha256": sha256_bytes("\n".join(str(unit["id"]) for unit in units).encode("utf-8")),
         "units_sha256": canonical_sha256(units),
     }
     if ratchet != expected:
@@ -570,18 +574,20 @@ def validate_ratchet(
         raise SourceMapError("x86-64 source map cannot have zero unfinished source scopes")
 
 
-def validate_contract(contract: Mapping[str, Any], pin: Mapping[str, str], sources: Mapping[str, bytes]) -> None:
+def validate_contract(contract: Mapping[str, Any], pin: Mapping[str, str], sources: Mapping[str, bytes], architecture: str = "x86_64") -> None:
+    if architecture not in {"x86_64", "aarch64"}:
+        raise SourceMapError(f"unsupported source-map architecture: {architecture}")
     if set(contract) != EXPECTED_TOP_LEVEL_FIELDS:
         raise SourceMapError("x86-64 source-map top-level schema changed")
     if contract.get("format") != 1:
         raise SourceMapError("unsupported x86-64 source-map format")
-    if contract.get("kind") != "mimalloc-x86_64-engine-source-map":
+    if contract.get("kind") != f"mimalloc-{architecture}-engine-source-map":
         raise SourceMapError("x86-64 source-map kind changed")
     if contract.get("maturity") != "source-map-ratchet-foundation":
         raise SourceMapError("x86-64 source-map maturity changed")
-    if contract.get("profile") != "linux-x86_64-mimalloc-engine-parity":
+    if contract.get("profile") != f"linux-{architecture}-mimalloc-engine-parity":
         raise SourceMapError("x86-64 source-map profile changed")
-    if contract.get("target_context") != TARGET_CONTEXT:
+    if contract.get("target_context") != {**TARGET_CONTEXT, "architecture": architecture, "rust_target": f"{architecture}-unknown-linux-musl"}:
         raise SourceMapError("x86-64 source-map target context changed")
     if contract.get("upstream") != {
         "archive_root": pin["archive_root"],
@@ -594,11 +600,11 @@ def validate_contract(contract: Mapping[str, Any], pin: Mapping[str, str], sourc
 
     validate_status_model(contract)
     normalized_sources = validate_source_records(contract, pin, sources)
-    normalized_units = validate_units(contract, sources)
-    validate_ratchet(contract, normalized_sources, normalized_units)
+    normalized_units = validate_units(contract, sources, architecture)
+    validate_ratchet(contract, normalized_sources, normalized_units, architecture)
 
 
-def checked_contract_result(archive_path: Path) -> dict[str, object]:
+def checked_contract_result(archive_path: Path, architecture: str = "x86_64") -> dict[str, object]:
     """Validate the checked-in map and return only its bounded evidence result.
 
     Callers can include this record in a larger native-oracle report without
@@ -607,13 +613,14 @@ def checked_contract_result(archive_path: Path) -> dict[str, object]:
     """
 
     pin = load_mimalloc_pin()
-    contract = load_contract()
+    contract = load_contract(architecture)
+    contract_path = CONTRACT_PATH if architecture == "x86_64" else ROOT / f"compat/allocator/{architecture}-source-map-v3.5.0.json"
     sources = read_pinned_sources(
         archive_path,
         pin,
         source_members_from_contract(contract),
     )
-    validate_contract(contract, pin, sources)
+    validate_contract(contract, pin, sources, architecture)
     ratchet = contract["ratchet"]
     assert isinstance(ratchet, dict)
     target = contract["target_context"]
@@ -622,8 +629,8 @@ def checked_contract_result(archive_path: Path) -> dict[str, object]:
     assert isinstance(status_counts, dict)
     return {
         "contract": {
-            "path": CONTRACT_PATH.relative_to(ROOT).as_posix(),
-            "sha256": sha256_bytes(CONTRACT_PATH.read_bytes()),
+            "path": contract_path.relative_to(ROOT).as_posix(),
+            "sha256": sha256_bytes(contract_path.read_bytes()),
         },
         "overall_status": contract["overall"]["status"],
         "profile": contract["profile"],
@@ -645,6 +652,7 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_ARCHIVE_PATH,
         help="path to the SHA-256-pinned mimalloc v3.5.0 archive",
     )
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument(
         "--print-source-records",
         action="store_true",
@@ -656,7 +664,7 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = parse_arguments()
     pin = load_mimalloc_pin()
-    contract = load_contract()
+    contract = load_contract(arguments.architecture)
     members = source_members_from_contract(contract)
     sources = read_pinned_sources(arguments.archive, pin, members)
     if arguments.print_source_records:
@@ -670,8 +678,8 @@ def main() -> int:
         ]
         print(json.dumps(records, indent=2))
         return 0
-    validate_contract(contract, pin, sources)
-    print("allocator x86_64 source-map ratchet: PASS")
+    validate_contract(contract, pin, sources, arguments.architecture)
+    print(f"allocator {arguments.architecture} source-map ratchet: PASS")
     return 0
 
 

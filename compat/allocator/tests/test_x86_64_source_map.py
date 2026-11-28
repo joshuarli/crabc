@@ -73,6 +73,21 @@ class X86_64SourceMapTests(unittest.TestCase):
     def test_checked_in_contract_matches_the_verified_pinned_sources(self) -> None:
         SOURCE_MAP.validate_contract(self.contract, self.pin, self.sources)
 
+    def test_arm_map_preserves_source_checks_without_claiming_x86_execution(self) -> None:
+        contract = SOURCE_MAP.load_contract("aarch64")
+        SOURCE_MAP.validate_contract(contract, self.pin, self.sources, "aarch64")
+        result = SOURCE_MAP.checked_contract_result(ARCHIVE_PATH, "aarch64")
+        self.assertEqual(result["target"]["architecture"], "aarch64")
+        self.assertEqual(result["status_counts"], self.contract["ratchet"]["status_counts"])
+        altered = copy.deepcopy(contract)
+        altered["units"][3]["id"] = "x86-64-width-and-bit-operations"
+        with self.assertRaises(SOURCE_MAP.SourceMapError):
+            SOURCE_MAP.validate_contract(altered, self.pin, self.sources, "aarch64")
+        altered = copy.deepcopy(contract)
+        altered["units"][3]["source_anchor"]["sha256"] = "0" * 64
+        with self.assertRaises(SOURCE_MAP.SourceMapError):
+            SOURCE_MAP.validate_contract(altered, self.pin, self.sources, "aarch64")
+
     def test_callable_validator_returns_a_scoped_checked_result(self) -> None:
         result = SOURCE_MAP.checked_contract_result(ARCHIVE_PATH)
         self.assertEqual(result["status"], "passed")
