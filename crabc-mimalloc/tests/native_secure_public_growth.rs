@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "x86_64", any(feature = "mi-secure-3", feature = "mi-guarded")))]
+#![cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), any(feature = "mi-secure-3", feature = "mi-guarded")))]
 
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;

@@ -7,7 +7,7 @@ use crabc_mimalloc::source_api::{self, FreeOutcome};
 fn aligned_offset_client_keeps_usable_reallocation_and_free_contract() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     arbitrary_offset_clients_preserve_byte_extents_through_canonical_free();
     selected_theap_reallocation_preserves_source_extent();
     let original = source_api::zalloc_aligned_at(81, 128, 11).value.unwrap();
@@ -215,7 +215,7 @@ fn selected_theap_reallocation_preserves_source_extent() {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn arbitrary_offset_clients_preserve_byte_extents_through_canonical_free() {
     let word = core::mem::size_of::<usize>();
     for alignment in [2, 4, 8, 16, 128, 4096, 65_536] {

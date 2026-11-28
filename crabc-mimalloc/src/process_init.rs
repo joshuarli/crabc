@@ -950,12 +950,6 @@ impl ProcessMainInitializationStorage {
                 }
             }
         };
-        #[cfg(any())]
-        let (policy, apply_process_memory_policy) = match vm_policy {
-            VmPolicyStartup::None => (None, false),
-            VmPolicyStartup::RetainOnly(policy) => (Some(VmPolicyInitialization::Offered(policy)), false),
-            VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (Some(VmPolicyInitialization::Offered(policy)), true),
-        };
         // Source init.c initializes its statistics clock after options and
         // before `_mi_os_init`, including process memory-policy operations.
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -965,8 +959,6 @@ impl ProcessMainInitializationStorage {
         // `mi_process_init` earlier leaves it set until that runtime call.
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         let finish_preloading = entry == ProcessStartEntry::RuntimeStartup;
-        #[cfg(any())]
-        let finish_preloading = true;
         let vm_process = if let Some(policy) = policy {
             // Retain this policy first, then expose its source preloading
             // state to every later source owner. A later startup failure is
@@ -1063,12 +1055,6 @@ impl ProcessMainInitializationStorage {
             ProcessBootstrapOutput::LegacyExplicitConfiguration => {
                 metadata.prepare_for_main_subprocess(config, subprocess)
             }
-        };
-        #[cfg(any())]
-        let metadata_prepared = if vm_process.is_some() {
-            metadata.prepare_for_main_heap(config, subprocess, foundation)
-        } else {
-            metadata.prepare_for_main_subprocess(config, subprocess)
         };
         let metadata_bound = match metadata_prepared {
             Ok(bound) => bound,
@@ -1936,11 +1922,6 @@ impl ProcessMainStartup {
                 "mandatory diagnostic startup always owns one source VM process"
             ),
         };
-        #[cfg(any())]
-        let reservations = if let Some(process) = vm_process {
-            unsafe { process.subprocess().arena_backing().reserve_startup_options(process,
-                config, metadata, Some(&mut random)) }
-        } else { crate::arena::StartupArenaReservationOutcomes::empty() };
         unsafe { (*self.storage.startup_reservations.get()).write(reservations) };
 
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {

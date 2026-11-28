@@ -1,4 +1,4 @@
-#![cfg(target_arch = "x86_64")]
+#![cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;
@@ -25,7 +25,7 @@ fn heap_json_and_free_statistics_use_the_callers_default_theap() {
         let ordinary_owner = heaps::heap_of(ordinary.as_ptr());
         // Null selects the main Heap statistics while allocation of the
         // growing result follows the caller's independently selected default.
-        let mut fixed = [0_i8; 65536];
+        let mut fixed = [0 as core::ffi::c_char; 65536];
         assert_eq!(heaps::heap_stats_json(core::ptr::null_mut(), fixed.len(), fixed.as_mut_ptr()), fixed.as_mut_ptr());
         let commit_before = json_commit_current(core::ffi::CStr::from_ptr(fixed.as_ptr()).to_str().unwrap());
         let json = heaps::heap_stats_json(core::ptr::null_mut(), 0, core::ptr::null_mut());
@@ -107,7 +107,7 @@ fn json_commit_current(text: &str) -> usize {
 }
 
 unsafe fn heap_normal_current(heap: *mut core::ffi::c_void) -> i64 {
-    let mut fixed = [0_i8; 65536];
+    let mut fixed = [0 as core::ffi::c_char; 65536];
     // SAFETY: forwarded live Heap and exclusive complete buffer contracts.
     unsafe {
         assert_eq!(heaps::heap_stats_json(heap, fixed.len(), fixed.as_mut_ptr()), fixed.as_mut_ptr());

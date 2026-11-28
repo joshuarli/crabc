@@ -1,4 +1,4 @@
-#![cfg(all(target_arch = "x86_64", feature = "test-adapter"))]
+#![cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "test-adapter"))]
 
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;

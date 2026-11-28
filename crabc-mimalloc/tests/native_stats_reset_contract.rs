@@ -1,4 +1,4 @@
-#![cfg(target_arch = "x86_64")]
+#![cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;

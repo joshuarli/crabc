@@ -465,7 +465,7 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
     );
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded"))]
 #[test]
 fn attached_worker_guarded_sampling_preserves_live_siblings_and_normal_teardown() {
     use crabc_mimalloc::{__crabc_runtime as native, source_heap_api as heaps};

@@ -121,7 +121,7 @@ fn current_page_size() -> usize {
         .expect("the native Linux witness has a validated page size")
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(feature = "mi-secure-3")))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-guarded", not(feature = "mi-secure-3")))]
 #[test]
 fn cold_native_guarded_first_request_preserves_empty_sampler_decision() {
     use crabc_mimalloc::__crabc_runtime as native;
@@ -187,7 +187,7 @@ fn cold_native_guarded_first_request_preserves_empty_sampler_decision() {
     unsafe { crabc_mimalloc::source_heap_api::theap_guarded_set_sample_rate(selected, 0, 0); }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn cold_native_aligned_size_refusal_preserves_uninitialized_source() {
     use crabc_mimalloc::__crabc_runtime as native;

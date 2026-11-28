@@ -4735,131 +4735,7 @@ impl RuntimeProcessStorage {
         true
     }
 
-    #[cfg(any())]
-    fn initialize(&'static self, page_size_bytes: usize) -> bool {
-        match self.state.compare_exchange(
-            PROCESS_COLD,
-            PROCESS_INITIALIZING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {}
-            Err(PROCESS_ACTIVE) => return true,
-            Err(_) => return false,
-        }
 
-        let Some(page_size) = PageSize::new(page_size_bytes) else {
-            self.retain();
-            return false;
-        };
-        // Source `mi_process_init_once` observes its environment options
-        // before `_mi_os_init` builds the process memory configuration. The
-        // runtime owns that raw-environ read while startup still owns a stable
-        // initial vector; the resolved image then stays beside this exact
-        // ticket-zero subprocess for its process lifetime.
-        let options = source_vm_options_from_process_environment();
-        let config = MemoryConfig::detect(StartupInput::new(page_size));
-        // SAFETY: libc calls this only after initial TLS exists and before
-        // application constructors. This static owner retains ticket zero for
-        // the process lifetime, and no competing runtime lifecycle call can
-        // pass the INITIALIZING state above.
-        let owner = unsafe {
-            ProcessMainInitializationStorage::global()
-                .initialize_with_vm_options_from_source_environment(
-                    config,
-                    options,
-                    process_environment_pointer,
-                )
-        };
-        let Ok(mut owner) = owner else {
-            self.retain();
-            return false;
-        };
-
-        #[cfg(feature = "native-runtime-test-audit")]
-        let initial_tld_numa_node = owner
-            .attachment_mut()
-            .ok()
-            .and_then(|attachment| attachment.tld().ok())
-            .map(|tld| tld.numa_node())
-            .unwrap_or(INITIAL_TLD_NUMA_NODE_UNAVAILABLE);
-
-        // SAFETY: this successful COLD -> INITIALIZING winner is the sole
-        // writer, and `owner` is moved into its final static process slot
-        // before PROCESS_ACTIVE makes it visible to worker threads.
-        unsafe { (*self.owner.get()).write(owner) };
-        // A shared main-Heap lease may only be minted by the ticket-zero
-        // owner on its own thread. Store that immutable process witness now;
-        // later pthread workers may copy it but must never try to mint it
-        // while their TPIDR identity differs from the initial attachment.
-        let owner = unsafe { (&*self.owner.get()).assume_init_ref() };
-        let Ok(main_heap) = owner.shared_main_heap_lease() else {
-            self.retain();
-            return false;
-        };
-        let Some(initial_thread) = current_thread_identity() else {
-            self.retain();
-            return false;
-        };
-        // SAFETY: the same sole initializer writes this second final slot
-        // before the Release publication below.
-        unsafe { (*self.main_heap.get()).write(main_heap) };
-        // The initial thread identity is written before PROCESS_ACTIVE's
-        // Release publication. It is an immutable witness: a quiescent child
-        // retains the copied TPIDR_EL0 image, while every fresh pthread gets a
-        // distinct image and cannot pass the fork-preservation check.
-        self.initial_thread_identity
-            .store(initial_thread.get(), Ordering::Release);
-        #[cfg(feature = "native-runtime-test-audit")]
-        self.initial_tld_numa_node
-            .store(initial_tld_numa_node, Ordering::Release);
-        self.state.store(PROCESS_ACTIVE, Ordering::Release);
-        true
-    }
-}
-
-/// Resolve the selected VM descriptors from the same raw Unix `environ`
-/// source that pinned `src/prim/unix/prim.c:_mi_prim_getenv` reads.
-///
-/// The static runtime starts after libc has installed the validated kernel
-/// environment vector and before constructors can call its selected mutation
-/// APIs. A foreign direct write still has C's ordinary caller-coordination
-/// obligation. An unavailable or overlong entry remains unresolved in the
-/// permanent process policy: its current source default is usable for that
-/// option read, and only that descriptor retries through this same raw reader
-/// on a later `mi_option_get`-shaped policy access.
-#[cfg(all(target_arch = "aarch64", not(miri)))]
-fn source_vm_options_from_process_environment() -> VmOptions {
-    let mut options = VmOptions::uninitialized();
-    // SAFETY: `RuntimeProcessStorage::initialize` runs after libc startup
-    // installs `environ`, while its winning process-start transition excludes
-    // another runtime initializer. The ambient C environment lifetime and
-    // direct-mutation synchronization obligation are documented above.
-    unsafe { options.initialize_from_source_environment(process_environment_pointer()) };
-    options
-}
-
-/// Miri has no process-global C `environ` model. Keep every descriptor
-/// unresolved so the private runtime stays inactive there instead of treating
-/// host-model execution as evidence for the native raw-environment boundary.
-#[cfg(all(target_arch = "aarch64", miri))]
-fn source_vm_options_from_process_environment() -> VmOptions {
-    VmOptions::uninitialized()
-}
-
-/// Reads the C `environ` object without creating an alias to mutable foreign
-/// state. The selected crabc libc exports it as a weak alias of `__environ`.
-/// Only the AArch64 bridge still reads it here; the x86 runtime
-/// receives its reader in [`NativeProcessStartupFacts`] instead.
-#[cfg(all(target_arch = "aarch64", not(miri)))]
-fn process_environment_pointer() -> *const *const core::ffi::c_char {
-    unsafe extern "C" {
-        static mut environ: *mut *mut core::ffi::c_char;
-    }
-    // SAFETY: this is a raw machine-word read of the C global only. The
-    // caller of the enclosing source process-start path owns its validity and
-    // lifetime, exactly as pinned mimalloc's direct `environ` primitive does.
-    unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
 static RUNTIME_PROCESS: RuntimeProcessStorage = RuntimeProcessStorage::new();
@@ -11537,11 +11413,6 @@ fn enter_native_first_allocation_operation() -> Option<admission::NativeAllocato
         return None;
     }
     admission::NativeAllocatorOperationGuard::enter().ok()
-}
-
-#[cfg(any())]
-pub fn initialize_process(page_size_bytes: usize) -> bool {
-    RUNTIME_PROCESS.initialize(page_size_bytes)
 }
 
 /// Whether the private process lifecycle can admit a new pthread worker.

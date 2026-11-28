@@ -4,7 +4,7 @@
 // `mimalloc_show_errors=1` environment and prints the same keys: the
 // TID-normalized output fragments, whether the request failed, and the errno
 // the source default error policy leaves after starting from zero.
-#![cfg(all(target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+#![cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "native-runtime-test-audit"))]
 
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;

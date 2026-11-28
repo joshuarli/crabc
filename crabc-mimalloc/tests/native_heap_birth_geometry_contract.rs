@@ -1,4 +1,4 @@
-#![cfg(target_arch = "x86_64")]
+#![cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;
@@ -7,7 +7,7 @@ use core::ffi::CStr;
 use crabc_mimalloc::{source_api as api, source_heap_api as heaps};
 
 fn requested_total() -> i64 {
-    let mut buffer = [0_i8; 65536];
+    let mut buffer = [0 as core::ffi::c_char; 65536];
     // SAFETY: this owner retains its main Heap; the fixed buffer is exclusive
     // and lives through the getter and subsequent zero-terminated projection.
     let json = unsafe {
