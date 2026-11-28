@@ -39,10 +39,10 @@
 //! It ports the path argument boundary, the `openat` family, `fstat` and
 //! `statat` with a Darwin `Stat`, directory streams, node creation and
 //! removal, hard and symbolic links, `readlinkat`, `renameat_with` over
-//! `renameatx_np`, access checks and permission changes, the timestamp family,
-//! file length, position and synchronization, advisory locks, and the named
-//! temporary-file and temporary-directory family. Behavior that differs from
-//! Linux:
+//! `renameatx_np`, access checks, permission and ownership changes, the
+//! timestamp family, file length, position and synchronization, advisory
+//! locks, and the named temporary-file and temporary-directory family.
+//! Behavior that differs from Linux:
 //!
 //! - APFS stores names as UTF-8. Creating an entry whose name is not UTF-8
 //!   fails with `EILSEQ`, and looking one up finds nothing.
@@ -52,6 +52,8 @@
 //!   caller buffer is not used; `fdopendir` sets `FD_CLOEXEC` on the adopted
 //!   descriptor; seek cookies come from `telldir`.
 //! - `readlinkat_raw` with an empty buffer returns an empty prefix.
+//! - `futimens` and `utimensat` carry a `tv_nsec` of one second or more into
+//!   the seconds instead of failing with `EINVAL`.
 //! - Temporary objects open their parent with `O_SEARCH`, as Darwin has no
 //!   `O_PATH`, so the parent needs search permission.
 //! - `fsync` does not flush the storage device's own cache, and `sync` may
@@ -74,10 +76,9 @@
 //!   `statvfs` reports 32-bit block and file counts.
 //! - The extended-attribute family and `XattrFlags`: Darwin's interface has
 //!   position and option arguments and no attribute namespaces.
-//! - `fchown`, `chownat`, `chown`, `lchown` and `ChownFlags`: their `Uid` and
-//!   `Gid` types belong to `process`, which is not ported yet.
 //! - `canonicalize`, `canonicalize_into` and `CANONICAL_PATH_MAX`: the
-//!   algorithm reads the current directory through `process`.
+//!   algorithm and its bound encode Linux's 4096-byte `PATH_MAX` and
+//!   forty-link limit, where Darwin's are 1024 bytes and 32 links.
 
 #[cfg(feature = "alloc")]
 use alloc::{ffi::CString, string::String, vec::Vec};
@@ -97,7 +98,6 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
-#[cfg(target_os = "linux")]
 use crate::process::{Gid, Uid};
 use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
@@ -113,14 +113,16 @@ pub use crate::darwin::fs::{
     utime, utimensat, utimes, AccessAtFlags, AtFlags, Dev, Dir, DirEntry, LinkAtFlags, OFlags,
     RenameFlags, Stat, TimestampAtFlags, UnlinkAtFlags, CWD, UTIME_NOW, UTIME_OMIT,
 };
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::fs::{chownat, fchown, ChownFlags};
 #[cfg(all(target_os = "macos", feature = "alloc"))]
 #[doc(inline)]
 pub use crate::darwin::fs::readlinkat;
 
-#[cfg(target_os = "linux")]
 use crate::rand::getentropy;
 #[cfg(target_os = "macos")]
-use crate::darwin::fs::{getentropy, TEMP_PARENT_FLAGS};
+use crate::darwin::fs::TEMP_PARENT_FLAGS;
 
 #[cfg(target_os = "linux")]
 bitflags! {
@@ -3509,14 +3511,13 @@ pub fn chmod<P: PathArg>(path: P, mode: Mode) -> Result<()> {
     chmodat(CWD, path, mode, AtFlags::empty())
 }
 
-#[cfg(target_os = "linux")]
 /// Converts optional typed ownership IDs to Linux's `fchown*` words.
 ///
 /// Linux reserves all ones as the no-change sentinel. `None` is the only way
 /// to request that meaning: an all-ones typed ID is rejected instead of being
 /// silently treated as absence.
 #[inline]
-fn ownership_words(owner: Option<Uid>, group: Option<Gid>) -> Result<(u32, u32)> {
+pub(crate) fn ownership_words(owner: Option<Uid>, group: Option<Gid>) -> Result<(u32, u32)> {
     let owner = match owner {
         Some(owner) if owner.as_raw() == u32::MAX => return Err(Errno::INVAL),
         Some(owner) => owner.as_raw(),
@@ -3560,14 +3561,12 @@ pub fn chownat<P: PathArg, Fd: AsFd>(
     })
 }
 
-#[cfg(target_os = "linux")]
 /// Changes ownership for a path, following a final symbolic link.
 #[inline]
 pub fn chown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
     chownat(CWD, path, owner, group, ChownFlags::empty())
 }
 
-#[cfg(target_os = "linux")]
 /// Changes ownership for a final symbolic link itself.
 #[inline]
 pub fn lchown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {

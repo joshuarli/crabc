@@ -3,7 +3,51 @@
 //! Socket descriptors and allocation-free IPv4/IPv6 endpoint values cross the
 //! native Rust boundary without libc's resolver, public C ABI, or process-global
 //! state. The resolver facade re-exports the endpoint values for compatibility.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem, and [`AddressFamily`],
+//! [`SocketFlags`], [`SendFlags`] and [`RecvFlags`] carry Darwin values. It
+//! ports socket and socket-pair creation, binding, listening, connecting,
+//! accepting, local and peer names, shutdown, scalar and vectored sends and
+//! receives, addressed datagrams, `sockatmark`, the `SO_REUSEADDR`,
+//! `SO_TYPE`, `SO_BROADCAST` and `SO_OOBINLINE` options, and every address
+//! and parsing value. Behavior that differs from Linux:
+//!
+//! - Darwin has no `SOCK_CLOEXEC`, `SOCK_NONBLOCK` or `accept4`. [`socket`],
+//!   [`socketpair`], [`accept_with`] and [`acceptfrom_with`] create the
+//!   descriptor and then set the requested [`SocketFlags`] with `fcntl`.
+//!   `CLOEXEC` is therefore not atomic: a `fork` on another thread between
+//!   creation and the `fcntl` call gives its child a copy of the descriptor
+//!   without close-on-exec, which then survives that child's `exec`. Children
+//!   started through `process::PreparedExec` are not affected, since
+//!   `posix_spawn` closes every descriptor they are not given explicitly.
+//! - XNU copies a listener's `O_NONBLOCK` to each accepted socket; the
+//!   facade then sets the requested state, so an accepted descriptor is
+//!   nonblocking only when `NONBLOCK` is requested, as on Linux.
+//! - Darwin socket addresses begin with a one-byte `sa_len`, and its
+//!   `sa_family_t` is one byte; [`RawAddressFamily`] stays 16 bits so both
+//!   targets share one signature. `AF_INET6` is 30.
+//! - `MSG_TRUNC` and `MSG_CTRUNC` are output flags only. A truncated datagram
+//!   reports the copied length rather than its full length, and requesting
+//!   [`RecvFlags::TRUNC`] never discards stream data.
+//! - A [`sendmsg`] or [`recvmsg`] with no segments fails with `EMSGSIZE`.
+//!
+//! These items are absent on Darwin:
+//!
+//! - `accept4`: the alias names a Linux system call that Darwin lacks; use
+//!   [`accept_with`].
+//! - `sendmmsg`, `recvmmsg` and `MMsgHdr`: Darwin has no batched messages.
+//! - `sockopt::socket_protocol`, `socket_cookie` and `socket_domain`: Darwin
+//!   has no `SO_PROTOCOL`, `SO_COOKIE` or `SO_DOMAIN`.
+//! - `sockopt::socket_acceptconn`: XNU's `getsockopt` rejects `SO_ACCEPTCONN`
+//!   with `ENOPROTOOPT`, listening or not.
+//! - The `CONFIRM` and `MORE` send flags and the `ERRQUEUE`, `WAITFORONE` and
+//!   `CMSG_CLOEXEC` receive flags.
+//! - `netdevice`: its `ifreq` ioctls and rtnetlink snapshots are Linux
+//!   interfaces.
 
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
 use core::cmp::min;
 use core::fmt;
@@ -16,8 +60,29 @@ use core::slice;
 
 use crate::buffer::Buffer;
 use crate::io::IoSlice;
-use crate::{AsFd, OwnedFd, Result};
+#[cfg(target_os = "linux")]
+use crate::OwnedFd;
+use crate::{AsFd, Result};
+#[cfg(target_os = "linux")]
+use crabc_core::io::Iovec;
+#[cfg(target_os = "macos")]
+use crate::darwin::sys::Iovec;
+#[cfg(target_os = "linux")]
+use crabc_core::net as os;
+#[cfg(target_os = "macos")]
+use crate::darwin::net as os;
+#[cfg(target_os = "macos")]
+use crate::darwin::net::{
+    decode_socket_address, encode_socket_address, receive_payload_discarded, SockaddrStorage,
+};
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::net::{
+    accept, accept_with, acceptfrom, acceptfrom_with, sockatmark, socket, socketpair,
+    AddressFamily, RecvFlags, SendFlags, SocketFlags,
+};
 
+#[cfg(target_os = "linux")]
 /// Linux network-device ioctl and owned rtnetlink snapshot operations.
 ///
 /// The admitted Linux LP64 record proof covers AArch64 and x86-64. These
@@ -561,11 +626,13 @@ impl NetworkU32 {
 /// A raw Linux socket address-family number.
 pub type RawAddressFamily = u16;
 
+#[cfg(target_os = "linux")]
 /// Linux `AF_*` values used by socket constructors.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(transparent)]
 pub struct AddressFamily(RawAddressFamily);
 
+#[cfg(target_os = "linux")]
 impl AddressFamily {
     /// `AF_UNSPEC`.
     pub const UNSPEC: Self = Self(0);
@@ -624,8 +691,11 @@ impl SocketType {
 
 /// Typed Linux socket-option queries.
 pub mod sockopt {
-    use super::{AddressFamily, Protocol, SocketType};
+    #[cfg(target_os = "linux")]
+    use super::{AddressFamily, Protocol};
+    use super::SocketType;
     use crate::{AsFd, Result};
+    #[cfg(target_os = "linux")]
     use core::num::NonZeroU32;
 
     /// Reads Linux `SOL_SOCKET/SO_TYPE` from a borrowed socket descriptor.
@@ -637,9 +707,10 @@ pub mod sockopt {
     /// C `errno` or a libc fallback.
     #[inline]
     pub fn socket_type<Fd: AsFd>(fd: Fd) -> Result<SocketType> {
-        crabc_core::net::socket_type(fd.as_fd().as_raw_fd()).map(SocketType::from_raw)
+        super::os::socket_type(fd.as_fd().as_raw_fd()).map(SocketType::from_raw)
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads Linux `SOL_SOCKET/SO_PROTOCOL` from a borrowed socket descriptor.
     ///
     /// Linux reports the protocol as a four-byte integer. Zero maps to
@@ -652,6 +723,7 @@ pub mod sockopt {
             .map(|raw| NonZeroU32::new(raw).map(Protocol::from_raw))
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads Linux `SOL_SOCKET/SO_COOKIE` from a borrowed socket descriptor.
     ///
     /// The kernel's 64-bit cookie is returned unchanged. Repeated reads on a
@@ -665,6 +737,7 @@ pub mod sockopt {
         crabc_core::net::socket_cookie(fd.as_fd().as_raw_fd())
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads Linux `SOL_SOCKET/SO_DOMAIN` from a borrowed socket descriptor.
     ///
     /// The kernel's signed four-byte family is converted to the existing
@@ -679,6 +752,7 @@ pub mod sockopt {
         Ok(AddressFamily::from_raw(raw))
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads Linux `SOL_SOCKET/SO_ACCEPTCONN` from a borrowed socket
     /// descriptor.
     ///
@@ -688,7 +762,7 @@ pub mod sockopt {
     #[inline]
     #[doc(alias = "SO_ACCEPTCONN")]
     pub fn socket_acceptconn<Fd: AsFd>(fd: Fd) -> Result<bool> {
-        crabc_core::net::socket_acceptconn(fd.as_fd().as_raw_fd()).map(|raw| raw != 0)
+        super::os::socket_acceptconn(fd.as_fd().as_raw_fd()).map(|raw| raw != 0)
     }
 
     /// Sets Linux `SOL_SOCKET/SO_BROADCAST` on a borrowed socket descriptor.
@@ -700,7 +774,7 @@ pub mod sockopt {
     #[inline]
     #[doc(alias = "SO_BROADCAST")]
     pub fn set_socket_broadcast<Fd: AsFd>(fd: Fd, enabled: bool) -> Result<()> {
-        crabc_core::net::set_socket_broadcast(fd.as_fd().as_raw_fd(), enabled)
+        super::os::set_socket_broadcast(fd.as_fd().as_raw_fd(), enabled)
     }
 
     /// Reads Linux `SOL_SOCKET/SO_BROADCAST` from a borrowed socket
@@ -712,7 +786,7 @@ pub mod sockopt {
     #[inline]
     #[doc(alias = "SO_BROADCAST")]
     pub fn socket_broadcast<Fd: AsFd>(fd: Fd) -> Result<bool> {
-        crabc_core::net::socket_broadcast(fd.as_fd().as_raw_fd())
+        super::os::socket_broadcast(fd.as_fd().as_raw_fd())
     }
 
     /// Sets Linux `SOL_SOCKET/SO_OOBINLINE` on a borrowed socket descriptor.
@@ -724,7 +798,7 @@ pub mod sockopt {
     #[inline]
     #[doc(alias = "SO_OOBINLINE")]
     pub fn set_socket_oobinline<Fd: AsFd>(fd: Fd, enabled: bool) -> Result<()> {
-        crabc_core::net::set_socket_oobinline(fd.as_fd().as_raw_fd(), enabled)
+        super::os::set_socket_oobinline(fd.as_fd().as_raw_fd(), enabled)
     }
 
     /// Reads Linux `SOL_SOCKET/SO_OOBINLINE` from a borrowed socket
@@ -736,7 +810,7 @@ pub mod sockopt {
     #[inline]
     #[doc(alias = "SO_OOBINLINE")]
     pub fn socket_oobinline<Fd: AsFd>(fd: Fd) -> Result<bool> {
-        crabc_core::net::socket_oobinline(fd.as_fd().as_raw_fd())
+        super::os::socket_oobinline(fd.as_fd().as_raw_fd())
     }
 }
 
@@ -766,6 +840,7 @@ impl Protocol {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Socket flags accepted by Linux `socket`, `socketpair`, and `accept4`.
     ///
@@ -793,7 +868,7 @@ bitflags! {
 /// exclusive borrows for the duration of the message operation.
 #[repr(transparent)]
 pub struct MsgIoSliceMut<'a> {
-    iovec: crabc_core::io::Iovec,
+    iovec: Iovec,
     _lifetime: PhantomData<&'a mut [MaybeUninit<u8>]>,
 }
 
@@ -802,7 +877,7 @@ impl<'a> MsgIoSliceMut<'a> {
     #[inline]
     pub fn new(buffer: &'a mut [u8]) -> Self {
         Self {
-            iovec: crabc_core::io::Iovec {
+            iovec: Iovec {
                 iov_base: buffer.as_mut_ptr(),
                 iov_len: buffer.len(),
             },
@@ -816,7 +891,7 @@ impl<'a> MsgIoSliceMut<'a> {
     #[inline]
     pub fn new_uninit(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
         Self {
-            iovec: crabc_core::io::Iovec {
+            iovec: Iovec {
                 iov_base: buffer.as_mut_ptr().cast(),
                 iov_len: buffer.len(),
             },
@@ -825,6 +900,7 @@ impl<'a> MsgIoSliceMut<'a> {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(u32)]
 enum MessagePayloadState {
@@ -833,6 +909,7 @@ enum MessagePayloadState {
     ReceiveDiscarded = 2,
 }
 
+#[cfg(target_os = "linux")]
 /// One private Linux LP64 `mmsghdr` record used by [`sendmmsg`] and
 /// [`recvmmsg`].
 ///
@@ -847,7 +924,7 @@ struct MMsgHeader {
     name: *mut u8,
     name_length: u32,
     _name_padding: u32,
-    iovecs: *mut crabc_core::io::Iovec,
+    iovecs: *mut Iovec,
     iovec_count: usize,
     control: *mut u8,
     control_length: usize,
@@ -860,18 +937,30 @@ struct MMsgHeader {
     payload_state: MessagePayloadState,
 }
 
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<MMsgHeader>() == 64);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<MMsgHeader>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, name) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, name_length) == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, iovecs) == 16);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, iovec_count) == 24);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, control) == 32);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, control_length) == 40);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, flags) == 48);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, message_length) == 56);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, payload_state) == 60);
 
+#[cfg(target_os = "linux")]
 /// A borrowed Linux batched-message record.
 ///
 /// Construct records with [`Self::new_send`] or [`Self::new_recv`], then pass
@@ -887,6 +976,7 @@ pub struct MMsgHdr<'a> {
     _lifetime: PhantomData<&'a mut ()>,
 }
 
+#[cfg(target_os = "linux")]
 impl<'a> MMsgHdr<'a> {
     /// Builds one outgoing message with no destination address or ancillary
     /// data. `sendmmsg` preserves the kernel's per-record byte count, which is
@@ -897,7 +987,7 @@ impl<'a> MMsgHdr<'a> {
         let pointer = if iovecs.is_empty() {
             core::ptr::null_mut()
         } else {
-            iovecs.as_ptr().cast::<crabc_core::io::Iovec>().cast_mut()
+            iovecs.as_ptr().cast::<Iovec>().cast_mut()
         };
         Self {
             raw: MMsgHeader {
@@ -926,7 +1016,7 @@ impl<'a> MMsgHdr<'a> {
         let pointer = if buffers.is_empty() {
             core::ptr::null_mut()
         } else {
-            buffers.as_mut_ptr().cast::<crabc_core::io::Iovec>()
+            buffers.as_mut_ptr().cast::<Iovec>()
         };
         Self {
             raw: MMsgHeader {
@@ -1097,6 +1187,7 @@ impl<'segments, 'buffer> Iterator for InitializedMsgSegments<'segments, 'buffer>
     }
 }
 
+#[cfg(target_os = "linux")]
 fn checked_socket_flags(flags: SocketFlags) -> Result<u32> {
     SocketFlags::from_bits(flags.bits())
         .map(|flags| flags.bits())
@@ -1108,6 +1199,7 @@ fn checked_socket_flags(flags: SocketFlags) -> Result<u32> {
 // a separate copying path. Query immutable socket identity only for a possible
 // discard request;
 // ordinary receives retain their single receive syscall.
+#[cfg(target_os = "linux")]
 #[inline]
 fn receive_payload_discarded(fd: crate::BorrowedFd<'_>, flags: RecvFlags) -> Result<bool> {
     const IPPROTO_TCP: u32 = 6;
@@ -1140,6 +1232,7 @@ impl Shutdown {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `MSG_*` flags accepted by [`send`].
     #[repr(transparent)]
@@ -1164,6 +1257,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `MSG_*` flags accepted by [`recv`].
     #[repr(transparent)]
@@ -1191,6 +1285,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Creates two connected Linux sockets.
 #[inline]
 pub fn socketpair(
@@ -1208,6 +1303,7 @@ pub fn socketpair(
     unsafe { Ok((OwnedFd::from_raw_fd(first), OwnedFd::from_raw_fd(second))) }
 }
 
+#[cfg(target_os = "linux")]
 /// Creates one Linux socket and returns its unique owner.
 ///
 /// `domain`, `type_`, and `protocol` are typed Linux socket values. `flags`
@@ -1238,7 +1334,7 @@ pub fn socket(
 /// consulting C `errno`.
 #[inline]
 pub fn set_socket_reuseaddr<Fd: AsFd>(fd: Fd, enabled: bool) -> Result<()> {
-    crabc_core::net::set_socket_reuseaddr(fd.as_fd().as_raw_fd(), enabled)
+    os::set_socket_reuseaddr(fd.as_fd().as_raw_fd(), enabled)
 }
 
 /// Reads Linux `SOL_SOCKET/SO_REUSEADDR` from a borrowed socket descriptor.
@@ -1248,7 +1344,7 @@ pub fn set_socket_reuseaddr<Fd: AsFd>(fd: Fd, enabled: bool) -> Result<()> {
 /// levels, names, pointers, or lengths.
 #[inline]
 pub fn socket_reuseaddr<Fd: AsFd>(fd: Fd) -> Result<bool> {
-    crabc_core::net::socket_reuseaddr(fd.as_fd().as_raw_fd())
+    os::socket_reuseaddr(fd.as_fd().as_raw_fd())
 }
 
 /// Enables listening for incoming connections on a stream socket.
@@ -1258,9 +1354,10 @@ pub fn socket_reuseaddr<Fd: AsFd>(fd: Fd) -> Result<bool> {
 /// the direct syscall.
 #[inline]
 pub fn listen<Fd: AsFd>(fd: Fd, backlog: i32) -> Result<()> {
-    crabc_core::net::listen(fd.as_fd().as_raw_fd(), backlog)
+    os::listen(fd.as_fd().as_raw_fd(), backlog)
 }
 
+#[cfg(target_os = "linux")]
 /// Accepts one pending connection without requesting a peer address.
 ///
 /// The returned descriptor is uniquely owned. Linux's `accept(2)` semantics
@@ -1282,6 +1379,7 @@ pub fn accept<Fd: AsFd>(fd: Fd) -> Result<OwnedFd> {
     unsafe { Ok(OwnedFd::from_raw_fd(accepted)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Accepts one pending connection through Linux `accept4(2)`.
 ///
 /// `CLOEXEC` is applied atomically to the returned descriptor's descriptor
@@ -1307,12 +1405,14 @@ pub fn accept_with<Fd: AsFd>(fd: Fd, flags: SocketFlags) -> Result<OwnedFd> {
     unsafe { Ok(OwnedFd::from_raw_fd(accepted)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Alias for [`accept_with`], named after the Linux `accept4(2)` operation.
 #[inline]
 pub fn accept4<Fd: AsFd>(fd: Fd, flags: SocketFlags) -> Result<OwnedFd> {
     accept_with(fd, flags)
 }
 
+#[cfg(target_os = "linux")]
 #[repr(C)]
 struct SockaddrIn {
     family: u16,
@@ -1321,6 +1421,7 @@ struct SockaddrIn {
     zero: [u8; 8],
 }
 
+#[cfg(target_os = "linux")]
 #[repr(C)]
 struct SockaddrIn6 {
     family: u16,
@@ -1333,24 +1434,38 @@ struct SockaddrIn6 {
 // These private records cross the direct syscall boundary. Keep their
 // architecture-independent Linux LP64 contracts executable: x86-64 and
 // AArch64 both use the same sizes for the supported IPv4/IPv6 forms.
+#[cfg(target_os = "linux")]
 const _: () = assert!(size_of::<SockaddrIn>() == 16);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<SockaddrIn>() == 4);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn, family) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn, port) == 2);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn, address) == 4);
+#[cfg(target_os = "linux")]
 const _: () = assert!(size_of::<SockaddrIn6>() == 28);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<SockaddrIn6>() == 4);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn6, family) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn6, port) == 2);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn6, flow_info) == 4);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn6, address) == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrIn6, scope_id) == 24);
 
+#[cfg(target_os = "linux")]
 enum EncodedSocketAddress {
     V4(SockaddrIn),
     V6(SockaddrIn6),
 }
 
+#[cfg(target_os = "linux")]
 impl EncodedSocketAddress {
     fn as_raw(&self) -> (*const u8, u32) {
         match self {
@@ -1366,6 +1481,7 @@ impl EncodedSocketAddress {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn encode_socket_address(address: SocketAddress) -> Result<EncodedSocketAddress> {
     match address.ip() {
         IpAddress::V4(_) => {
@@ -1390,27 +1506,34 @@ fn encode_socket_address(address: SocketAddress) -> Result<EncodedSocketAddress>
     }
 }
 
+#[cfg(target_os = "linux")]
 #[repr(C, align(8))]
 struct SockaddrStorage {
     bytes: [u8; 128],
 }
 
+#[cfg(target_os = "linux")]
 const _: () = assert!(size_of::<SockaddrStorage>() == 128);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<SockaddrStorage>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(SockaddrStorage, bytes) == 0);
 
+#[cfg(target_os = "linux")]
 fn read_u16_native(bytes: &[u8], offset: usize) -> u16 {
     // SAFETY: Callers validate that the returned sockaddr length covers this
     // field before reading it; unaligned access keeps the ABI helper explicit.
     unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(offset).cast()) }
 }
 
+#[cfg(target_os = "linux")]
 fn read_u32_native(bytes: &[u8], offset: usize) -> u32 {
     // SAFETY: Callers validate that the returned sockaddr length covers this
     // field before reading it; unaligned access keeps the ABI helper explicit.
     unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(offset).cast()) }
 }
 
+#[cfg(target_os = "linux")]
 fn decode_socket_address(storage: &SockaddrStorage, length: u32) -> Result<SocketAddress> {
     let length = length as usize;
     if length > size_of::<SockaddrStorage>() {
@@ -1463,7 +1586,7 @@ pub fn connect<Fd: AsFd>(fd: Fd, address: SocketAddress) -> Result<()> {
     let (address, address_length) = encoded.as_raw();
     // SAFETY: `encoded` is the exact Linux LP64 sockaddr layout and remains
     // alive for the duration of the direct syscall.
-    unsafe { crabc_core::net::connect_raw(fd.as_raw_fd(), address, address_length) }
+    unsafe { os::connect_raw(fd.as_raw_fd(), address, address_length) }
 }
 
 /// Binds an existing socket to a caller-owned IPv4 or IPv6 endpoint.
@@ -1479,9 +1602,10 @@ pub fn bind<Fd: AsFd>(fd: Fd, address: SocketAddress) -> Result<()> {
     let (address, address_length) = encoded.as_raw();
     // SAFETY: `encoded` is the exact Linux LP64 sockaddr layout and remains
     // alive for the duration of the direct syscall.
-    unsafe { crabc_core::net::bind_raw(fd.as_raw_fd(), address, address_length) }
+    unsafe { os::bind_raw(fd.as_raw_fd(), address, address_length) }
 }
 
+#[cfg(target_os = "linux")]
 /// Accepts one pending connection and strictly decodes its IPv4 or IPv6 peer
 /// address.
 ///
@@ -1496,6 +1620,7 @@ pub fn acceptfrom<Fd: AsFd>(fd: Fd) -> Result<(OwnedFd, SocketAddress)> {
     acceptfrom_with_raw(fd, None)
 }
 
+#[cfg(target_os = "linux")]
 /// Accepts one pending connection through `accept4(2)` and strictly decodes
 /// its IPv4 or IPv6 peer address.
 ///
@@ -1508,6 +1633,7 @@ pub fn acceptfrom_with<Fd: AsFd>(fd: Fd, flags: SocketFlags) -> Result<(OwnedFd,
     acceptfrom_with_raw(fd, Some(flags))
 }
 
+#[cfg(target_os = "linux")]
 fn acceptfrom_with_raw<Fd: AsFd>(fd: Fd, flags: Option<u32>) -> Result<(OwnedFd, SocketAddress)> {
     let mut storage = SockaddrStorage { bytes: [0; 128] };
     let mut length = size_of::<SockaddrStorage>() as u32;
@@ -1555,7 +1681,7 @@ pub fn getsockname<Fd: AsFd>(fd: Fd) -> Result<SocketAddress> {
     // SAFETY: `storage` provides aligned writable space for the Linux
     // sockaddr_storage capacity, and `length` is writable socklen_t storage.
     unsafe {
-        crabc_core::net::getsockname_raw(fd.as_raw_fd(), storage.bytes.as_mut_ptr(), &mut length)?
+        os::getsockname_raw(fd.as_raw_fd(), storage.bytes.as_mut_ptr(), &mut length)?
     };
     decode_socket_address(&storage, length)
 }
@@ -1575,7 +1701,7 @@ pub fn getpeername<Fd: AsFd>(fd: Fd) -> Result<SocketAddress> {
     // SAFETY: `storage` provides aligned writable space for the Linux
     // sockaddr_storage capacity, and `length` is writable socklen_t storage.
     unsafe {
-        crabc_core::net::getpeername_raw(fd.as_raw_fd(), storage.bytes.as_mut_ptr(), &mut length)?
+        os::getpeername_raw(fd.as_raw_fd(), storage.bytes.as_mut_ptr(), &mut length)?
     };
     decode_socket_address(&storage, length)
 }
@@ -1583,7 +1709,7 @@ pub fn getpeername<Fd: AsFd>(fd: Fd) -> Result<SocketAddress> {
 /// Disables one direction of a socket without public C ABI or TLS `errno`.
 #[inline]
 pub fn shutdown<Fd: AsFd>(fd: Fd, how: Shutdown) -> Result<()> {
-    crabc_core::net::shutdown(fd.as_fd().as_raw_fd(), how.as_raw())
+    os::shutdown(fd.as_fd().as_raw_fd(), how.as_raw())
 }
 
 /// Sends bytes through a connected socket.
@@ -1593,7 +1719,7 @@ pub fn send<Fd: AsFd>(fd: Fd, buffer: &[u8], flags: SendFlags) -> Result<usize> 
     // SAFETY: `buffer` is readable for its exact length; a null destination
     // selects the connected-socket form of Linux `sendto`.
     unsafe {
-        crabc_core::net::sendto_raw(
+        os::sendto_raw(
             fd.as_raw_fd(),
             buffer.as_ptr(),
             buffer.len(),
@@ -1617,14 +1743,15 @@ pub fn sendmsg<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], flags: SendFlags) -> R
     let iovecs = if buffers.is_empty() {
         core::ptr::null()
     } else {
-        buffers.as_ptr().cast::<crabc_core::io::Iovec>()
+        buffers.as_ptr().cast::<Iovec>()
     };
     // SAFETY: `IoSlice` is `repr(transparent)` over a Linux iovec and each
     // value retains its borrowed immutable source slice for this call. An
     // empty vector uses the explicitly permitted null iovec pointer.
-    unsafe { crabc_core::net::sendmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits()) }
+    unsafe { os::sendmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits()) }
 }
 
+#[cfg(target_os = "linux")]
 /// Sends several ordinary connected messages through Linux `sendmmsg`.
 ///
 /// The records are private Linux LP64 `mmsghdr` values assembled by
@@ -1671,7 +1798,7 @@ pub fn sendto<Fd: AsFd>(
     // SAFETY: `buffer` is readable for its exact length. `encoded` is the
     // exact Linux LP64 sockaddr layout and stays alive for the syscall.
     unsafe {
-        crabc_core::net::sendto_raw(
+        os::sendto_raw(
             fd.as_raw_fd(),
             buffer.as_ptr(),
             buffer.len(),
@@ -1703,7 +1830,7 @@ pub fn recv<Fd: AsFd, Buf: Buffer<u8>>(
     // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes;
     // null source-address pointers select the connected-socket form.
     let received = unsafe {
-        crabc_core::net::recvfrom_raw(
+        os::recvfrom_raw(
             fd.as_raw_fd(),
             pointer,
             length,
@@ -1750,13 +1877,13 @@ pub fn recvmsg<'a, Fd: AsFd>(
     let iovecs = if buffers.is_empty() {
         core::ptr::null()
     } else {
-        buffers.as_ptr().cast::<crabc_core::io::Iovec>()
+        buffers.as_ptr().cast::<Iovec>()
     };
     // SAFETY: `MsgIoSliceMut` is `repr(transparent)` over a Linux iovec. Each
     // wrapper retains an exclusive borrow of a disjoint destination range;
     // the records and ranges remain valid for this direct syscall.
     let (bytes, message_flags) = unsafe {
-        crabc_core::net::recvmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits())?
+        os::recvmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits())?
     };
     let initialized = min(capacity, bytes);
     let initialized = if discarded { 0 } else { initialized };
@@ -1768,6 +1895,7 @@ pub fn recvmsg<'a, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Receives several ordinary messages through Linux `recvmmsg`.
 ///
 /// `timeout` is a relative Linux [`crate::fs::Timespec`] and is copied back
@@ -1826,6 +1954,7 @@ pub fn recvmmsg<Fd: AsFd>(
     Ok(received)
 }
 
+#[cfg(target_os = "linux")]
 /// Queries whether a stream socket's receive cursor is at its urgent-data
 /// mark through Linux's fixed `SIOCATMARK` ioctl.
 ///
@@ -1878,7 +2007,7 @@ pub fn recvfrom<Fd: AsFd, Buf: Buffer<u8>>(
     // `storage` and `address_length` supply the full writable Linux source
     // address output contract.
     let received = unsafe {
-        crabc_core::net::recvfrom_raw(
+        os::recvfrom_raw(
             fd.as_raw_fd(),
             pointer,
             length,

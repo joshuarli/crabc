@@ -10,15 +10,33 @@
 //! prototypes are. Apple's AArch64 calling convention passes variadic
 //! arguments on the stack rather than in registers, so a fixed-arity
 //! declaration would place the argument where libSystem does not read it.
+//!
+//! The `posix_spawn` family, `pthread_sigmask` and `pthread_kill` return an
+//! error number instead of setting `errno`.
 
 #![allow(non_camel_case_types)]
 
+#[cfg(feature = "alloc")]
+use core::ffi::c_short;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use core::mem::{align_of, offset_of, size_of};
 
 pub(crate) type mode_t = u16;
 pub(crate) type dev_t = i32;
 pub(crate) type off_t = i64;
+pub(crate) type pid_t = i32;
+pub(crate) type uid_t = u32;
+pub(crate) type gid_t = u32;
+pub(crate) type id_t = u32;
+pub(crate) type socklen_t = u32;
+pub(crate) type sigset_t = u32;
+pub(crate) type clockid_t = c_uint;
+pub(crate) type clock_t = c_ulong;
+pub(crate) type rlim_t = u64;
+pub(crate) type suseconds_t = i32;
+pub(crate) type posix_spawnattr_t = *mut c_void;
+pub(crate) type posix_spawn_file_actions_t = *mut c_void;
+pub(crate) type pthread_t = *mut c_void;
 
 pub(crate) const AT_FDCWD: c_int = -2;
 pub(crate) const AT_EACCESS: c_int = 0x0010;
@@ -81,6 +99,128 @@ pub(crate) const RENAME_SWAP: c_uint = 0x0000_0002;
 pub(crate) const RENAME_EXCL: c_uint = 0x0000_0004;
 
 pub(crate) const PIPE_BUF: usize = 512;
+
+pub(crate) const SIGHUP: c_int = 1;
+pub(crate) const SIGINT: c_int = 2;
+pub(crate) const SIGQUIT: c_int = 3;
+pub(crate) const SIGILL: c_int = 4;
+pub(crate) const SIGTRAP: c_int = 5;
+pub(crate) const SIGABRT: c_int = 6;
+pub(crate) const SIGEMT: c_int = 7;
+pub(crate) const SIGFPE: c_int = 8;
+pub(crate) const SIGKILL: c_int = 9;
+pub(crate) const SIGBUS: c_int = 10;
+pub(crate) const SIGSEGV: c_int = 11;
+pub(crate) const SIGSYS: c_int = 12;
+pub(crate) const SIGPIPE: c_int = 13;
+pub(crate) const SIGALRM: c_int = 14;
+pub(crate) const SIGTERM: c_int = 15;
+pub(crate) const SIGURG: c_int = 16;
+pub(crate) const SIGSTOP: c_int = 17;
+pub(crate) const SIGTSTP: c_int = 18;
+pub(crate) const SIGCONT: c_int = 19;
+pub(crate) const SIGCHLD: c_int = 20;
+pub(crate) const SIGTTIN: c_int = 21;
+pub(crate) const SIGTTOU: c_int = 22;
+pub(crate) const SIGIO: c_int = 23;
+pub(crate) const SIGXCPU: c_int = 24;
+pub(crate) const SIGXFSZ: c_int = 25;
+pub(crate) const SIGVTALRM: c_int = 26;
+pub(crate) const SIGPROF: c_int = 27;
+pub(crate) const SIGWINCH: c_int = 28;
+pub(crate) const SIGINFO: c_int = 29;
+pub(crate) const SIGUSR1: c_int = 30;
+pub(crate) const SIGUSR2: c_int = 31;
+/// One more than the highest signal number.
+pub(crate) const NSIG: c_int = 32;
+
+pub(crate) const SA_ONSTACK: c_int = 0x0001;
+pub(crate) const SA_RESTART: c_int = 0x0002;
+pub(crate) const SA_RESETHAND: c_int = 0x0004;
+pub(crate) const SA_NOCLDSTOP: c_int = 0x0008;
+pub(crate) const SA_NODEFER: c_int = 0x0010;
+pub(crate) const SA_NOCLDWAIT: c_int = 0x0020;
+pub(crate) const SA_SIGINFO: c_int = 0x0040;
+
+pub(crate) const SIG_DFL: usize = 0;
+pub(crate) const SIG_IGN: usize = 1;
+
+pub(crate) const SIG_BLOCK: c_int = 1;
+pub(crate) const SIG_UNBLOCK: c_int = 2;
+pub(crate) const SIG_SETMASK: c_int = 3;
+
+pub(crate) const SS_ONSTACK: c_int = 0x0001;
+pub(crate) const SS_DISABLE: c_int = 0x0004;
+pub(crate) const MINSIGSTKSZ: usize = 32768;
+
+pub(crate) const WNOHANG: c_int = 0x0001;
+pub(crate) const WUNTRACED: c_int = 0x0002;
+pub(crate) const WCONTINUED: c_int = 0x0010;
+
+pub(crate) const RLIMIT_CPU: c_int = 0;
+pub(crate) const RLIMIT_FSIZE: c_int = 1;
+pub(crate) const RLIMIT_DATA: c_int = 2;
+pub(crate) const RLIMIT_STACK: c_int = 3;
+pub(crate) const RLIMIT_CORE: c_int = 4;
+/// Also `RLIMIT_RSS`, which the SDK defines as an alias.
+pub(crate) const RLIMIT_AS: c_int = 5;
+pub(crate) const RLIMIT_MEMLOCK: c_int = 6;
+pub(crate) const RLIMIT_NPROC: c_int = 7;
+pub(crate) const RLIMIT_NOFILE: c_int = 8;
+pub(crate) const RLIM_INFINITY: rlim_t = (1 << 63) - 1;
+
+pub(crate) const RUSAGE_SELF: c_int = 0;
+pub(crate) const RUSAGE_CHILDREN: c_int = -1;
+
+pub(crate) const PRIO_MIN: c_int = -20;
+pub(crate) const PRIO_MAX: c_int = 20;
+
+pub(crate) const SCHED_OTHER: c_int = 1;
+pub(crate) const SCHED_RR: c_int = 2;
+pub(crate) const SCHED_FIFO: c_int = 4;
+
+#[cfg(feature = "alloc")]
+pub(crate) const POSIX_SPAWN_SETPGROUP: c_short = 0x0002;
+#[cfg(feature = "alloc")]
+pub(crate) const POSIX_SPAWN_SETSIGMASK: c_short = 0x0008;
+#[cfg(feature = "alloc")]
+pub(crate) const POSIX_SPAWN_SETSID: c_short = 0x0400;
+#[cfg(feature = "alloc")]
+pub(crate) const POSIX_SPAWN_CLOEXEC_DEFAULT: c_short = 0x4000;
+
+pub(crate) const CLOCK_REALTIME: clockid_t = 0;
+pub(crate) const CLOCK_MONOTONIC_RAW: clockid_t = 4;
+pub(crate) const CLOCK_MONOTONIC_RAW_APPROX: clockid_t = 5;
+pub(crate) const CLOCK_MONOTONIC: clockid_t = 6;
+pub(crate) const CLOCK_UPTIME_RAW: clockid_t = 8;
+pub(crate) const CLOCK_UPTIME_RAW_APPROX: clockid_t = 9;
+pub(crate) const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 12;
+pub(crate) const CLOCK_THREAD_CPUTIME_ID: clockid_t = 16;
+
+pub(crate) const ITIMER_REAL: c_int = 0;
+pub(crate) const ITIMER_VIRTUAL: c_int = 1;
+pub(crate) const ITIMER_PROF: c_int = 2;
+
+pub(crate) const AF_UNSPEC: c_int = 0;
+pub(crate) const AF_UNIX: c_int = 1;
+pub(crate) const AF_INET: c_int = 2;
+pub(crate) const AF_INET6: c_int = 30;
+
+pub(crate) const MSG_OOB: c_int = 0x0001;
+pub(crate) const MSG_PEEK: c_int = 0x0002;
+pub(crate) const MSG_DONTROUTE: c_int = 0x0004;
+pub(crate) const MSG_EOR: c_int = 0x0008;
+pub(crate) const MSG_TRUNC: c_int = 0x0010;
+pub(crate) const MSG_CTRUNC: c_int = 0x0020;
+pub(crate) const MSG_WAITALL: c_int = 0x0040;
+pub(crate) const MSG_DONTWAIT: c_int = 0x0080;
+pub(crate) const MSG_NOSIGNAL: c_int = 0x0008_0000;
+
+pub(crate) const SOL_SOCKET: c_int = 0xffff;
+pub(crate) const SO_REUSEADDR: c_int = 0x0004;
+pub(crate) const SO_BROADCAST: c_int = 0x0020;
+pub(crate) const SO_OOBINLINE: c_int = 0x0100;
+pub(crate) const SO_TYPE: c_int = 0x1008;
 
 pub(crate) const FIOCLEX: c_ulong = 0x2000_6601;
 pub(crate) const FIONCLEX: c_ulong = 0x2000_6602;
@@ -149,6 +289,141 @@ pub(crate) struct Dirent {
     pub(crate) d_name: [c_char; 1024],
 }
 
+/// `struct timeval`; `tv_usec` is a 32-bit `suseconds_t` followed by padding.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Timeval {
+    pub(crate) tv_sec: i64,
+    pub(crate) tv_usec: suseconds_t,
+}
+
+/// `struct itimerval`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Itimerval {
+    pub(crate) it_interval: Timeval,
+    pub(crate) it_value: Timeval,
+}
+
+/// `struct rlimit`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Rlimit {
+    pub(crate) rlim_cur: rlim_t,
+    pub(crate) rlim_max: rlim_t,
+}
+
+/// `struct rusage`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Rusage {
+    pub(crate) ru_utime: Timeval,
+    pub(crate) ru_stime: Timeval,
+    pub(crate) ru_maxrss: c_long,
+    pub(crate) ru_ixrss: c_long,
+    pub(crate) ru_idrss: c_long,
+    pub(crate) ru_isrss: c_long,
+    pub(crate) ru_minflt: c_long,
+    pub(crate) ru_majflt: c_long,
+    pub(crate) ru_nswap: c_long,
+    pub(crate) ru_inblock: c_long,
+    pub(crate) ru_oublock: c_long,
+    pub(crate) ru_msgsnd: c_long,
+    pub(crate) ru_msgrcv: c_long,
+    pub(crate) ru_nsignals: c_long,
+    pub(crate) ru_nvcsw: c_long,
+    pub(crate) ru_nivcsw: c_long,
+}
+
+/// `struct tms`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Tms {
+    pub(crate) tms_utime: clock_t,
+    pub(crate) tms_stime: clock_t,
+    pub(crate) tms_cutime: clock_t,
+    pub(crate) tms_cstime: clock_t,
+}
+
+/// `struct sigaction`, the libSystem form whose handler union is one
+/// pointer-sized word.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Sigaction {
+    pub(crate) sa_handler: usize,
+    pub(crate) sa_mask: sigset_t,
+    pub(crate) sa_flags: c_int,
+}
+
+/// `siginfo_t`. `si_value` is the pointer-sized `union sigval`; `si_addr`
+/// is held as an address so the record stays `Send` and `Sync` like the
+/// Linux one.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Siginfo {
+    pub(crate) si_signo: c_int,
+    pub(crate) si_errno: c_int,
+    pub(crate) si_code: c_int,
+    pub(crate) si_pid: pid_t,
+    pub(crate) si_uid: uid_t,
+    pub(crate) si_status: c_int,
+    pub(crate) si_addr: usize,
+    pub(crate) si_value: usize,
+    pub(crate) si_band: c_long,
+    pub(crate) pad: [c_ulong; 7],
+}
+
+/// `stack_t`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct StackT {
+    pub(crate) ss_sp: *mut c_void,
+    pub(crate) ss_size: usize,
+    pub(crate) ss_flags: c_int,
+}
+
+/// `struct sockaddr_in`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct SockaddrIn {
+    pub(crate) sin_len: u8,
+    pub(crate) sin_family: u8,
+    pub(crate) sin_port: u16,
+    pub(crate) sin_addr: u32,
+    pub(crate) sin_zero: [u8; 8],
+}
+
+/// `struct sockaddr_in6`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct SockaddrIn6 {
+    pub(crate) sin6_len: u8,
+    pub(crate) sin6_family: u8,
+    pub(crate) sin6_port: u16,
+    pub(crate) sin6_flowinfo: u32,
+    pub(crate) sin6_addr: [u8; 16],
+    pub(crate) sin6_scope_id: u32,
+}
+
+/// `struct sockaddr_storage`.
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub(crate) struct SockaddrStorage {
+    pub(crate) bytes: [u8; 128],
+}
+
+/// `struct msghdr`.
+#[repr(C)]
+pub(crate) struct Msghdr {
+    pub(crate) msg_name: *mut c_void,
+    pub(crate) msg_namelen: socklen_t,
+    pub(crate) msg_iov: *mut Iovec,
+    pub(crate) msg_iovlen: c_int,
+    pub(crate) msg_control: *mut c_void,
+    pub(crate) msg_controllen: socklen_t,
+    pub(crate) msg_flags: c_int,
+}
+
 /// The opaque libSystem directory stream, `DIR`.
 #[repr(C)]
 pub(crate) struct Dir {
@@ -197,6 +472,93 @@ const _: () = {
     assert!(offset_of!(Dirent, d_namlen) == 18);
     assert!(offset_of!(Dirent, d_type) == 20);
     assert!(offset_of!(Dirent, d_name) == 21);
+
+    assert!(size_of::<Timeval>() == 16 && align_of::<Timeval>() == 8);
+    assert!(offset_of!(Timeval, tv_sec) == 0 && offset_of!(Timeval, tv_usec) == 8);
+
+    assert!(size_of::<Itimerval>() == 32 && align_of::<Itimerval>() == 8);
+    assert!(offset_of!(Itimerval, it_interval) == 0 && offset_of!(Itimerval, it_value) == 16);
+
+    assert!(size_of::<Rlimit>() == 16 && align_of::<Rlimit>() == 8);
+    assert!(offset_of!(Rlimit, rlim_cur) == 0 && offset_of!(Rlimit, rlim_max) == 8);
+
+    assert!(size_of::<Rusage>() == 144 && align_of::<Rusage>() == 8);
+    assert!(offset_of!(Rusage, ru_utime) == 0);
+    assert!(offset_of!(Rusage, ru_stime) == 16);
+    assert!(offset_of!(Rusage, ru_maxrss) == 32);
+    assert!(offset_of!(Rusage, ru_ixrss) == 40);
+    assert!(offset_of!(Rusage, ru_idrss) == 48);
+    assert!(offset_of!(Rusage, ru_isrss) == 56);
+    assert!(offset_of!(Rusage, ru_minflt) == 64);
+    assert!(offset_of!(Rusage, ru_majflt) == 72);
+    assert!(offset_of!(Rusage, ru_nswap) == 80);
+    assert!(offset_of!(Rusage, ru_inblock) == 88);
+    assert!(offset_of!(Rusage, ru_oublock) == 96);
+    assert!(offset_of!(Rusage, ru_msgsnd) == 104);
+    assert!(offset_of!(Rusage, ru_msgrcv) == 112);
+    assert!(offset_of!(Rusage, ru_nsignals) == 120);
+    assert!(offset_of!(Rusage, ru_nvcsw) == 128);
+    assert!(offset_of!(Rusage, ru_nivcsw) == 136);
+
+    assert!(size_of::<Tms>() == 32 && align_of::<Tms>() == 8);
+    assert!(offset_of!(Tms, tms_utime) == 0);
+    assert!(offset_of!(Tms, tms_stime) == 8);
+    assert!(offset_of!(Tms, tms_cutime) == 16);
+    assert!(offset_of!(Tms, tms_cstime) == 24);
+
+    assert!(size_of::<Sigaction>() == 16 && align_of::<Sigaction>() == 8);
+    assert!(offset_of!(Sigaction, sa_handler) == 0);
+    assert!(offset_of!(Sigaction, sa_mask) == 8);
+    assert!(offset_of!(Sigaction, sa_flags) == 12);
+
+    assert!(size_of::<Siginfo>() == 104 && align_of::<Siginfo>() == 8);
+    assert!(offset_of!(Siginfo, si_signo) == 0);
+    assert!(offset_of!(Siginfo, si_errno) == 4);
+    assert!(offset_of!(Siginfo, si_code) == 8);
+    assert!(offset_of!(Siginfo, si_pid) == 12);
+    assert!(offset_of!(Siginfo, si_uid) == 16);
+    assert!(offset_of!(Siginfo, si_status) == 20);
+    assert!(offset_of!(Siginfo, si_addr) == 24);
+    assert!(offset_of!(Siginfo, si_value) == 32);
+    assert!(offset_of!(Siginfo, si_band) == 40);
+    assert!(offset_of!(Siginfo, pad) == 48);
+
+    assert!(size_of::<StackT>() == 24 && align_of::<StackT>() == 8);
+    assert!(offset_of!(StackT, ss_sp) == 0);
+    assert!(offset_of!(StackT, ss_size) == 8);
+    assert!(offset_of!(StackT, ss_flags) == 16);
+
+    assert!(size_of::<SockaddrIn>() == 16 && align_of::<SockaddrIn>() == 4);
+    assert!(offset_of!(SockaddrIn, sin_len) == 0);
+    assert!(offset_of!(SockaddrIn, sin_family) == 1);
+    assert!(offset_of!(SockaddrIn, sin_port) == 2);
+    assert!(offset_of!(SockaddrIn, sin_addr) == 4);
+    assert!(offset_of!(SockaddrIn, sin_zero) == 8);
+
+    assert!(size_of::<SockaddrIn6>() == 28 && align_of::<SockaddrIn6>() == 4);
+    assert!(offset_of!(SockaddrIn6, sin6_len) == 0);
+    assert!(offset_of!(SockaddrIn6, sin6_family) == 1);
+    assert!(offset_of!(SockaddrIn6, sin6_port) == 2);
+    assert!(offset_of!(SockaddrIn6, sin6_flowinfo) == 4);
+    assert!(offset_of!(SockaddrIn6, sin6_addr) == 8);
+    assert!(offset_of!(SockaddrIn6, sin6_scope_id) == 24);
+
+    assert!(size_of::<SockaddrStorage>() == 128 && align_of::<SockaddrStorage>() == 8);
+
+    assert!(size_of::<Msghdr>() == 48 && align_of::<Msghdr>() == 8);
+    assert!(offset_of!(Msghdr, msg_name) == 0);
+    assert!(offset_of!(Msghdr, msg_namelen) == 8);
+    assert!(offset_of!(Msghdr, msg_iov) == 16);
+    assert!(offset_of!(Msghdr, msg_iovlen) == 24);
+    assert!(offset_of!(Msghdr, msg_control) == 32);
+    assert!(offset_of!(Msghdr, msg_controllen) == 40);
+    assert!(offset_of!(Msghdr, msg_flags) == 44);
+
+    assert!(size_of::<pid_t>() == 4 && size_of::<uid_t>() == 4 && size_of::<gid_t>() == 4);
+    assert!(size_of::<id_t>() == 4 && size_of::<socklen_t>() == 4 && size_of::<sigset_t>() == 4);
+    assert!(size_of::<clockid_t>() == 4 && size_of::<clock_t>() == 8 && size_of::<rlim_t>() == 8);
+    assert!(size_of::<posix_spawnattr_t>() == 8 && size_of::<posix_spawn_file_actions_t>() == 8);
+    assert!(size_of::<pthread_t>() == 8);
 
     assert!(size_of::<mode_t>() == 2 && size_of::<dev_t>() == 4 && size_of::<off_t>() == 8);
     assert!(size_of::<c_long>() == 8);
@@ -272,4 +634,153 @@ unsafe extern "C" {
     pub(crate) unsafe fn closedir(dirp: *mut Dir) -> c_int;
 
     pub(crate) unsafe fn getentropy(buffer: *mut c_void, size: usize) -> c_int;
+
+    pub(crate) safe fn getpid() -> pid_t;
+    pub(crate) safe fn getppid() -> pid_t;
+    pub(crate) safe fn getuid() -> uid_t;
+    pub(crate) safe fn geteuid() -> uid_t;
+    pub(crate) safe fn getgid() -> gid_t;
+    pub(crate) safe fn getegid() -> gid_t;
+    pub(crate) safe fn getpgid(pid: pid_t) -> pid_t;
+    pub(crate) safe fn getsid(pid: pid_t) -> pid_t;
+    pub(crate) safe fn kill(pid: pid_t, sig: c_int) -> c_int;
+    pub(crate) safe fn umask(mask: mode_t) -> mode_t;
+    pub(crate) safe fn _exit(status: c_int) -> !;
+    pub(crate) unsafe fn chdir(path: *const c_char) -> c_int;
+    pub(crate) unsafe fn fchdir(fd: c_int) -> c_int;
+    pub(crate) unsafe fn chroot(path: *const c_char) -> c_int;
+    pub(crate) unsafe fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char;
+    pub(crate) unsafe fn getgroups(size: c_int, list: *mut gid_t) -> c_int;
+    pub(crate) safe fn getpriority(which: c_int, who: id_t) -> c_int;
+    pub(crate) safe fn setpriority(which: c_int, who: id_t, prio: c_int) -> c_int;
+    pub(crate) safe fn sched_get_priority_min(policy: c_int) -> c_int;
+    pub(crate) safe fn sched_get_priority_max(policy: c_int) -> c_int;
+    pub(crate) unsafe fn getrlimit(resource: c_int, rlp: *mut Rlimit) -> c_int;
+    pub(crate) unsafe fn setrlimit(resource: c_int, rlp: *const Rlimit) -> c_int;
+    pub(crate) unsafe fn getrusage(who: c_int, usage: *mut Rusage) -> c_int;
+    pub(crate) unsafe fn times(buffer: *mut Tms) -> clock_t;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn waitpid(pid: pid_t, status: *mut c_int, options: c_int) -> pid_t;
+    pub(crate) unsafe fn fchown(fd: c_int, owner: uid_t, group: gid_t) -> c_int;
+    pub(crate) unsafe fn fchownat(
+        fd: c_int,
+        path: *const c_char,
+        owner: uid_t,
+        group: gid_t,
+        flag: c_int,
+    ) -> c_int;
+
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawn(
+        pid: *mut pid_t,
+        path: *const c_char,
+        file_actions: *const posix_spawn_file_actions_t,
+        attrp: *const posix_spawnattr_t,
+        argv: *const *mut c_char,
+        envp: *const *mut c_char,
+    ) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawnattr_init(attr: *mut posix_spawnattr_t) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawnattr_destroy(attr: *mut posix_spawnattr_t) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawnattr_setflags(attr: *mut posix_spawnattr_t, flags: c_short)
+        -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawnattr_setpgroup(attr: *mut posix_spawnattr_t, pgroup: pid_t)
+        -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawnattr_setsigmask(
+        attr: *mut posix_spawnattr_t,
+        sigmask: *const sigset_t,
+    ) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawn_file_actions_init(
+        file_actions: *mut posix_spawn_file_actions_t,
+    ) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawn_file_actions_destroy(
+        file_actions: *mut posix_spawn_file_actions_t,
+    ) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawn_file_actions_addclose(
+        file_actions: *mut posix_spawn_file_actions_t,
+        fd: c_int,
+    ) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawn_file_actions_adddup2(
+        file_actions: *mut posix_spawn_file_actions_t,
+        fd: c_int,
+        newfd: c_int,
+    ) -> c_int;
+    #[cfg(feature = "alloc")]
+    pub(crate) unsafe fn posix_spawn_file_actions_addinherit_np(
+        file_actions: *mut posix_spawn_file_actions_t,
+        fd: c_int,
+    ) -> c_int;
+
+    pub(crate) unsafe fn sigaction(sig: c_int, act: *const Sigaction, oact: *mut Sigaction)
+        -> c_int;
+    pub(crate) unsafe fn pthread_sigmask(how: c_int, set: *const sigset_t, oset: *mut sigset_t)
+        -> c_int;
+    pub(crate) unsafe fn sigpending(set: *mut sigset_t) -> c_int;
+    pub(crate) unsafe fn sigsuspend(mask: *const sigset_t) -> c_int;
+    pub(crate) unsafe fn sigaltstack(ss: *const StackT, oss: *mut StackT) -> c_int;
+    pub(crate) safe fn pthread_self() -> pthread_t;
+    pub(crate) unsafe fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
+
+    pub(crate) unsafe fn clock_gettime(clock_id: clockid_t, tp: *mut Timespec) -> c_int;
+    pub(crate) unsafe fn clock_getres(clock_id: clockid_t, tp: *mut Timespec) -> c_int;
+    pub(crate) unsafe fn clock_settime(clock_id: clockid_t, tp: *const Timespec) -> c_int;
+    pub(crate) unsafe fn nanosleep(rqtp: *const Timespec, rmtp: *mut Timespec) -> c_int;
+    pub(crate) unsafe fn gettimeofday(tp: *mut Timeval, tzp: *mut c_void) -> c_int;
+    pub(crate) unsafe fn getitimer(which: c_int, value: *mut Itimerval) -> c_int;
+    pub(crate) unsafe fn setitimer(which: c_int, value: *const Itimerval, ovalue: *mut Itimerval)
+        -> c_int;
+
+    pub(crate) safe fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
+    pub(crate) unsafe fn socketpair(domain: c_int, kind: c_int, protocol: c_int, sv: *mut c_int)
+        -> c_int;
+    pub(crate) unsafe fn setsockopt(
+        socket: c_int,
+        level: c_int,
+        name: c_int,
+        value: *const c_void,
+        length: socklen_t,
+    ) -> c_int;
+    pub(crate) unsafe fn getsockopt(
+        socket: c_int,
+        level: c_int,
+        name: c_int,
+        value: *mut c_void,
+        length: *mut socklen_t,
+    ) -> c_int;
+    pub(crate) unsafe fn listen(socket: c_int, backlog: c_int) -> c_int;
+    pub(crate) unsafe fn accept(socket: c_int, address: *mut u8, length: *mut socklen_t) -> c_int;
+    pub(crate) unsafe fn shutdown(socket: c_int, how: c_int) -> c_int;
+    pub(crate) unsafe fn connect(socket: c_int, address: *const u8, length: socklen_t) -> c_int;
+    pub(crate) unsafe fn bind(socket: c_int, address: *const u8, length: socklen_t) -> c_int;
+    pub(crate) unsafe fn getsockname(socket: c_int, address: *mut u8, length: *mut socklen_t)
+        -> c_int;
+    pub(crate) unsafe fn getpeername(socket: c_int, address: *mut u8, length: *mut socklen_t)
+        -> c_int;
+    pub(crate) unsafe fn sendto(
+        socket: c_int,
+        buffer: *const c_void,
+        length: usize,
+        flags: c_int,
+        address: *const u8,
+        address_length: socklen_t,
+    ) -> isize;
+    pub(crate) unsafe fn recvfrom(
+        socket: c_int,
+        buffer: *mut c_void,
+        length: usize,
+        flags: c_int,
+        address: *mut u8,
+        address_length: *mut socklen_t,
+    ) -> isize;
+    pub(crate) unsafe fn sendmsg(socket: c_int, message: *const Msghdr, flags: c_int) -> isize;
+    pub(crate) unsafe fn recvmsg(socket: c_int, message: *mut Msghdr, flags: c_int) -> isize;
+    pub(crate) unsafe fn sockatmark(socket: c_int) -> c_int;
 }

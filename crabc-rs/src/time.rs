@@ -12,26 +12,76 @@
 //! loading, inverse ambiguous-local conversion, C `timer_t`/`sigevent` ABI,
 //! or a timer/signal policy framework. The interval-timer and timerfd operations
 //! are direct kernel boundaries; none selects a C time API.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem and [`ClockId`] carries Darwin's
+//! clocks. It ports clock reads, resolutions and `clock_settime`,
+//! [`nanosleep`], the wall-clock and realtime-millisecond reads,
+//! [`process_cpu_time`], the interval timers with [`alarm`] and [`ualarm`],
+//! and the pure UTC calendar conversions. Behavior that differs from Linux:
+//!
+//! - [`ClockId`] has Darwin's values. Darwin's `CLOCK_MONOTONIC` keeps
+//!   counting while the system sleeps, like Linux's `CLOCK_BOOTTIME`;
+//!   `UptimeRaw` pauses during sleep. `MonotonicRawApprox`, `UptimeRaw` and
+//!   `UptimeRawApprox` are Darwin-only; the coarse, boot-time, alarm and TAI
+//!   clocks are absent.
+//! - [`clock_settime`] can set only `CLOCK_REALTIME`, and only as root.
+//! - XNU rejects interval-timer values above 100,000,000 seconds with
+//!   `EINVAL`, so `alarm(u32::MAX)` fails.
+//!
+//! These items are absent on Darwin:
+//!
+//! - `clock_nanosleep_relative` and `clock_nanosleep_absolute`: libSystem has
+//!   no `clock_nanosleep`.
+//! - `ProcessClockId`, `clock_getcpuclockid`, `DynamicClockId` and
+//!   `clock_gettime_dynamic`: libSystem has no `clock_getcpuclockid` and no
+//!   descriptor-backed clocks.
+//! - `PosixTimer`, `TimerSpec`, `TimerSetFlags`, `TimerNotification` and
+//!   `TimerError`: Darwin has no POSIX timers.
+//! - `timerfd_create`, `timerfd_settime`, `timerfd_gettime`, `Itimerspec`,
+//!   `TimerfdFlags`, `TimerfdTimerFlags` and `TimerfdClockId`: Darwin has no
+//!   timer descriptors.
+//! - `LocalCalendar`: it projects through `timezone` rules, and `timezone`
+//!   is not ported.
 
 use core::convert::TryFrom;
 use core::mem::MaybeUninit;
 use core::time::Duration;
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
+#[cfg(target_os = "linux")]
 use crabc_core::time::{
     KernelItimerval, KernelItimervalTimeval, KernelItimerspec, KernelTimespec,
 };
+#[cfg(target_os = "linux")]
 use crate::process::Pid;
+#[cfg(target_os = "linux")]
 use crate::signal::Signal;
-use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
+#[cfg(target_os = "linux")]
+use crate::{AsFd, BorrowedFd, OwnedFd};
+use crate::{Errno, Result};
+#[cfg(target_os = "linux")]
+use crabc_core::time as os;
+#[cfg(target_os = "macos")]
+use crate::darwin::time as os;
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::time::{
+    clock_getres, clock_gettime, clock_settime, getitimer, setitimer, ClockId,
+};
 
 pub use crate::civil_time::{
     difftime, gmtime, timegm, CalendarTime, UnixTime, NANOS_PER_SECOND,
 };
+#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 pub use crate::civil_time::LocalCalendar;
 
+#[cfg(target_os = "linux")]
 const CLOCK_NANOSLEEP_TIMER_ABSTIME: u32 = 1;
 
+#[cfg(target_os = "linux")]
 /// Linux clock identifiers admitted by this x86-64 foundation slice.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -61,6 +111,7 @@ pub enum ClockId {
     Tai = 11,
 }
 
+#[cfg(target_os = "linux")]
 impl TryFrom<i32> for ClockId {
     type Error = Errno;
 
@@ -82,6 +133,7 @@ impl TryFrom<i32> for ClockId {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A validated Linux process CPU-clock identifier.
 ///
 /// Linux represents this clock as `(-pid - 1) * 8 + 2`, rather than allocating
@@ -92,6 +144,7 @@ impl TryFrom<i32> for ClockId {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProcessClockId(i32);
 
+#[cfg(target_os = "linux")]
 impl ProcessClockId {
     /// Returns the Linux-encoded `clockid_t` value.
     #[must_use]
@@ -101,6 +154,7 @@ impl ProcessClockId {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Resolves a process CPU clock without libc or TLS `errno`.
 ///
 /// `None` selects the calling process. Linux reports `EINVAL` when the
@@ -135,6 +189,7 @@ pub fn clock_getcpuclockid(pid: Option<Pid>) -> Result<ProcessClockId> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Linux clock identifiers accepted by [`clock_gettime_dynamic`].
 ///
 /// `Dynamic` borrows a descriptor that must remain open for the query; Linux
@@ -217,6 +272,7 @@ impl SleepError {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Timespec {
     fn from_kernel(value: KernelTimespec) -> Result<Self> {
         if !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
@@ -241,7 +297,7 @@ pub fn nanosleep(duration: Duration) -> core::result::Result<SleepOutcome, Sleep
     // SAFETY: `request` is an initialized Linux/x86-64 timespec and
     // `remaining` is writable storage for the kernel's interrupted result.
     match unsafe {
-        crabc_core::time::nanosleep_raw(
+        os::nanosleep_raw(
             (&request as *const Timespec).cast(),
             remaining.as_mut_ptr().cast(),
         )
@@ -259,6 +315,7 @@ pub fn nanosleep(duration: Duration) -> core::result::Result<SleepOutcome, Sleep
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sleeps for a relative duration on a selected Linux clock.
 ///
 /// This is the typed x86-64 form of `clock_nanosleep`: `duration` is
@@ -295,6 +352,7 @@ pub fn clock_nanosleep_relative(
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sleeps until an absolute time on a selected Linux clock.
 ///
 /// `deadline` uses the Linux/x86-64 `timespec` contract: `tv_sec` is signed
@@ -347,6 +405,7 @@ fn duration_from_timespec(timespec: Timespec) -> core::result::Result<Duration, 
     ))
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn valid_timespec(timespec: Timespec) -> bool {
     timespec.tv_nsec >= 0 && timespec.tv_nsec < i64::from(NANOS_PER_SECOND)
@@ -392,16 +451,19 @@ impl RealtimeMillis {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a validated observation from one admitted Linux clock.
 pub fn clock_gettime(clock: ClockId) -> Result<Timespec> {
     Timespec::from_kernel(crabc_core::time::clock_gettime(clock as i32)?)
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a validated resolution for one admitted Linux clock.
 pub fn clock_getres(clock: ClockId) -> Result<Timespec> {
     Timespec::from_kernel(crabc_core::time::clock_getres(clock as i32)?)
 }
 
+#[cfg(target_os = "linux")]
 /// Returns the current value of a known, validated-process, or descriptor
 /// backed Linux clock.
 ///
@@ -419,8 +481,10 @@ pub fn clock_gettime_dynamic(id: DynamicClockId<'_>) -> Result<Timespec> {
     }
 }
 
+#[cfg(target_os = "linux")]
 const CLOCKFD: i32 = 3;
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn dynamic_clock_id(id: DynamicClockId<'_>) -> i32 {
     match id {
@@ -439,6 +503,7 @@ pub fn timespec_get() -> Result<Timespec> {
     clock_gettime(ClockId::Realtime)
 }
 
+#[cfg(target_os = "linux")]
 /// Sets one known Linux clock through the direct x86-64 syscall.
 ///
 /// The public `Timespec` is validated before it becomes a private kernel
@@ -467,7 +532,7 @@ pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()> {
 /// allocation, or thread-local `errno` is involved.
 #[inline]
 pub fn wall_clock() -> Result<UnixTime> {
-    let parts = crabc_core::time::gettimeofday()?;
+    let parts = os::gettimeofday()?;
     UnixTime::from_wall_clock_parts(parts.seconds, parts.microseconds).ok_or(Errno::RANGE)
 }
 
@@ -609,6 +674,7 @@ impl GetitimerError {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads one process interval timer through the direct Linux syscall.
 ///
 /// This query does not arm, disarm, or otherwise mutate process timer state.
@@ -658,6 +724,7 @@ impl IntervalTimerError {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Arms or disarms one of Linux's three process interval timers.
 ///
 /// The setting uses the same validated microsecond vocabulary returned by
@@ -720,6 +787,7 @@ pub fn ualarm(
     Ok(micros.min(u64::from(u32::MAX)) as u32)
 }
 
+#[cfg(target_os = "linux")]
 /// Converts one signed Linux interval-timer timeval into a canonical Rust
 /// duration. Linux's `getitimer` ABI reports non-negative values with
 /// `tv_usec` in `0..1_000_000`; every other record is rejected.
@@ -734,6 +802,7 @@ fn duration_from_itimerval_timeval(value: KernelItimervalTimeval) -> Option<Dura
     ))
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn kernel_itimerval_from_interval(value: IntervalTimerValue) -> KernelItimerval {
     fn timeval(value: Duration) -> KernelItimervalTimeval {
@@ -748,6 +817,7 @@ fn kernel_itimerval_from_interval(value: IntervalTimerValue) -> KernelItimerval 
     }
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn interval_from_kernel_itimerval(value: KernelItimerval) -> Option<IntervalTimerValue> {
     IntervalTimerValue::new(
@@ -756,6 +826,7 @@ fn interval_from_kernel_itimerval(value: KernelItimerval) -> Option<IntervalTime
     )
 }
 
+#[cfg(target_os = "linux")]
 /// A validated nanosecond-resolution POSIX timer setting.
 ///
 /// This is deliberately distinct from timerfd's public `Itimerspec`: it owns
@@ -767,6 +838,7 @@ pub struct TimerSpec {
     value: Duration,
 }
 
+#[cfg(target_os = "linux")]
 impl TimerSpec {
     /// Constructs a setting when both durations fit Linux's signed timespec
     /// seconds field.
@@ -795,6 +867,7 @@ impl TimerSpec {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `timer_settime`.
     #[repr(transparent)]
@@ -809,6 +882,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// The supported Linux POSIX timer notification modes.
 ///
 /// `SIGEV_THREAD` is deliberately absent: its callback lifetime requires a
@@ -832,6 +906,7 @@ pub enum TimerNotification {
     },
 }
 
+#[cfg(target_os = "linux")]
 /// Errors returned while reading or replacing an owned POSIX timer setting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimerError {
@@ -841,6 +916,7 @@ pub enum TimerError {
     Kernel(Errno),
 }
 
+#[cfg(target_os = "linux")]
 impl TimerError {
     /// Returns the underlying direct kernel error, when present.
     #[must_use]
@@ -853,6 +929,7 @@ impl TimerError {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// An owned Linux POSIX timer.
 ///
 /// The private kernel identifier is retired by [`Self::delete`]. Dropping an
@@ -862,6 +939,7 @@ pub struct PosixTimer {
     id: Option<i32>,
 }
 
+#[cfg(target_os = "linux")]
 impl PosixTimer {
     /// Creates a timer on `clock` with a non-callback notification mode.
     #[inline]
@@ -954,6 +1032,7 @@ impl PosixTimer {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for PosixTimer {
     fn drop(&mut self) {
         if let Some(id) = self.id.take() {
@@ -962,6 +1041,7 @@ impl Drop for PosixTimer {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Private Linux/x86-64 `sigevent` storage for POSIX timer creation.
 ///
 /// It is intentionally not a public C ABI type. `value`, `signal`, `notify`,
@@ -974,13 +1054,20 @@ struct KernelSigevent {
     padding: [i32; 12],
 }
 
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<KernelSigevent>() == 64);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<KernelSigevent>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(KernelSigevent, value) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(KernelSigevent, signal) == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(KernelSigevent, notify) == 12);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(KernelSigevent, padding) == 16);
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn kernel_sigevent(notification: TimerNotification) -> KernelSigevent {
     let (value, signal, notify, thread) = match notification {
@@ -1009,6 +1096,7 @@ fn kernel_sigevent(notification: TimerNotification) -> KernelSigevent {
     event
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn timer_spec_to_kernel(value: TimerSpec) -> KernelItimerspec {
     fn timespec(value: Duration) -> KernelTimespec {
@@ -1023,6 +1111,7 @@ fn timer_spec_to_kernel(value: TimerSpec) -> KernelItimerspec {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn timer_spec_from_kernel(value: KernelItimerspec) -> Option<TimerSpec> {
     fn duration(value: KernelTimespec) -> Option<Duration> {
@@ -1034,6 +1123,7 @@ fn timer_spec_from_kernel(value: KernelItimerspec) -> Option<TimerSpec> {
     TimerSpec::new(duration(value.it_interval)?, duration(value.it_value)?)
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 mod interval_timer_tests {
     use super::{duration_from_itimerval_timeval, Duration, KernelItimervalTimeval};
@@ -1071,6 +1161,7 @@ mod interval_timer_tests {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `timerfd_create`.
     #[repr(transparent)]
@@ -1085,6 +1176,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `timerfd_settime`.
     #[repr(transparent)]
@@ -1099,6 +1191,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Clocks accepted by Linux `timerfd_create`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(i32)]
@@ -1116,6 +1209,7 @@ pub enum TimerfdClockId {
     BoottimeAlarm = 9,
 }
 
+#[cfg(target_os = "linux")]
 /// Linux/x86-64 `struct itimerspec` used by timerfd operations.
 ///
 /// Both fields are direct Linux `timespec` records. Input values must have a
@@ -1130,11 +1224,16 @@ pub struct Itimerspec {
     pub it_value: Timespec,
 }
 
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<Itimerspec>() == 32);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<Itimerspec>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(Itimerspec, it_interval) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(Itimerspec, it_value) == 16);
 
+#[cfg(target_os = "linux")]
 impl Default for Itimerspec {
     #[inline]
     fn default() -> Self {
@@ -1145,6 +1244,7 @@ impl Default for Itimerspec {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a Linux/x86-64 timer descriptor.
 #[inline]
 pub fn timerfd_create(clock_id: TimerfdClockId, flags: TimerfdFlags) -> Result<OwnedFd> {
@@ -1154,6 +1254,7 @@ pub fn timerfd_create(clock_id: TimerfdClockId, flags: TimerfdFlags) -> Result<O
     unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Arms or disarms a Linux/x86-64 timer descriptor and returns its previous
 /// setting.
 ///
@@ -1184,6 +1285,7 @@ pub fn timerfd_settime<Fd: AsFd>(
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a Linux/x86-64 timer descriptor's current setting.
 #[inline]
 pub fn timerfd_gettime<Fd: AsFd>(fd: Fd) -> Result<Itimerspec> {
@@ -1197,6 +1299,7 @@ pub fn timerfd_gettime<Fd: AsFd>(fd: Fd) -> Result<Itimerspec> {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn itimerspec_to_kernel(value: Itimerspec) -> Result<KernelItimerspec> {
     Ok(KernelItimerspec {
@@ -1205,6 +1308,7 @@ fn itimerspec_to_kernel(value: Itimerspec) -> Result<KernelItimerspec> {
     })
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn timer_timespec_to_kernel(value: Timespec) -> Result<KernelTimespec> {
     if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
@@ -1216,6 +1320,7 @@ fn timer_timespec_to_kernel(value: Timespec) -> Result<KernelTimespec> {
     })
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn itimerspec_from_kernel(value: KernelItimerspec) -> Result<Itimerspec> {
     Ok(Itimerspec {
@@ -1224,6 +1329,7 @@ fn itimerspec_from_kernel(value: KernelItimerspec) -> Result<Itimerspec> {
     })
 }
 
+#[cfg(target_os = "linux")]
 #[inline]
 fn timer_timespec_from_kernel(value: KernelTimespec) -> Result<Timespec> {
     if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {

@@ -16,6 +16,15 @@
 //! deliberately covers only these conventional files: it does not implement
 //! `/etc/networks`, NSS, provider plugins, resolver policy, or global C ABI
 //! enumeration.
+//!
+//! # Darwin
+//!
+//! On macOS the `from_bytes` parsers port unchanged and the `from_system`
+//! loaders are absent. macOS resolves hosts, services and protocols through
+//! Open Directory and mDNSResponder, so its `/etc` files are not the
+//! authoritative databases, and its stock `/etc/services` lists `ddp` and
+//! `divert` entries that this strict grammar rejects. A caller that does want
+//! a file snapshot reads the file and passes its bytes to `from_bytes`.
 
 use alloc::string::String;
 use alloc::vec;
@@ -114,6 +123,7 @@ impl HostDatabase {
         Ok(Self { entries })
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads and parses the conventional Linux hosts snapshot.
     pub fn from_system() -> core::result::Result<Self, NetDbError> {
         Self::from_bytes(&read_system_file(b"/etc/hosts")?)
@@ -290,6 +300,7 @@ impl ServiceDatabase {
         Ok(Self { entries })
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads and parses the conventional Linux services snapshot.
     pub fn from_system() -> core::result::Result<Self, NetDbError> {
         Self::from_bytes(&read_system_file(b"/etc/services")?)
@@ -421,6 +432,7 @@ impl ProtocolDatabase {
         Ok(Self { entries })
     }
 
+    #[cfg(target_os = "linux")]
     /// Reads and parses the conventional Linux protocols snapshot.
     pub fn from_system() -> core::result::Result<Self, NetDbError> {
         Self::from_bytes(&read_system_file(b"/etc/protocols")?)
@@ -529,8 +541,10 @@ fn parse_u16(value: &[u8]) -> core::result::Result<u16, NetDbError> {
     u16::try_from(result).map_err(|_| NetDbError::Overflow)
 }
 
+#[cfg(target_os = "linux")]
 const MAX_SYSTEM_FILE_BYTES: usize = 1024 * 1024;
 
+#[cfg(target_os = "linux")]
 fn read_system_file(path: &[u8]) -> core::result::Result<Vec<u8>, NetDbError> {
     let descriptor = crate::fs::open(path, crate::fs::OFlags::CLOEXEC, crate::fs::Mode::empty())
         .map_err(NetDbError::System)?;

@@ -15,9 +15,11 @@ use super::errno::{self, Errno, Result};
 use super::sys;
 use crate::buffer::Buffer;
 use crate::fs::{
-    timeval_to_timespec, Access, CurrentLockOperation, CurrentLockRange, FileType,
-    FlockOperation, Mode, Nsecs, PathArg, SeekFrom, Timespec, Timestamps, Timeval, Utimbuf,
+    ownership_words, timeval_to_timespec, Access, CurrentLockOperation, CurrentLockRange,
+    FileType, FlockOperation, Mode, Nsecs, PathArg, SeekFrom, Timespec, Timestamps, Timeval,
+    Utimbuf,
 };
+use crate::process::{Gid, Uid};
 #[cfg(feature = "alloc")]
 use crate::fs::SMALL_PATH_BUFFER_SIZE;
 use crate::{AsFd, BorrowedFd, OwnedFd, RawFd};
@@ -166,6 +168,16 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
+    /// Flags accepted by [`chownat`], with Darwin values.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+    pub struct ChownFlags: u32 {
+        /// Change a final symbolic link itself rather than its target.
+        const SYMLINK_NOFOLLOW = sys::AT_SYMLINK_NOFOLLOW.cast_unsigned();
+    }
+}
+
+bitflags::bitflags! {
     /// Flags accepted by [`accessat`], with Darwin values.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -193,14 +205,6 @@ pub const UTIME_OMIT: Nsecs = sys::UTIME_OMIT;
 /// Darwin has no `O_PATH`; `O_SEARCH` needs only search permission on the
 /// directory, which creating an entry in it requires anyway.
 pub(crate) const TEMP_PARENT_FLAGS: OFlags = OFlags::SEARCH.union(OFlags::CLOEXEC);
-
-/// Fills `buffer` from libSystem `getentropy`.
-#[inline]
-pub(crate) fn getentropy(buffer: &mut [u8]) -> Result<()> {
-    // SAFETY: `buffer` is writable for its exact length during the call.
-    let result = unsafe { sys::getentropy(buffer.as_mut_ptr().cast(), buffer.len()) };
-    errno::check(result).map(|_| ())
-}
 
 /// Darwin's `mode_t` is 16 bits. libSystem keeps only the permission and
 /// special bits of a creation or change mode, so dropping higher [`Mode`]
@@ -992,6 +996,43 @@ pub fn chmodat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode, flags: AtFl
         // SAFETY: the descriptor borrow and `PathArg` keep both arguments live.
         let result = unsafe {
             sys::fchmodat(dirfd.as_raw_fd(), path_ptr(path), mode_bits(mode), flags.bits().cast_signed())
+        };
+        errno::check(result).map(|_| ())
+    })
+}
+
+/// Changes ownership for an open file or directory.
+///
+/// `None` leaves that ID unchanged; an all-ones typed ID is rejected with
+/// [`Errno::INVAL`] because libSystem reserves it as the no-change value.
+#[inline]
+pub fn fchown<Fd: AsFd>(fd: Fd, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    let (owner, group) = ownership_words(owner, group)?;
+    // SAFETY: `fchown` has no memory arguments; the borrow keeps `fd` open.
+    let result = unsafe { sys::fchown(fd.as_fd().as_raw_fd(), owner, group) };
+    errno::check(result).map(|_| ())
+}
+
+/// Changes ownership for `path` relative to `dirfd` with `fchownat`.
+///
+/// [`ChownFlags::SYMLINK_NOFOLLOW`] selects the final symbolic link itself.
+/// Unknown bits return [`Errno::INVAL`].
+#[inline]
+#[doc(alias = "fchownat")]
+pub fn chownat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    owner: Option<Uid>,
+    group: Option<Gid>,
+    flags: ChownFlags,
+) -> Result<()> {
+    let (owner, group) = ownership_words(owner, group)?;
+    let flags = ChownFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        // SAFETY: the descriptor borrow and `PathArg` keep both arguments live.
+        let result = unsafe {
+            sys::fchownat(dirfd.as_raw_fd(), path_ptr(path), owner, group, flags.bits().cast_signed())
         };
         errno::check(result).map(|_| ())
     })

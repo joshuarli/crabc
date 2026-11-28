@@ -22,7 +22,59 @@
 //! belongs to libc. Generic raw exec/wait control and the larger process
 //! facade remain AArch64-only until each of their target-sized records and
 //! state transitions has an independent x86-64 contract.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem, and [`WaitOptions`], [`WaitStatus`],
+//! [`Resource`], [`ResourceUsageTarget`], [`Priority`], [`SchedulerPolicy`]
+//! and [`FlockType`] carry Darwin values. It ports identity queries, process
+//! groups and sessions, signal delivery by PID, the current directory and
+//! root, the umask, resource limits and usage, `times`, priorities and
+//! scheduler bounds, supplementary groups, `fcntl_getlk`,
+//! [`exit_immediately`] (`_exit`), and the `PreparedExec`/`Child`
+//! ownership contract. Behavior that differs from Linux:
+//!
+//! - `PreparedExec::spawn` calls `posix_spawn` with
+//!   `POSIX_SPAWN_CLOEXEC_DEFAULT`; `SpawnOptions` map to
+//!   `POSIX_SPAWN_SETSID`, `POSIX_SPAWN_SETPGROUP` and
+//!   `POSIX_SPAWN_SETSIGMASK`. The child inherits only descriptors 0, 1 and 2
+//!   that are open in the parent and the targets of its `FdAction::Dup2`
+//!   actions; every other descriptor is closed at exec, with or without
+//!   `FD_CLOEXEC`, so a descriptor created on another thread can never leak
+//!   into the child. A `Dup2` whose source equals its target keeps that
+//!   descriptor open. `posix_spawn` reports setup and exec failures itself,
+//!   so there is no error pipe; XNU tears down the transient child of a
+//!   failed spawn without it ever becoming reapable.
+//! - A continued child reports `SIGCONT` in the stop encoding (`0x137f`), and
+//!   stop and termination signals use Darwin numbers.
+//! - Darwin has nine resource limits. `RLIMIT_RSS` is an alias of
+//!   `RLIMIT_AS`, so there is no `Resource::Rss`. Unlimited is
+//!   `RLIM_INFINITY` (2⁶³ − 1); [`setrlimit`] rejects a finite value at or
+//!   above it with `EINVAL`.
+//! - [`ResourceUsage::maximum_resident_set_size`] is in bytes, not KiB, and
+//!   there is no per-thread usage target.
+//! - [`Priority`] spans `-20..=20`. Darwin's `getpriority` returns the nice
+//!   value directly, so [`getpriority`] clears `errno` before the call to
+//!   tell a nice value of `-1` from failure. A user target of the all-ones ID
+//!   fails with `EINVAL`.
+//! - The scheduler policies have Darwin tokens and all report bounds 15–47.
+//! - [`getcwd`] with an empty buffer fails with `ERANGE` before calling
+//!   libSystem, which would otherwise allocate its own buffer.
+//! - [`chroot`] by an unprivileged process fails with `EPERM` before the path
+//!   is looked up.
+//!
+//! These items are absent on Darwin:
+//!
+//! - `fork_raw` and `ForkResult`: libSystem's only `fork` runs its atfork
+//!   handlers and repairs libSystem state, so there is no raw fork to expose.
+//! - `kernel_brk`: macOS has no supported program break.
+//! - `getrlimit_for`: Darwin has no `prlimit` for another process.
+//! - `pidfd_open` and `PidfdFlags`: Darwin has no process descriptors.
+//! - `set_fs_uid` and `set_fs_gid`: Darwin has no filesystem credentials.
+//! - `getresuid`, `getresgid`, `UidTriple` and `GidTriple`: libSystem
+//!   exports no saved-ID query.
 
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
 
 #[cfg(feature = "alloc")]
@@ -30,14 +82,31 @@ use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use crate::buffer::Buffer;
-use core::ffi::{c_void, CStr};
+#[cfg(target_os = "linux")]
+use core::ffi::c_void;
+use core::ffi::CStr;
+#[cfg(target_os = "linux")]
 use core::fmt;
 use core::ptr;
 use crate::fs::PathArg;
 pub use crate::fs::Mode;
 #[cfg(feature = "alloc")]
 use crate::{BorrowedFd, RawFd};
-use crate::{AsFd, OwnedFd, Result};
+#[cfg(target_os = "linux")]
+use crate::OwnedFd;
+use crate::{AsFd, Result};
+#[cfg(target_os = "linux")]
+use crabc_core::process as os;
+#[cfg(target_os = "macos")]
+use crate::darwin::process as os;
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::process::{
+    fcntl_getlk, getpriority, getrlimit, setrlimit, FlockType, Priority, Resource,
+    ResourceUsageTarget, SchedulerPolicy, WaitOptions, WaitStatus,
+};
+#[cfg(all(target_os = "macos", feature = "alloc"))]
+use crate::darwin::process::wait_child;
 
 /// A raw Linux/x86-64 `pid_t` representation.
 pub type RawPid = i32;
@@ -51,6 +120,7 @@ pub type RawGid = u32;
 /// A non-zero Linux process or thread identifier.
 pub use crate::signal::{Pid, Signal};
 
+#[cfg(target_os = "linux")]
 /// Queries or requests Linux's raw program break.
 ///
 /// This is the Rustix-style kernel primitive, not a replacement for libc's
@@ -73,6 +143,7 @@ pub unsafe fn kernel_brk(address: *mut c_void) -> Result<*mut c_void> {
     Ok(unsafe { crabc_core::process::brk_raw(address.cast()) }.cast())
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Options for waiting on one owned child process.
     ///
@@ -93,6 +164,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A Linux wait-status word returned while consuming an owned child.
 ///
 /// This typed value retains the kernel's status encoding without admitting a
@@ -101,6 +173,7 @@ bitflags! {
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct WaitStatus(i32);
 
+#[cfg(target_os = "linux")]
 impl WaitStatus {
     /// Returns the raw Linux wait-status word.
     #[inline]
@@ -179,6 +252,7 @@ impl WaitStatus {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl fmt::Debug for WaitStatus {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut status = formatter.debug_struct("WaitStatus");
@@ -363,6 +437,7 @@ impl<'fd> PreparedExec<'fd> {
         self.path.as_c_str()
     }
 
+    #[cfg(target_os = "linux")]
     /// Spawns this image with a `CLOEXEC` error pipe.
     ///
     /// The parent receives an `Errno` if child setup or `execve` fails and
@@ -408,6 +483,7 @@ impl<'fd> PreparedExec<'fd> {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[inline]
     fn apply_child_setup(&self) -> Result<()> {
         if self.options.new_session {
@@ -436,6 +512,7 @@ impl<'fd> PreparedExec<'fd> {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     #[inline]
     fn exec_no_setup(&self) -> Result<!> {
         // SAFETY: `PreparedExec` owns every NUL-terminated string and both
@@ -451,6 +528,34 @@ impl<'fd> PreparedExec<'fd> {
             Err(error) => Err(error),
             Ok(()) => panic!("Linux execve unexpectedly returned success"),
         }
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "alloc"))]
+impl<'fd> PreparedExec<'fd> {
+    /// Spawns this image with `posix_spawn` and `POSIX_SPAWN_CLOEXEC_DEFAULT`.
+    ///
+    /// The child inherits descriptors 0, 1 and 2 where they are open in the
+    /// parent, then applies the prepared descriptor actions in order; every
+    /// other descriptor is closed at exec, whatever its close-on-exec flag.
+    /// `posix_spawn` reports a setup or exec failure as an `Errno` and leaves
+    /// no child to reap. On success this returns a unique typed child owner.
+    #[inline]
+    pub fn spawn(&self) -> Result<Child> {
+        // SAFETY: `PreparedExec` owns every NUL-terminated string and both
+        // null-terminated pointer arrays for the whole call.
+        let pid = unsafe {
+            crate::darwin::process::spawn(
+                &self.path,
+                &self.argv_pointers,
+                &self.envp_pointers,
+                &self.actions,
+                self.options.process_group,
+                self.options.new_session,
+                self.options.signal_mask,
+            )
+        }?;
+        Ok(Child { pid })
     }
 }
 
@@ -575,6 +680,7 @@ impl From<WaitError> for crate::Errno {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 #[inline]
 fn wait_child(pid: Pid, options: WaitOptions) -> Result<Option<WaitStatus>> {
@@ -617,6 +723,7 @@ fn c_string_pointers(values: &[CString]) -> Vec<*const u8> {
     pointers
 }
 
+#[cfg(target_os = "linux")]
 /// Reserves a close-on-exec child error descriptor outside every `dup2` target.
 ///
 /// A prepared action may legally replace any raw child descriptor. Relocating
@@ -648,6 +755,7 @@ fn reserve_child_error_fd(writer: RawFd, actions: &[FdAction<'_>]) -> Result<Raw
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(all(test, feature = "alloc"))]
 mod child_descriptor_tests {
     use super::{PreparedExec, Resource, Rlimit, WaitOptions};
@@ -720,6 +828,7 @@ mod child_descriptor_tests {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 #[inline]
 fn read_child_exec_result(reader: RawFd) -> Result<()> {
@@ -747,6 +856,7 @@ fn read_child_exec_result(reader: RawFd) -> Result<()> {
     Err(crate::Errno::from_raw(raw).unwrap_or(crate::Errno::IO))
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 #[inline]
 fn write_child_exec_error_and_exit(writer: RawFd, error: crate::Errno) -> ! {
@@ -772,9 +882,10 @@ fn write_child_exec_error_and_exit(writer: RawFd, error: crate::Errno) -> ! {
 /// every other thread of the process ends with the caller.
 #[inline]
 pub fn exit_immediately(status: i32) -> ! {
-    crabc_core::process::exit_immediately(status)
+    os::exit_immediately(status)
 }
 
+#[cfg(target_os = "linux")]
 /// A Linux resource whose current and maximum limits can be queried.
 ///
 /// This closed vocabulary matches the `RLIMIT_*` selectors in the pinned
@@ -817,6 +928,7 @@ pub enum Resource {
     Rttime = 15,
 }
 
+#[cfg(target_os = "linux")]
 impl Resource {
     /// Returns the exact Linux resource selector used by `prlimit64`.
     #[inline]
@@ -838,6 +950,7 @@ pub struct Rlimit {
     pub maximum: Option<u64>,
 }
 
+#[cfg(target_os = "linux")]
 impl Rlimit {
     #[inline]
     fn from_kernel(limit: crabc_core::process::KernelRlimit64) -> Self {
@@ -861,6 +974,7 @@ impl Rlimit {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Which calling-task resource usage Linux should observe.
 ///
 /// `SelfProcess` is the calling process, `Children` is terminated and waited
@@ -878,6 +992,7 @@ pub enum ResourceUsageTarget {
     Thread = 1,
 }
 
+#[cfg(target_os = "linux")]
 impl ResourceUsageTarget {
     /// Returns the Linux `RUSAGE_*` selector.
     #[inline]
@@ -898,6 +1013,7 @@ pub struct ResourceUsageTime {
 }
 
 impl ResourceUsageTime {
+    #[cfg(target_os = "linux")]
     #[inline]
     fn from_kernel(value: crabc_core::process::KernelRusageTimeval) -> Self {
         Self {
@@ -1052,6 +1168,7 @@ impl ProcessTimes {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `pidfd_open`.
     #[repr(transparent)]
@@ -1120,6 +1237,7 @@ impl Gid {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// The calling process's real, effective, and saved user IDs.
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct UidTriple {
@@ -1131,6 +1249,7 @@ pub struct UidTriple {
     pub saved: Uid,
 }
 
+#[cfg(target_os = "linux")]
 /// The calling process's real, effective, and saved group IDs.
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GidTriple {
@@ -1161,7 +1280,7 @@ pub fn getcwd<Buf: Buffer<u8>>(mut buffer: Buf) -> Result<Buf::Output> {
     // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes.
     // Linux initializes exactly the returned successful prefix, including the
     // trailing NUL byte.
-    let initialized = unsafe { crabc_core::process::getcwd_raw(pointer, length)? };
+    let initialized = unsafe { os::getcwd_raw(pointer, length)? };
     // SAFETY: A successful getcwd initialized exactly the returned prefix.
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
@@ -1182,7 +1301,7 @@ pub fn getcwd_alloc<B: Into<Vec<u8>>>(reuse: B) -> Result<CString> {
         let capacity = buffer.capacity();
         let spare = buffer.spare_capacity_mut();
         let length = match unsafe {
-            crabc_core::process::getcwd_raw(spare.as_mut_ptr().cast(), spare.len())
+            os::getcwd_raw(spare.as_mut_ptr().cast(), spare.len())
         } {
             Ok(length) => length,
             Err(crate::Errno::RANGE) => {
@@ -1314,7 +1433,7 @@ pub fn get_current_dir_name_alloc<B: Into<Vec<u8>>>(
 /// provide a valid path argument, and the kernel reports errors as [`Result`].
 #[inline]
 pub fn chdir<P: PathArg>(path: P) -> Result<()> {
-    path.into_with_c_str(crabc_core::process::chdir)
+    path.into_with_c_str(os::chdir)
 }
 
 /// Changes the calling process's current working directory to the directory
@@ -1329,7 +1448,7 @@ pub fn chdir<P: PathArg>(path: P) -> Result<()> {
 #[inline]
 pub fn fchdir<Fd: AsFd>(fd: Fd) -> Result<()> {
     let fd = fd.as_fd();
-    crabc_core::process::fchdir(fd.as_raw_fd())
+    os::fchdir(fd.as_raw_fd())
 }
 
 /// Changes the calling process's root directory.
@@ -1344,9 +1463,10 @@ pub fn fchdir<Fd: AsFd>(fd: Fd) -> Result<()> {
 /// whether the operation succeeded.
 #[inline]
 pub fn chroot<P: PathArg>(path: P) -> Result<()> {
-    path.into_with_c_str(crabc_core::process::chroot)
+    path.into_with_c_str(os::chroot)
 }
 
+#[cfg(target_os = "linux")]
 /// A Linux nice value observed or supplied through the native priority facade.
 ///
 /// Linux's scheduler accepts values from `-20` through `19`, inclusive. The
@@ -1357,6 +1477,7 @@ pub fn chroot<P: PathArg>(path: P) -> Result<()> {
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Priority(i32);
 
+#[cfg(target_os = "linux")]
 impl Priority {
     /// The most favorable Linux nice value.
     pub const MIN: Self = Self(-20);
@@ -1468,6 +1589,7 @@ impl PriorityTarget {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A Linux scheduler policy with a stable priority-range query.
 ///
 /// This closed vocabulary deliberately covers only policies whose Linux
@@ -1484,6 +1606,7 @@ pub enum SchedulerPolicy {
     RoundRobin = 2,
 }
 
+#[cfg(target_os = "linux")]
 impl SchedulerPolicy {
     /// Returns the Linux scheduler policy token.
     #[inline]
@@ -1516,6 +1639,7 @@ impl SchedulerPriorityBounds {
 // Linux/x86-64 `struct flock` has the same field order and 32-byte record
 // shape as the AArch64 ABI. Keep this wire record private to the facade and
 // validate every field before returning it to a safe caller.
+#[cfg(target_os = "linux")]
 type KernelFlock = crabc_core::process::KernelFlock;
 
 /// A process-associated record-lock query in Linux's `fcntl(F_GETLK)` ABI.
@@ -1538,6 +1662,7 @@ pub struct Flock {
     pub offset_type: FlockOffsetType,
 }
 
+#[cfg(target_os = "linux")]
 /// Lock kind used by [`fcntl_getlk`].
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 #[repr(i16)]
@@ -1575,6 +1700,7 @@ impl From<FlockType> for Flock {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Flock {
     #[inline]
     fn into_kernel(self) -> Result<KernelFlock> {
@@ -1635,9 +1761,10 @@ impl Flock {
 #[must_use]
 pub fn getpid() -> Pid {
     // SAFETY: Linux returns a positive process ID for a running task.
-    unsafe { Pid::from_raw_unchecked(crabc_core::process::getpid()) }
+    unsafe { Pid::from_raw_unchecked(os::getpid()) }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads the calling process's current and maximum resource limits through
 /// Linux `prlimit64` without using libc, a public C ABI, or TLS `errno`.
 ///
@@ -1659,9 +1786,10 @@ pub fn getrlimit(resource: Resource) -> Result<Rlimit> {
 /// admit x86-64 pathname creation APIs.
 #[inline]
 pub fn umask(mask: Mode) -> Mode {
-    Mode::from_bits_retain(crabc_core::process::umask_raw(mask.bits()))
+    Mode::from_bits_retain(os::umask_raw(mask.bits()))
 }
 
+#[cfg(target_os = "linux")]
 /// Changes the calling process's current and maximum resource limits through
 /// Linux `prlimit64`.
 ///
@@ -1676,6 +1804,7 @@ pub fn setrlimit(resource: Resource, limit: Rlimit) -> Result<()> {
     crabc_core::process::setrlimit_raw(resource.as_raw(), &kernel_limit)
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a target process's resource limits through Linux `prlimit64` without
 /// using libc, a public C ABI, or TLS `errno`.
 ///
@@ -1698,7 +1827,7 @@ pub fn getrlimit_for(pid: Option<Pid>, resource: Resource) -> Result<Rlimit> {
 /// omitted.
 #[inline]
 pub fn getrusage(target: ResourceUsageTarget) -> Result<ResourceUsage> {
-    crabc_core::process::getrusage_raw(target.as_raw()).map(ResourceUsage::from)
+    os::getrusage_raw(target.as_raw()).map(ResourceUsage::from)
 }
 
 /// Reads the calling process's CPU-accounting observation through Linux's
@@ -1710,7 +1839,7 @@ pub fn getrusage(target: ResourceUsageTarget) -> Result<ResourceUsage> {
 /// value crosses this facade boundary.
 #[inline]
 pub fn times() -> Result<ProcessTimes> {
-    crabc_core::process::times_raw().map(ProcessTimes::from)
+    os::times_raw().map(ProcessTimes::from)
 }
 
 /// Queries the number of supplementary groups currently attached to the
@@ -1722,7 +1851,7 @@ pub fn times() -> Result<ProcessTimes> {
 /// The operation is read-only and does not mutate process credentials.
 #[inline]
 pub fn getgroups_count() -> Result<usize> {
-    crabc_core::process::getgroups_count_raw()
+    os::getgroups_count_raw()
 }
 
 /// Fills caller-owned storage with supplementary Linux group IDs.
@@ -1749,7 +1878,7 @@ pub fn getgroups<Buf: Buffer<Gid>>(mut buffer: Buf) -> Result<Buf::Output> {
     };
     // SAFETY: `Buffer<Gid>` supplies writable storage for `length` values.
     // `Gid` is repr(transparent) over Linux x86-64's u32 gid_t representation.
-    let initialized = unsafe { crabc_core::process::getgroups_raw(pointer, length)? };
+    let initialized = unsafe { os::getgroups_raw(pointer, length)? };
     // Linux treats zero storage as a count query without initializing any
     // elements. Its count must not become a prefix beyond the supplied buffer.
     if initialized > length {
@@ -1764,9 +1893,10 @@ pub fn getgroups<Buf: Buffer<Gid>>(mut buffer: Buf) -> Result<Buf::Output> {
 #[inline]
 #[must_use]
 pub fn getppid() -> Option<Pid> {
-    Pid::from_raw(crabc_core::process::getppid())
+    Pid::from_raw(os::getppid())
 }
 
+#[cfg(target_os = "linux")]
 /// Opens a stable Linux process descriptor for `pid`.
 ///
 /// The returned [`OwnedFd`] remains valid across PID reuse and closes through
@@ -1789,13 +1919,14 @@ pub fn pidfd_open(pid: Pid, flags: PidfdFlags) -> Result<OwnedFd> {
 /// range.
 #[inline]
 pub fn scheduler_priority_bounds(policy: SchedulerPolicy) -> Result<SchedulerPriorityBounds> {
-    let (minimum, maximum) = crabc_core::process::scheduler_priority_bounds_raw(policy.as_raw())?;
+    let (minimum, maximum) = os::scheduler_priority_bounds_raw(policy.as_raw())?;
     if minimum > maximum {
         return Err(crate::Errno::RANGE);
     }
     Ok(SchedulerPriorityBounds { minimum, maximum })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads the bounded Linux nice value for a process, process group, or user.
 ///
 /// This is a read-only direct-kernel query. Linux's raw syscall returns the
@@ -1869,37 +2000,38 @@ pub fn setpriority_user(uid: Uid, priority: Priority) -> Result<()> {
 #[inline]
 fn setpriority(target: PriorityTarget, priority: Priority) -> Result<()> {
     let (which, who) = target.as_raw();
-    crabc_core::process::setpriority_raw(which, who, priority.as_raw())
+    os::setpriority_raw(which, who, priority.as_raw())
 }
 
 /// Returns the caller's real Linux user ID.
 #[inline]
 #[must_use]
 pub fn getuid() -> Uid {
-    Uid::from_raw(crabc_core::process::getuid())
+    Uid::from_raw(os::getuid())
 }
 
 /// Returns the caller's effective Linux user ID.
 #[inline]
 #[must_use]
 pub fn geteuid() -> Uid {
-    Uid::from_raw(crabc_core::process::geteuid())
+    Uid::from_raw(os::geteuid())
 }
 
 /// Returns the caller's real Linux group ID.
 #[inline]
 #[must_use]
 pub fn getgid() -> Gid {
-    Gid::from_raw(crabc_core::process::getgid())
+    Gid::from_raw(os::getgid())
 }
 
 /// Returns the caller's effective Linux group ID.
 #[inline]
 #[must_use]
 pub fn getegid() -> Gid {
-    Gid::from_raw(crabc_core::process::getegid())
+    Gid::from_raw(os::getegid())
 }
 
+#[cfg(target_os = "linux")]
 /// Sets or queries the calling task's Linux filesystem user ID.
 ///
 /// `None` maps to Linux's all-ones query word and therefore leaves the
@@ -1929,6 +2061,7 @@ pub unsafe fn set_fs_uid(uid: Option<Uid>) -> Result<Uid> {
     crabc_core::process::setfsuid_raw(uid).map(Uid::from_raw)
 }
 
+#[cfg(target_os = "linux")]
 /// Sets or queries the calling task's Linux filesystem group ID.
 ///
 /// `None` maps to Linux's all-ones query word and therefore leaves the
@@ -1958,6 +2091,7 @@ pub unsafe fn set_fs_gid(gid: Option<Gid>) -> Result<Gid> {
     crabc_core::process::setfsgid_raw(gid).map(Gid::from_raw)
 }
 
+#[cfg(target_os = "linux")]
 /// Reads the calling process's real, effective, and saved user IDs.
 #[inline]
 pub fn getresuid() -> crate::Result<UidTriple> {
@@ -1968,6 +2102,7 @@ pub fn getresuid() -> crate::Result<UidTriple> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads the calling process's real, effective, and saved group IDs.
 #[inline]
 pub fn getresgid() -> crate::Result<GidTriple> {
@@ -1981,7 +2116,7 @@ pub fn getresgid() -> crate::Result<GidTriple> {
 /// Returns a process group ID. `None` selects the calling process.
 #[inline]
 pub fn getpgid(pid: Option<Pid>) -> crate::Result<Pid> {
-    crabc_core::process::getpgid(pid.map_or(0, Pid::as_raw_pid)).map(|raw| {
+    os::getpgid(pid.map_or(0, Pid::as_raw_pid)).map(|raw| {
         // Linux returns a positive process ID for every successful process
         // group observation.
         unsafe { Pid::from_raw_unchecked(raw) }
@@ -1992,7 +2127,7 @@ pub fn getpgid(pid: Option<Pid>) -> crate::Result<Pid> {
 #[inline]
 #[must_use]
 pub fn getpgrp() -> Pid {
-    match crabc_core::process::getpgid(0) {
+    match os::getpgid(0) {
         // Linux returns a positive process ID for a live calling process.
         Ok(raw) => unsafe { Pid::from_raw_unchecked(raw) },
         Err(_) => panic!("Linux getpgid(0) syscall failed"),
@@ -2005,52 +2140,53 @@ pub fn getpgrp() -> Pid {
 /// reaped; prefer [`Child::kill`] for a child this process owns.
 #[inline]
 pub fn kill_process(pid: Pid, signal: crate::signal::Signal) -> Result<()> {
-    crabc_core::process::kill(pid.as_raw_pid(), signal.as_raw())
+    os::kill(pid.as_raw_pid(), signal.as_raw())
 }
 
 /// Tests whether a process exists and may receive a signal, without sending one.
 #[inline]
 pub fn test_kill_process(pid: Pid) -> Result<()> {
-    crabc_core::process::kill(pid.as_raw_pid(), 0)
+    os::kill(pid.as_raw_pid(), 0)
 }
 
 /// Sends `signal` to every member of the process group `pgid`.
 #[inline]
 pub fn kill_process_group(pgid: Pid, signal: crate::signal::Signal) -> Result<()> {
-    crabc_core::process::kill(-pgid.as_raw_pid(), signal.as_raw())
+    os::kill(-pgid.as_raw_pid(), signal.as_raw())
 }
 
 /// Tests whether the process group `pgid` exists and may receive a signal,
 /// without sending one.
 #[inline]
 pub fn test_kill_process_group(pgid: Pid) -> Result<()> {
-    crabc_core::process::kill(-pgid.as_raw_pid(), 0)
+    os::kill(-pgid.as_raw_pid(), 0)
 }
 
 /// Sends `signal` to every member of the caller's process group, including
 /// the caller.
 #[inline]
 pub fn kill_current_process_group(signal: crate::signal::Signal) -> Result<()> {
-    crabc_core::process::kill(0, signal.as_raw())
+    os::kill(0, signal.as_raw())
 }
 
 /// Tests whether the caller's process group may receive a signal, without
 /// sending one.
 #[inline]
 pub fn test_kill_current_process_group() -> Result<()> {
-    crabc_core::process::kill(0, 0)
+    os::kill(0, 0)
 }
 
 /// Returns a session ID. `None` selects the calling process.
 #[inline]
 pub fn getsid(pid: Option<Pid>) -> crate::Result<Pid> {
-    crabc_core::process::getsid(pid.map_or(0, Pid::as_raw_pid)).map(|raw| {
+    os::getsid(pid.map_or(0, Pid::as_raw_pid)).map(|raw| {
         // Linux returns a positive process ID for every successful session
         // observation.
         unsafe { Pid::from_raw_unchecked(raw) }
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Queries the first process-associated record lock that would block `lock`.
 ///
 /// Linux returns `None` when no lock would block, or the first conflicting
@@ -2072,25 +2208,44 @@ const _: () = assert!(core::mem::size_of::<Gid>() == 4);
 const _: () = assert!(core::mem::align_of::<Gid>() == 4);
 const _: () = assert!(core::mem::size_of::<Pid>() == 4);
 const _: () = assert!(core::mem::align_of::<Pid>() == 4);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRlimit64>() == 16);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRlimit64>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRlimit64, rlim_cur) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRlimit64, rlim_max) == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRusageTimeval>() == 16);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRusageTimeval>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRusage>() == 144);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRusage>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_utime) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_stime) == 16);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_maxrss) == 32);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_nivcsw) == 136);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelProcessTimes>() == 32);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelProcessTimes>() == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, user_ticks) == 0);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, system_ticks) == 8);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, children_user_ticks) == 16);
+#[cfg(target_os = "linux")]
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, children_system_ticks) == 24);
 
+#[cfg(target_os = "linux")]
 impl From<crabc_core::process::KernelProcessTimesObservation> for ProcessTimes {
     #[inline]
     fn from(value: crabc_core::process::KernelProcessTimesObservation) -> Self {
@@ -2106,6 +2261,7 @@ impl From<crabc_core::process::KernelProcessTimesObservation> for ProcessTimes {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl From<crabc_core::process::KernelRusage> for ResourceUsage {
     #[inline]
     fn from(value: crabc_core::process::KernelRusage) -> Self {
@@ -2130,6 +2286,53 @@ impl From<crabc_core::process::KernelRusage> for ResourceUsage {
     }
 }
 
+#[cfg(target_os = "macos")]
+impl From<crate::darwin::process::TimesObservation> for ProcessTimes {
+    #[inline]
+    fn from(value: crate::darwin::process::TimesObservation) -> Self {
+        // Darwin's `clock_t` is unsigned; the elapsed count keeps its bits.
+        Self {
+            user_time: ClockTicks::from_process_ticks(value.process.tms_utime as i64),
+            system_time: ClockTicks::from_process_ticks(value.process.tms_stime as i64),
+            children_user_time: ClockTicks::from_process_ticks(value.process.tms_cutime as i64),
+            children_system_time: ClockTicks::from_process_ticks(
+                value.process.tms_cstime as i64,
+            ),
+            elapsed_ticks: ClockTicks::from_elapsed_ticks(value.elapsed_ticks as i64),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl From<crate::darwin::sys::Rusage> for ResourceUsage {
+    #[inline]
+    fn from(value: crate::darwin::sys::Rusage) -> Self {
+        let time = |value: crate::darwin::sys::Timeval| ResourceUsageTime {
+            seconds: value.tv_sec,
+            microseconds: i64::from(value.tv_usec),
+        };
+        Self {
+            user_time: time(value.ru_utime),
+            system_time: time(value.ru_stime),
+            maximum_resident_set_size: value.ru_maxrss,
+            integral_shared_memory_size: value.ru_ixrss,
+            integral_unshared_data_size: value.ru_idrss,
+            integral_unshared_stack_size: value.ru_isrss,
+            minor_page_faults: value.ru_minflt,
+            major_page_faults: value.ru_majflt,
+            swaps: value.ru_nswap,
+            block_input_operations: value.ru_inblock,
+            block_output_operations: value.ru_oublock,
+            ipc_messages_sent: value.ru_msgsnd,
+            ipc_messages_received: value.ru_msgrcv,
+            signals_received: value.ru_nsignals,
+            voluntary_context_switches: value.ru_nvcsw,
+            involuntary_context_switches: value.ru_nivcsw,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2321,6 +2524,7 @@ mod tests {
     }
 }
 
+#[cfg(target_os = "linux")]
 mod native_fork {
     use super::*;
 /// The result of a raw Linux fork-equivalent clone.
@@ -2354,6 +2558,7 @@ pub unsafe fn fork_raw() -> Result<ForkResult> {
 }
 
 }
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 pub use native_fork::{fork_raw, ForkResult};
 

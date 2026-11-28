@@ -7,26 +7,73 @@
 //! code at an arbitrary interruption point. This module uses `crabc-core`'s
 //! direct kernel seams exclusively; it never calls the public C ABI or reads
 //! TLS `errno`.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem, and [`Signal`], [`SignalSet`],
+//! [`SigmaskHow`], [`SigActionFlags`], [`SigAction`], [`SigInfo`],
+//! [`StackFlags`] and [`Stack`] carry Darwin values and layouts. It ports
+//! signal masks, pending sets, `sigsuspend`, handler actions, alternate stacks
+//! and [`raise`]. Behavior that differs from Linux:
+//!
+//! - Darwin numbers its 31 signals differently (`SIGUSR1` is 30, `SIGCHLD`
+//!   20, `SIGSTOP` 17) and has no realtime signals: there is no `RTMIN` or
+//!   `RTMAX`, `is_realtime` is always false, and `STKFLT` and `POWER` are
+//!   absent. `EMT` and `INFO` are Darwin-only.
+//! - [`SignalSet`] is Darwin's 32-bit `sigset_t`. No signal is reserved, so
+//!   [`SignalSet::full`] holds all 31 and masks are reported unfiltered.
+//! - [`sigprocmask`] calls `pthread_sigmask`, so it changes only the calling
+//!   thread's mask.
+//! - [`SigAction`] has the AArch64 Linux shape (`new(handler, mask, flags)`).
+//!   libSystem installs its own signal trampoline, so there is no restorer.
+//!   [`sigaction`] rejects flag bits above the 32-bit `sa_flags` word with
+//!   `EINVAL`.
+//! - [`SigInfo`] is Darwin's 104-byte `siginfo_t`; `status` reads
+//!   `si_status` and `queued_i32` reads the `int` member of `si_value`.
+//! - An enabled [`Stack`] needs at least Darwin's 32 KiB `MINSIGSTKSZ`.
+//!
+//! These items are absent on Darwin:
+//!
+//! - `wait_info` and `timed_wait`: libSystem has no `sigwaitinfo` or
+//!   `sigtimedwait`, and `sigwait` reports no signal information.
+//! - `queue_process` and `queue_thread`: Darwin has no `sigqueue`.
+//! - `kill_thread`: Darwin addresses threads by `pthread_t`, not by a
+//!   process-scoped thread ID.
+//! - `signalfd`, `signalfd_update`, `read_signalfd`, `SignalFdFlags` and
+//!   `SignalFdInfo`: Darwin has no signal descriptors.
 
+#[cfg(target_os = "linux")]
 use core::arch::global_asm;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use core::ffi::c_void;
 use core::fmt;
+#[cfg(target_os = "linux")]
 use core::mem::MaybeUninit;
 use core::num::NonZeroI32;
+#[cfg(target_os = "linux")]
 use core::ptr;
 
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 use crate::process;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::time::Timespec;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::{AsFd, Errno, OwnedFd};
 use crate::Result;
 
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::signal::{
+    pending, raise, sigaction, sigaltstack, sigprocmask, suspend, SigAction, SigActionFlags,
+    SigInfo, SigmaskHow, Signal, SignalSet, Stack, StackFlags,
+};
 
 /// A non-zero Linux process or thread identifier used by the x86-64
 /// signal facade.
@@ -87,6 +134,7 @@ impl fmt::Display for Pid {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A non-zero application-visible Linux signal number on x86-64.
 ///
 /// Musl 1.2.6 reserves 32, 33, and 34 for its runtime; safe construction
@@ -95,6 +143,7 @@ impl fmt::Display for Pid {
 #[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Signal(NonZeroI32);
 
+#[cfg(target_os = "linux")]
 impl Signal {
     /// `SIGHUP`.
     pub const HUP: Self = Self(unsafe { NonZeroI32::new_unchecked(1) });
@@ -201,70 +250,97 @@ impl Signal {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 #[inline]
 fn calling_pid_raw() -> i32 {
     process::getpid().as_raw_pid()
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 #[inline]
 fn calling_pid_raw() -> i32 {
     crabc_core::process::getpid()
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 #[inline]
 fn calling_uid_raw() -> u32 {
     process::getuid().as_raw()
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 #[inline]
 fn calling_uid_raw() -> u32 {
     crabc_core::process::getuid()
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_BLOCK: i32 = 0;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_UNBLOCK: i32 = 1;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_SETMASK: i32 = 2;
+#[cfg(target_os = "linux")]
 const SIG_DFL: usize = 0;
+#[cfg(target_os = "linux")]
 const SIG_IGN: usize = 1;
+#[cfg(target_os = "linux")]
 const SA_RESTORER: u64 = 0x0400_0000;
+#[cfg(target_os = "linux")]
 const SA_SIGINFO: u64 = 0x0000_0004;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SS_ONSTACK: i32 = 1;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SS_DISABLE: i32 = 2;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SI_QUEUE: i32 = -1;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_SIGNO_OFFSET: usize = 0;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_ERRNO_OFFSET: usize = 4;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_CODE_OFFSET: usize = 8;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_PID_OFFSET: usize = 16;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_UID_OFFSET: usize = 20;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_VALUE_OFFSET: usize = 24;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_SIGNO_OFFSET: usize = 0;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_ERRNO_OFFSET: usize = 4;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_CODE_OFFSET: usize = 8;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_PID_OFFSET: usize = 12;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_UID_OFFSET: usize = 16;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_STATUS_OFFSET: usize = 40;
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_VALUE_OFFSET: usize = 44;
 
@@ -272,6 +348,7 @@ const SIGNALFD_VALUE_OFFSET: usize = 44;
 // crabc-rs alongside crabc's C facade, whose public C restorer has another
 // symbol. The architecture-specific `rt_sigreturn` trap lets the kernel
 // return from a user handler without crossing either C ABI.
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 global_asm!(
     ".global crabc_rs_signal_restorer",
@@ -284,6 +361,7 @@ global_asm!(
 // Linux/x86-64 enters `rt_sigreturn` through syscall number 15 with no
 // arguments. The kernel consumes the signal frame it placed at the current
 // stack pointer; the restorer must therefore not adjust the stack first.
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 global_asm!(
     ".global crabc_rs_signal_restorer",
@@ -293,10 +371,12 @@ global_asm!(
     "syscall",
 );
 
+#[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn crabc_rs_signal_restorer();
 }
 
+#[cfg(target_os = "linux")]
 /// A set of Linux signal numbers represented in the kernel's 64-bit signal
 /// mask form.
 ///
@@ -308,6 +388,7 @@ unsafe extern "C" {
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct SignalSet(u64);
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 impl SignalSet {
     /// The empty signal set.
@@ -354,6 +435,7 @@ impl SignalSet {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A set of Linux signal numbers represented in the kernel's 64-bit signal
 /// mask form.
 ///
@@ -366,6 +448,7 @@ impl SignalSet {
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct SignalSet(u64);
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 impl SignalSet {
     /// The empty signal set.
@@ -411,6 +494,7 @@ impl SignalSet {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 bitflags! {
     /// Flags accepted by Linux `signalfd4`.
@@ -426,6 +510,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// One fixed-width signal event read from a Linux signal file descriptor.
 ///
 /// This is intentionally distinct from Linux `siginfo_t`: Linux `signalfd4`
@@ -436,6 +521,7 @@ bitflags! {
 #[derive(Clone, Copy)]
 pub struct SignalFdInfo([u8; 128]);
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl SignalFdInfo {
     /// Returns the raw signal number reported by the descriptor.
@@ -502,6 +588,7 @@ impl SignalFdInfo {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl fmt::Debug for SignalFdInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -514,6 +601,7 @@ impl fmt::Debug for SignalFdInfo {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 impl fmt::Debug for SignalSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -521,6 +609,7 @@ impl fmt::Debug for SignalSet {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 impl fmt::Debug for SignalSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -528,6 +617,7 @@ impl fmt::Debug for SignalSet {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Selects how a signal set changes the calling thread's mask.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -541,6 +631,7 @@ pub enum SigmaskHow {
     SetMask = SIG_SETMASK,
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Signal-action flags accepted by Linux on the supported targets.
     #[repr(transparent)]
@@ -593,6 +684,7 @@ impl fmt::Debug for SigHandler {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A complete kernel signal-action configuration.
 ///
 /// On x86-64, an action returned by [`sigaction`] retains its original compact
@@ -611,6 +703,7 @@ pub struct SigAction {
     queried_kernel: Option<crabc_core::signal::KernelSigAction>,
 }
 
+#[cfg(target_os = "linux")]
 impl SigAction {
     /// Creates a signal action. A `SigInfo` handler automatically requests the
     /// matching `SA_SIGINFO` kernel ABI.
@@ -808,6 +901,7 @@ impl SigAction {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl fmt::Debug for SigAction {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("SigAction");
@@ -819,6 +913,7 @@ impl fmt::Debug for SigAction {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// The kernel's 128-byte signal-information record.
 ///
 /// The payload union begins at byte 16 on the supported 64-bit Linux targets.
@@ -829,6 +924,7 @@ impl fmt::Debug for SigAction {
 #[derive(Clone, Copy)]
 pub struct SigInfo(crabc_core::signal::SigInfo);
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl SigInfo {
     /// Returns the raw `si_signo` value.
@@ -915,6 +1011,7 @@ impl SigInfo {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl fmt::Debug for SigInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -927,6 +1024,7 @@ impl fmt::Debug for SigInfo {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 bitflags! {
     /// Flags reported by or supplied to `sigaltstack`.
@@ -942,6 +1040,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// An alternate signal-stack configuration.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[derive(Clone, Copy, Debug)]
@@ -951,6 +1050,7 @@ pub struct Stack {
     flags: StackFlags,
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl Stack {
     /// Builds an enabled alternate stack over caller-owned memory.
@@ -1014,6 +1114,7 @@ impl Stack {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Changes the calling thread's signal mask and returns the previous mask.
 ///
 /// A missing `set` queries the mask without changing it for any `how` value.
@@ -1063,6 +1164,7 @@ pub fn set_mask(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::SetMask, Some(set))
 }
 
+#[cfg(target_os = "linux")]
 /// Returns blocked application-visible signals pending for the calling thread.
 ///
 /// This includes pending process-directed signals as well as signals directed
@@ -1080,6 +1182,7 @@ pub fn pending() -> Result<SignalSet> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Atomically installs `mask` while waiting for an unblocked signal.
 ///
 /// Linux returns `EINTR` after a signal handler runs, so the normal result is
@@ -1095,6 +1198,7 @@ pub fn suspend(mask: &SignalSet) -> Result<!> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Waits indefinitely for one member of `set`, returning its signal metadata.
 ///
 /// Selected signals should already be blocked in all threads which could
@@ -1107,6 +1211,7 @@ pub fn wait_info(set: &SignalSet) -> Result<(Signal, SigInfo)> {
     timed_wait(set, None)
 }
 
+#[cfg(target_os = "linux")]
 /// Waits for one member of `set` until the optional relative timeout expires.
 ///
 /// A missing timeout waits indefinitely; a zero timeout consumes a pending
@@ -1130,6 +1235,7 @@ pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal
     Ok((signal, SigInfo(unsafe { info.assume_init() })))
 }
 
+#[cfg(target_os = "linux")]
 /// Queues an integer-valued signal for `pid` using Linux `rt_sigqueueinfo`.
 ///
 /// Delivery uses the target's shared process pending queue, including when
@@ -1146,6 +1252,7 @@ pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
     unsafe { crabc_core::signal::rt_sigqueueinfo_raw(pid.as_raw_pid(), signal.as_raw(), &info.0) }
 }
 
+#[cfg(target_os = "linux")]
 /// Queues an integer-valued signal for a known thread in the calling process.
 ///
 /// Linux `rt_tgsigqueueinfo` places the record in that thread's pending queue,
@@ -1175,6 +1282,7 @@ pub fn queue_thread(tid: Pid, signal: Signal, value: i32) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sends `signal` to a known thread in the calling process.
 ///
 /// This is Linux `tgkill` with the calling process's thread-group ID. It does
@@ -1192,6 +1300,7 @@ pub fn kill_thread(tid: Pid, signal: Signal) -> Result<()> {
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Sends `signal` to the current thread.
 #[inline]
 pub fn raise(signal: Signal) -> Result<()> {
@@ -1202,6 +1311,7 @@ pub fn raise(signal: Signal) -> Result<()> {
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a Linux signal descriptor for signals already blocked in every
 /// thread which could otherwise receive them.
 ///
@@ -1220,6 +1330,7 @@ pub fn signalfd(mask: &SignalSet, flags: SignalFdFlags) -> Result<OwnedFd> {
     unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Replaces the selected mask of an existing Linux signal descriptor.
 ///
 /// As with [`signalfd`], callers must arrange signal masks for all relevant
@@ -1234,6 +1345,7 @@ pub fn signalfd_update<Fd: AsFd>(fd: Fd, mask: &SignalSet) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Reads one complete Linux signal-descriptor record.
 ///
 /// This consumes one pending selected signal. Nonblocking descriptors return
@@ -1261,6 +1373,7 @@ pub fn read_signalfd<Fd: AsFd>(fd: Fd) -> Result<SignalFdInfo> {
     Ok(unsafe { info.assume_init() })
 }
 
+#[cfg(target_os = "linux")]
 /// Installs or queries a signal action.
 ///
 /// # Safety
@@ -1288,6 +1401,7 @@ pub unsafe fn sigaction(signal: Signal, action: Option<&SigAction>) -> Result<Si
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Installs or queries the alternate signal stack.
 ///
 /// # Safety
@@ -1311,12 +1425,14 @@ pub unsafe fn sigaltstack(stack: Option<&Stack>) -> Result<Stack> {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 const fn signal_bit(signal: Signal) -> u64 {
     1_u64 << (signal.as_raw() - 1)
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 fn write_i32(bytes: &mut [u8; 128], offset: usize, value: i32) {

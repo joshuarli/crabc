@@ -11,8 +11,9 @@
 //!
 //! On macOS/AArch64 the crate builds a libSystem backend for a subset of its
 //! modules instead: [`buffer`], [`collections`], [`fd`], [`ffi`], [`fs`],
-//! [`io`], [`numeric`], [`path`] and [`pipe`]. The other modules are not
-//! compiled there, so using one is a compile-time error. libSystem reports
+//! [`io`], [`net`], `netdb`, [`numeric`], [`path`], [`pipe`], [`process`],
+//! [`rand`], [`signal`] and [`time`]. The other modules are not compiled
+//! there, so using one is a compile-time error. libSystem reports
 //! failures through thread-local `errno`; the Darwin backend reads it
 //! immediately after each failing call and returns the typed [`Errno`],
 //! whose values are Darwin's.
@@ -44,7 +45,7 @@ pub mod buffer;
 // algorithms are shared by the AArch64 facade and the private
 // x86-64 civil-time module. They define no C time ABI or process timezone
 // state.
-#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 mod civil_time;
 // The three private RuntimeV1 consumers (`cfile`, `dl`, `runtime_thread`)
 // are target-neutral. Each opt-in feature needs a crabc process whose loaded
@@ -81,13 +82,9 @@ pub mod mount;
 // network-device ioctl/rtnetlink snapshots, and the caller-owned resolver plus
 // conventional hosts/service/protocol snapshots use the Linux LP64 layouts
 // shared by both architectures.
-#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod net;
-#[cfg(all(
-    target_os = "linux",
-    feature = "alloc",
-    any(target_arch = "aarch64", target_arch = "x86_64")
-))]
+#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod netdb;
 pub mod numeric;
 #[cfg(target_os = "linux")]
@@ -99,11 +96,9 @@ pub mod path;
 #[cfg(target_os = "linux")]
 pub mod pattern;
 pub mod pipe;
-#[cfg(target_os = "linux")]
 pub mod process;
 #[cfg(target_os = "linux")]
 pub mod pty;
-#[cfg(target_os = "linux")]
 pub mod rand;
 #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 mod raw_dir;
@@ -117,7 +112,6 @@ pub mod resolver;
 pub mod runtime_thread;
 #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod shm;
-#[cfg(target_os = "linux")]
 pub mod signal;
 #[cfg(target_os = "linux")]
 pub mod stdio;
@@ -133,7 +127,6 @@ pub mod termios;
 pub mod text;
 #[cfg(target_os = "linux")]
 pub mod thread;
-#[cfg(target_os = "linux")]
 pub mod time;
 #[cfg(all(
     target_os = "linux",
@@ -154,7 +147,6 @@ pub use crabc_core::{Errno, Result};
 #[doc(inline)]
 pub use darwin::errno::{Errno, Result};
 pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
-#[cfg(target_os = "linux")]
 pub use signal::Pid;
 #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub use raw_dir::{RawDir, RawDirEntry};

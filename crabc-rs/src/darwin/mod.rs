@@ -12,5 +12,10 @@
 pub(crate) mod errno;
 pub(crate) mod fs;
 pub(crate) mod io;
+pub(crate) mod net;
 pub(crate) mod pipe;
+pub(crate) mod process;
+pub(crate) mod rand;
+pub(crate) mod signal;
 pub(crate) mod sys;
+pub(crate) mod time;

@@ -236,6 +236,20 @@ pub(crate) fn check(result: core::ffi::c_int) -> Result<core::ffi::c_int> {
     }
 }
 
+/// Converts the error number that `posix_spawn`, `pthread_sigmask` and
+/// `pthread_kill` return in place of setting `errno`; zero is success.
+///
+/// A negative return breaks libSystem's contract and is reported as
+/// [`Errno::IO`].
+#[inline(always)]
+pub(crate) fn check_code(code: core::ffi::c_int) -> Result<()> {
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(Errno::new(code).unwrap_or(Errno::IO))
+    }
+}
+
 /// Converts an `ssize_t` libSystem byte count, where `-1` reports failure.
 #[inline(always)]
 pub(crate) fn check_size(result: isize) -> Result<usize> {

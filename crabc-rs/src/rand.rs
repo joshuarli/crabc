@@ -2,12 +2,25 @@
 //!
 //! This module intentionally exposes the kernel's short-read behavior. Code
 //! needing an atomic all-or-error entropy request should use [`getentropy`]
-//! or explicitly loop over [`getrandom`].
+//! or explicitly loop over `getrandom`.
+//!
+//! # Darwin
+//!
+//! On macOS [`getentropy`] calls libSystem `getentropy`, which fills the
+//! whole request in one call, and [`RandomState::from_entropy`] seeds from
+//! it. `getrandom` and `GetRandomFlags` are absent: Darwin has no
+//! `getrandom` and no short-read random source with selectable pools.
 
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
 
+#[cfg(target_os = "linux")]
 use crate::buffer::Buffer;
 use crate::Result;
+
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::rand::getentropy;
 
 /// Maximum request size accepted by [`getentropy`], as required by musl's
 /// Linux implementation and the C interface it mirrors.
@@ -35,6 +48,7 @@ impl RandomState {
         Self { state: seed }
     }
 
+    #[cfg(target_os = "linux")]
     /// Creates a generator seeded from Linux `getrandom`.
     ///
     /// This fills the seed completely, retrying short successful kernel reads.
@@ -77,12 +91,29 @@ impl RandomState {
     }
 }
 
+#[cfg(target_os = "macos")]
+impl RandomState {
+    /// Creates a generator seeded from libSystem `getentropy`.
+    ///
+    /// The seed is filled in one call. Errors are returned as
+    /// [`crate::Errno`] values; no C `rand` state is involved. The sequence
+    /// is still only as strong as this generator, and must not be used for
+    /// secrets.
+    #[inline]
+    pub fn from_entropy() -> Result<Self> {
+        let mut seed = [0_u8; core::mem::size_of::<u64>()];
+        getentropy(&mut seed[..])?;
+        Ok(Self::new(u64::from_ne_bytes(seed)))
+    }
+}
+
 /// Draws one deterministic 32-bit value from explicitly owned state.
 #[inline]
 pub fn random_u32(state: &mut RandomState) -> u32 {
     state.next_u32()
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `getrandom`.
     #[repr(transparent)]
@@ -100,6 +131,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Obtains random bytes from the Linux kernel.
 ///
 /// For initialized buffers the return value is the number of bytes received.
@@ -115,6 +147,7 @@ pub fn getrandom<Buf: Buffer<u8>>(mut buffer: Buf, flags: GetRandomFlags) -> Res
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Obtains a complete entropy request from Linux's random source.
 ///
 /// This is the Rust-native equivalent of C `getentropy`: requests larger than
