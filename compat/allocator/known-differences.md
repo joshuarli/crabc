@@ -1631,6 +1631,37 @@ commit-call and mmap-call deltas, with the same four warning fragments. The
 process-owned Rust map releases its private lock before invoking the registered
 callback so callback reentry cannot deadlock.
 
+### `CRABC-MI-ARENA-PURGE-DEADLINE-OVERFLOW` — accepted undefined-behavior boundary
+
+- **Port map:** `src/arena.c`
+
+Pinned `mi_arena_schedule_purge` (`src/arena.c:2286-2311`) computes the
+deadline `_mi_clock_now() + delay` in the signed 64-bit `mi_msecs_t`, with
+`delay` from `mi_arena_purge_delay` (`src/arena.c:2242-2252`). That function
+returns the bare `purge_delay` when the product overflows or exceeds
+`LONG_MAX`, and `LONG_MAX` itself for `purge_delay=LONG_MAX` and
+`arena_purge_mult=1`. Any delay above `INT64_MAX` minus the monotonic
+millisecond clock makes the addition signed overflow, which C11 6.5p5 leaves
+undefined, so pinned C has no behavior to compare in that domain. The same
+holds for the traversal's `now + delay/10` rebase (`src/arena.c:2408-2409`).
+
+Rust `ProcessArenaBacking::schedule_purge` and `collect_purge_at`
+(`crabc-mimalloc/src/arena_purge.rs`) form each deadline with `checked_add`.
+An unrepresentable scheduling deadline leaves the freed range unscheduled (no
+purge bit, arena expiration or subprocess expiration) while the free-bitmap
+release proceeds, so a deadline that can never arrive is never due. An
+unrepresentable rebase keeps the current subprocess expiration. This is an
+engine-semantics difference only for configurations whose deadline overflows,
+and it costs one checked addition on the scheduling path.
+
+Check: `arena::owned::tests::overflowing_purge_deadline_leaves_the_freed_range_unscheduled`
+(`allocator-unit`). The defined domain is compared against pinned C by
+`arena-purge-delay-product-c-rust-differential` (`m2_arena_purge_delay_x86_64.{c,py}`,
+AArch64 `allocator-m2`): the product, its disabled and immediate results, both
+fallbacks and the computed `LONG_MAX` delay, plus scheduling and the rebased
+forced purge under a representable 2^62 fallback delay. Remove only if a
+reviewed source pin defines the overflowing deadline.
+
 ## Entry requirements
 
 Each entry must state:

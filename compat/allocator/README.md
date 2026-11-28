@@ -428,15 +428,15 @@ of the fragment's bounded definitions. `allocator-m2` runs:
 - the lifecycle, destruction and reservation-warning differentials against the
   aggregate's `aarch64-unknown-linux-musl` test binary (the record refuses any
   other Rust product);
-- the eight x86-inventory direct arena receivers and the eight arm-admitted
+- the eight x86-inventory direct arena receivers and the nine arm-admitted
   receivers below, whose physical C and Rust transcripts the aggregate
   re-parses under `target/compat/allocator/aarch64/`.
 
 The receivers take their architecture from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a
 direct x86 invocation keeps its historical paths and messages.
 
-The AArch64 fragment adds eleven checks to the x86 inventory, each a
-pinned-C/Rust receiver that ran natively on arm. All eleven are pending on x86
+The AArch64 fragment adds twelve checks to the x86 inventory, each a
+pinned-C/Rust receiver that ran natively on arm. All twelve are pending on x86
 until a native x86 run admits them into the x86 arenas record, whose manifest
 and inventory are unchanged. Nine are existing receivers:
 
@@ -469,7 +469,7 @@ and inventory are unchanged. Nine are existing receivers:
   which the x86 M5 gate also runs) compares the `mi_abandoned_page_try_reclaim`
   decisions on free under its seven option profiles.
 
-Two further receivers are new with this component and run only on AArch64
+Three further receivers are new with this component and run only on AArch64
 until a native x86 run admits them:
 
 - `arena-page-abandonment-c-rust-differential`
@@ -482,12 +482,20 @@ until a native x86 run admits them:
   (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
   eight arenas with disabled-delay, immediate-delay, preloading and
   purge-guard refusals and a pinned arena.
+- `arena-purge-delay-product-c-rust-differential`
+  (`m2_arena_purge_delay_x86_64.{c,py}`) compares the `mi_arena_purge_delay`
+  product read from the environment and from set options, its disabled and
+  immediate results and both overflow fallbacks, then schedules a freed slice
+  and rebases the expiration by a forced purge under a 2^62 fallback delay.
+  A deadline that overflows `int64` is undefined in pinned C; Rust's refusal
+  is `CRABC-MI-ARENA-PURGE-DEADLINE-OVERFLOW` in
+  [`known-differences.md`](known-differences.md).
 
 Pinned-C-only primitive receipts and Rust-only retained counts use the VM
 direct-receiver record; the aggregate re-parses every physical transcript.
 The component stays partial: the concurrent unown and
-unabandon interleavings, multi-arena abandoned-page search and the purge-delay
-option product remain open, and so do large-page
+unabandon interleavings and multi-arena abandoned-page search remain open,
+and so do large-page
 and huge-page reservation success, NUMA placement and the 16 KiB and 64 KiB
 base-page geometries, which this VM cannot supply.
 

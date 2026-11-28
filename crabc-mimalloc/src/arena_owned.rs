@@ -5352,6 +5352,123 @@ mod tests {
         }
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn emit_m2_arena_purge_delay_c_rust_trace() {
+        use crate::atomic::i64_load_relaxed;
+        use crate::os::source_clock_now;
+        let _fault = fault::install(fault::Plan::disabled());
+        let mut rows: std::vec::Vec<(std::string::String, i64)> = std::vec::Vec::new();
+        let mut emit = |name: &str, field: &str, value: i64| {
+            rows.push((std::format!("{name}.{field}"), value));
+        };
+        let environment = Box::leak(Box::new([
+            c"mimalloc_purge_delay=250".as_ptr(),
+            c"mimalloc_arena_purge_mult=3".as_ptr(),
+            core::ptr::null(),
+        ]));
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: the leaked vector and its static strings stay valid and
+        // unmodified for this observation.
+        unsafe { options.initialize_from_source_environment(environment.as_ptr()) };
+        let environment_process = process_with_options(options);
+        emit("environment", "delay", crate::arena::arena_purge_delay(environment_process.policy()));
+        for (name, delay, multiplier, scheduled) in [
+            ("defaults", 1000, 4, false),
+            ("product", 7, 3, true),
+            ("disabled_delay", -1, 4, true),
+            ("disabled_mult", 10, -1, false),
+            ("immediate_delay", 0, 4, true),
+            ("immediate_mult", 10, 0, false),
+            ("exact_power", 1i64 << 31, 1i64 << 31, false),
+            ("long_max", i64::MAX, 1, false),
+            ("above_long_max", 1i64 << 62, 2, true),
+            ("size_overflow", 1i64 << 62, 4, false),
+            ("both_max", i64::MAX, i64::MAX, false),
+        ] {
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| VmOptionEnvironment::Absent);
+            options.set(VmOption::PurgeDelay, delay);
+            options.set(VmOption::ArenaPurgeMult, multiplier);
+            let process = process_with_options(options);
+            let delay = crate::arena::arena_purge_delay(process.policy());
+            emit(name, "delay", delay);
+            if !scheduled { continue; }
+            let backing = backing();
+            let id = install(backing, process, MapAccess::Reserved);
+            // SAFETY: the arena was just published by this fresh backing and
+            // no other claim or traversal is in flight.
+            let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+                .expect("one committed slice in a reserved arena");
+            let slice = claim.slice_index();
+            // SAFETY: the leaked backing keeps the published arena and its
+            // bitmaps live; each observation runs between transitions.
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let calls = process.subprocess().vm_statistics().snapshot().purge_calls;
+            let before = source_clock_now();
+            assert!(claim.release());
+            let after = source_clock_now();
+            let expire = i64_load_relaxed(&view.arena().purge_expire);
+            let global = i64_load_relaxed(&backing.purge_expire);
+            // SAFETY: as for `view`; the bitmaps are only read here.
+            let bit = |set: Option<crate::bitmap::BitmapView<'_>>| {
+                i64::from(set.unwrap().is_set_range(slice, 1) == Some(true))
+            };
+            emit(name, "pending", bit(unsafe { view.slices_purge() }));
+            emit(name, "expire", i64::from(if delay > 0 {
+                expire >= before + delay && expire <= after + delay
+            } else { expire == 0 }));
+            emit(name, "global", i64::from(if delay > 0 { global == expire } else { global == 0 }));
+            emit(name, "committed", bit(unsafe { view.slices_committed() }));
+            emit(name, "free", i64::from(unsafe { view.slices_free() }.unwrap().is_set_range(slice, 1) == Some(true)));
+            emit(name, "purge_calls", process.subprocess().vm_statistics().snapshot().purge_calls - calls);
+            if delay <= 0 { continue; }
+            let rebase_before = source_clock_now();
+            // SAFETY: `process` and `config()` are this backing's fixed
+            // binding, its only arena stays live and no claim is outstanding.
+            assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+            let rebase_after = source_clock_now();
+            let rebased = i64_load_relaxed(&backing.purge_expire);
+            emit(name, "rebased", i64::from(
+                rebased >= rebase_before + delay / 10 && rebased <= rebase_after + delay / 10));
+            emit(name, "purged_pending", bit(unsafe { view.slices_purge() }));
+            emit(name, "purged_expire", i64_load_relaxed(&view.arena().purge_expire));
+            emit(name, "purged_committed", bit(unsafe { view.slices_committed() }));
+            emit(name, "purged_calls", process.subprocess().vm_statistics().snapshot().purge_calls - calls);
+        }
+        for (field, value) in rows {
+            std::println!("m2.arena_purge_delay.{field}={value}");
+        }
+    }
+
+    #[test]
+    fn overflowing_purge_deadline_leaves_the_freed_range_unscheduled() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::PurgeDelay, i64::MAX);
+        options.set(VmOption::ArenaPurgeMult, 1);
+        let process = process_with_options(options);
+        assert_eq!(crate::arena::arena_purge_delay(process.policy()), i64::MAX);
+        let backing = backing();
+        let id = install(backing, process, MapAccess::Reserved);
+        // SAFETY: the arena was just published by this fresh backing and no
+        // other claim or traversal is in flight.
+        let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+            .expect("one committed slice in a reserved arena");
+        let slice = claim.slice_index();
+        assert!(claim.release());
+        // SAFETY: the leaked backing keeps the published arena and its
+        // bitmaps live; the release above has returned.
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        // SAFETY: as for `view`; the bitmaps are only read here.
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_set_range(slice, 1), Some(false));
+        assert_eq!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire), 0);
+        assert_eq!(crate::atomic::i64_load_relaxed(&backing.purge_expire), 0);
+        // SAFETY: as for `view`.
+        assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(slice, 1), Some(true));
+    }
+
     #[test]
     fn process_arena_purge_uses_process_cpu_clock_after_monotonic_fault() {
         let fault = fault::install(fault::Plan::disabled());

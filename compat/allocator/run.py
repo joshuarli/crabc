@@ -799,6 +799,44 @@ def _m2_aarch64_arena_abandonment_trace() -> dict[str, int]:
 
 
 M2_AARCH64_ARENA_ABANDONMENT_TRACE = _m2_aarch64_arena_abandonment_trace()
+
+
+def _m2_aarch64_arena_purge_delay_trace() -> dict[str, int]:
+    """Pinned relations of `m2_arena_purge_delay_x86_64.c`.
+
+    `mi_arena_purge_delay` multiplies `purge_delay` by `arena_purge_mult`,
+    returns -1 when either is negative and 0 when either is zero, and falls
+    back to the bare delay when the unsigned product overflows or exceeds
+    LONG_MAX (src/arena.c:2242-2252). A positive delay schedules the freed
+    slice and both expirations; the forced visit-all purge clears the
+    pending bit and the arena expiry and rebases the subprocess expiration by
+    `delay/10`, and its Linux decommit (MADV_DONTNEED) keeps the commit bit.
+    """
+
+    long_max = (1 << 63) - 1
+    delays = {
+        "environment": 750, "defaults": 4000, "product": 21, "disabled_delay": -1,
+        "disabled_mult": -1, "immediate_delay": 0, "immediate_mult": 0,
+        "exact_power": 1 << 62, "long_max": long_max, "above_long_max": 1 << 62,
+        "size_overflow": 1 << 62, "both_max": long_max,
+    }
+    scheduled = {"pending": 1, "expire": 1, "global": 1, "committed": 1, "free": 1, "purge_calls": 0,
+                 "rebased": 1, "purged_pending": 0, "purged_expire": 0, "purged_committed": 1,
+                 "purged_calls": 1}
+    unscheduled = {"pending": 0, "expire": 1, "global": 1, "committed": 1, "free": 1}
+    rows = {
+        "product": scheduled,
+        "disabled_delay": {**unscheduled, "purge_calls": 0},
+        "immediate_delay": {**unscheduled, "purge_calls": 1},
+        "above_long_max": scheduled,
+    }
+    return {
+        **{f"{name}.delay": delay for name, delay in delays.items()},
+        **{f"{name}.{field}": value for name, fields in rows.items() for field, value in fields.items()},
+    }
+
+
+M2_AARCH64_ARENA_PURGE_DELAY_TRACE = _m2_aarch64_arena_purge_delay_trace()
 # Their records use the direct-receiver format of the VM component: shared
 # relations on both sides, plus a pinned-C-only primitive receipt or a
 # Rust-only retained count where the receiver reports one.
@@ -982,6 +1020,19 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "rust_only": {},
         "c_receipt": None,
         "scope": "pinned-c-rust-eight-arena-bounded-purge-rotation-with-disabled-immediate-preloading-and-guard-refusals-pinned-skip-three-visit-budget-and-global-clear",
+    },
+    "arena-purge-delay-product-c-rust-differential": {
+        "artifact": "m2-arena-purge-delay",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_purge_delay_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_purge_delay_x86_64.c",
+        "rust_test": "arena::owned::tests::emit_m2_arena_purge_delay_c_rust_trace",
+        "trace_prefix": "m2.arena_purge_delay.",
+        "common": M2_AARCH64_ARENA_PURGE_DELAY_TRACE,
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-arena-purge-delay-option-product-disabled-immediate-and-overflow-fallbacks-from-environment-and-set-options-with-scheduled-expiry-and-rebased-forced-purge",
     },
     "arena-page-abandonment-c-rust-differential": {
         "artifact": "m2-arena-abandonment",
