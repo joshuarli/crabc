@@ -4,7 +4,8 @@
 implementation. It is not a generated C-wrapper crate. Public support remains
 Linux/AArch64 little-endian with Linux 5.10 as the kernel baseline; native
 x86-64 work is an active, separately qualified program and is not public until
-its acceptance contract is complete.
+its acceptance contract is complete. A subset of the facade also builds for
+macOS/AArch64 over libSystem; see [Darwin backend](#darwin-backend).
 
 ## Boundary
 
@@ -22,7 +23,8 @@ Syscall-like native APIs must not round-trip through the public C ABI or TLS
 `errno`. The only permitted runtime-state exception is the append-only,
 versioned private `RuntimeV1` bridge owned by libc/ldso; it is used where
 loader, thread/TLS, or opt-in stdio state cannot be represented as a direct
-kernel operation.
+kernel operation. The Darwin backend's `errno` rule is the one exception to
+the `errno` part of this rule.
 
 ## API rules
 
@@ -43,6 +45,68 @@ kernel operation.
   correspondence and exclusion. `io_uring` is a separate extended Linux
   surface outside libc-native parity, and the undocumented, unstable
   `rustix::runtime` module is not an application-facing API to mirror.
+
+## Darwin backend
+
+On `aarch64-apple-darwin` (macOS 27 or newer, Apple Silicon), `crabc-rs`
+builds a libSystem backend in place of `crabc-core`, as
+[CRAB-7](../rfc/CRAB-7-macos-libsystem-backend.md) decides. `crabc-core` is a
+Linux-only dependency and is not built for macOS.
+
+```text
+Rust application
+       │
+   crabc-rs   shared vocabulary: descriptors, paths, buffers, modes
+       │
+ darwin backend → libSystem (extern "C") → XNU
+```
+
+- **Declarations.** `crabc-rs/src/darwin/sys.rs` declares by hand each
+  libSystem function, record and constant the backend calls. Every record has
+  size, alignment and field-offset assertions from the macOS 27 SDK. `fcntl`,
+  `ioctl` and `openat` are declared variadic because Apple's AArch64 ABI
+  passes variadic arguments on the stack.
+- **Errors.** libSystem reports failures only through thread-local `errno`.
+  Each Darwin wrapper reads it through `__error()` immediately after the
+  failing call, before any other call can overwrite it, and returns it as the
+  typed `Errno` from the same function. `errno` never crosses a facade
+  boundary. Darwin's `Errno` carries Darwin numbers under the Linux constant
+  names; Linux-only names are absent and Darwin-only names are added.
+- **Types.** A public type stays in common code only when its representation
+  is the same on both targets, as for `BorrowedFd`, `OwnedFd`, `IoSlice`,
+  `PathArg`, `Mode`, `FileType`, `Timespec` and `NamedTempFile`. A type that
+  holds OS values, such as `Errno`, `OFlags`, the `*AtFlags` types,
+  `PipeFlags`, `DupFlags`, `Stat` and `Dir`, has a Darwin definition built
+  from `darwin/sys.rs` constants. Nothing translates Linux values at run
+  time, and the backend is chosen only at compile time.
+- **Close-on-exec.** macOS 27 provides `O_CLOEXEC`, `F_DUPFD_CLOEXEC`,
+  `pipe2` and `dup3`, so every descriptor the ported modules create gets
+  close-on-exec atomically, and no ported type has a fork race. Darwin still
+  lacks `SOCK_CLOEXEC` and `accept4`. When `net` is ported, its constructors
+  set `FD_CLOEXEC` right after creation and name the race between creation
+  and that call in each affected type's documentation. `Dir` errs the other
+  way: libSystem's `fdopendir` sets `FD_CLOEXEC` on the descriptor it adopts.
+- **Source compatibility.** A ported module keeps the Linux public names and
+  signatures of everything it ports. The examples that use only ported
+  modules build for both targets.
+
+| Module | Darwin status | Notes |
+| --- | --- | --- |
+| `buffer`, `collections`, `ffi`, `numeric`, `path` | Ported | Target-neutral; unchanged |
+| `fd` | Ported | `AT_FDCWD` is `-2`; closing calls libSystem `close` |
+| `io` | Ported | No `ReadWriteFlags`, `preadv2`, `pwritev2` or `sync_file_range`; a vectored call with no segments fails with `EINVAL` |
+| `pipe` | Ported | `pipe2`; `PIPE_BUF` is 512; no packet mode or splice family |
+| `fs` | Ported subset | The module documentation lists the absent items and behavior differences |
+| All other modules | Absent | Using one is a compile-time error; `users` and `resolver` stay absent through D3 |
+
+The `crabc-rs/tests/` crates for the ported modules run natively on macOS.
+Linux-only assertions sit behind `cfg(target_os = "linux")`. A Darwin
+counterpart exists only where the behavior differs: APFS UTF-8 names, empty
+vectored calls, a zero-length `readlinkat` buffer, `chmodat` on a link, the
+unused directory buffer, sparse-seek errors and `pipe2` flags.
+`compat/crabc-rs/coverage.toml` has no Darwin column. It is a frozen D25
+input whose SHA-256 `compat/x86_64/aarch64_frozen_baseline.json` pins, so a
+schema change would be rejected.
 
 ## Capability accounting
 

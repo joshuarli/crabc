@@ -2,7 +2,9 @@
 
 Status: accepted 2026-11-27. The owner admitted it in parallel with Linux/AArch64
 feature completion ([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md)) and
-delegated the open questions, which take every recommendation below.
+delegated the open questions, which take every recommendation below. D1 is
+done ([D1 record](#d1-record)); the backend's current boundary and module
+status live in the [`crabc-rs` design](../design/crabc-rs.md#darwin-backend).
 
 ## Decisions
 
@@ -58,11 +60,11 @@ without a portability framework.
   options, signal numbers and `termios` fields all have different values or
   layouts on Darwin. A facade type that stores a Linux value directly, such as
   a `bitflags` type with Linux bit values, needs per-target constants.
-- **Atomic close-on-exec is partial.** Darwin has `O_CLOEXEC`, but not
-  `SOCK_CLOEXEC`, `accept4`, `pipe2` or `dup3`. A wrapper that sets
-  close-on-exec with `fcntl` after creation can race with a concurrent `fork`
-  or `exec`. The facade must not hide this gap behind a fallback (see open
-  question 3).
+- **Atomic close-on-exec is partial.** Darwin has `O_CLOEXEC` and
+  `F_DUPFD_CLOEXEC`, and macOS 27 adds `pipe2` and `dup3`, but there is no
+  `SOCK_CLOEXEC` or `accept4`. A wrapper that sets close-on-exec with `fcntl`
+  after creation can race with a concurrent `fork` or `exec`. The facade must
+  not hide this gap behind a fallback (see open question 3).
 - **Project rules still apply.** [STYLE.md §37](../../STYLE.md) requires
   `#[cfg(target_os = "macos")] mod darwin;` instead of a runtime backend enum
   or table, and §38 keeps platform machinery out of common code. The
@@ -101,7 +103,7 @@ table.
 
 | Class | Modules | Darwin notes |
 | --- | --- | --- |
-| Port, core | `fd`, `io`, `fs` (openat-family, `fstatat`, directories, links, permissions, times), `pipe`, `path`, `buffer`, `collections`, `numeric`, `param` subset | No `statx` (use `fstatat`); there is no `pipe2`, so creating a pipe needs a decision on close-on-exec atomicity |
+| Port, core | `fd`, `io`, `fs` (openat-family, `fstatat`, directories, links, permissions, times), `pipe`, `path`, `buffer`, `collections`, `numeric`, `param` subset | No `statx` (use `fstatat`); macOS 27's `pipe2` creates pipes with atomic close-on-exec |
 | Port, process and time | `process` (`posix_spawn`, wait, identity, limits), `signal`, `time` (`clock_gettime`, sleeps), `rand` (`getentropy`) | No `pidfd`, `clone` or `prctl`; `posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT` covers spawning; the CRAB-2 `Child` ownership contract carries over unchanged |
 | Port, networking | `net` (sockets, addresses, messages), `netdb` file snapshots | No `SOCK_CLOEXEC`/`accept4`/`mmsg`; `netdb` snapshots still parse caller bytes or `/etc` files, but `/etc/hosts` is not the authoritative macOS name service |
 | Port, terminals | `termios`, `pty` (`posix_openpt`) | Different `termios` layout and control-character indices |
@@ -110,9 +112,11 @@ table.
 | Absent | `event` (epoll), `eventfd`, `inotify`, `mount`, `ioctl` Linux requests, POSIX message queues, `fallocate`, `readahead`, `sync_file_range`, `copy_file_range`, `splice`/`tee`, sched affinity | Linux-only mechanisms; macOS has no POSIX message queues. A future kqueue module would be a separate proposal, not an epoll translation |
 | Absent | `dl`, `runtime_thread`, `cfile` (features `runtime-loader`, `runtime-thread`, `runtime-stdio`) | These bind crabc's private `RuntimeV1` table in crabc's libc, which does not exist on macOS |
 
-The exact per-group classification belongs in `compat/crabc-rs/coverage.toml`,
-which would gain a Darwin status column. That column is only a start: no
-module counts as ported until a native behavior test passes on macOS.
+The proposal put the exact per-group classification in a Darwin status column
+of `compat/crabc-rs/coverage.toml`. That ledger is a frozen D25 input whose
+digest its readers check, so the Darwin status lives in the
+[`crabc-rs` design](../design/crabc-rs.md#darwin-backend) instead. No module
+counts as ported until a native behavior test passes on macOS.
 
 ### Declarations
 
@@ -144,7 +148,7 @@ the facade does not need. See open question 2.
    `docs/scope.md`, the compatibility profile and `crabc-rs/src/lib.rs`'s
    `compile_error!` text. Record the minimum macOS version and the answers to
    the open questions.
-2. **D1, compile gate:** `cargo check -p crabc-rs --target aarch64-apple-darwin`
+2. **D1, compile gate (done):** `cargo check -p crabc-rs --target aarch64-apple-darwin`
    builds with the core port modules and drops `crabc-core` on Darwin.
    Behavior tests for `fd`, `io`, `fs` and `pipe` pass on a Mac.
 3. **D2, process, time and networking:** `process`, `signal`, `time`, `rand`
@@ -156,6 +160,36 @@ Each phase is independent of the Linux campaign and changes no Linux product
 source. That keeps the Linux product source digest stable, provided the shared
 types do not change. If D1 restructures shared types, that is a Linux product
 change and needs its own Linux qualification.
+
+### D1 record
+
+D1 ports `buffer`, `collections`, `ffi`, `fd`, `io`, `numeric`, `path`, `pipe`
+and a subset of `fs`; every other module is absent on Darwin. `fs`'s module
+documentation lists each absent item with its reason. Two findings change the
+assumptions above:
+
+- macOS 27 provides `pipe2` and `dup3`. With `O_CLOEXEC` and
+  `F_DUPFD_CLOEXEC`, every descriptor the D1 modules create gets
+  close-on-exec atomically, so decision 3's workaround first applies to the
+  D2 socket constructors.
+- `compat/crabc-rs/coverage.toml` gets no Darwin column, because its readers
+  reject any change to its pinned digest.
+
+D1 changes the text of shared `crabc-rs` sources (compile-time gates and
+aliases, documentation), not the Linux public API or behavior. Rustdoc JSON
+lists the same public items with the same signatures before and after:
+13,310 for both Linux targets with default features and 11,436 for
+`aarch64-unknown-linux-musl` without them. Evidence that digests those source
+files is regenerated at the next Linux qualification run. The gate passed
+with these commands:
+
+```sh
+cargo check -p crabc-rs --target aarch64-apple-darwin
+cargo check -p crabc-rs --target aarch64-apple-darwin --no-default-features
+cargo test -p crabc-rs --target aarch64-apple-darwin
+.work/bin/vm -- scripts/lanes/rust-check.sh cargo check -q --locked -p crabc-rs --target aarch64-unknown-linux-musl
+.work/bin/vm -- scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl
+```
 
 ## Open questions
 
