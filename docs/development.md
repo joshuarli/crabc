@@ -26,8 +26,8 @@ The current toolchain is `nightly-2026-11-09`. The pinned x86 image is
 the native arm image is
 `sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`.
 The arm image is built from `docker/Dockerfile.aarch64` and is not reproducible.
-It is the 2026-11-22 build from `6161b069d`, kept in the Mac's OrbStack `crabc`
-machine; the interim `sha256:7ac9c379…` pin came from another host.
+It is the 2026-11-22 build from `6161b069d`, kept in the Mac's ctrs `crabc`
+devbox (moved from OrbStack with `docker save`/`docker load`); the interim `sha256:7ac9c379…` pin came from another host.
 The authoritative image IDs are in `compat/x86_64/core_image.py`.
 
 The 2026-11-21 cold-capsule setup and two-build reproduction are historical:
@@ -85,8 +85,9 @@ individual C symbols.
 ## AArch64
 
 AArch64 runs only natively in arm64 Linux, never emulated or on a macOS bind
-mount. On an Apple Silicon Mac, use an OrbStack arm64 Linux VM and keep the
-clone on the VM's own disk. Put the work directory (`.work/aarch64`) on an ext4
+mount. On an Apple Silicon Mac, use the ctrs `crabc` devbox
+([host setup](rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-ctrs-devbox))
+and keep the clone on its ext4 `/work` volume. Put the work directory (`.work/aarch64`) on an ext4
 volume with at least about 40M inodes (for example a loop-mounted image made
 with `mkfs.ext4 -i 8192`); btrfs reports zero free inodes, which the harness
 rejects. The AArch64 core image is still built from `docker/Dockerfile.aarch64`

@@ -118,7 +118,7 @@ unwinder and consumer fixture dependencies, and writes these entries to
 ```
 
 From macOS, invoke the preparation through
-`scripts/lanes/orb-vm-run.sh scripts/lanes/prepare-worktree.sh`. These inputs
+`scripts/lanes/vm-run.sh scripts/lanes/prepare-worktree.sh`. These inputs
 do not replace the independently prepared static and dynamic product cohort
 receipts required by the consumers.
 

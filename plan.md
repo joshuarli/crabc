@@ -29,12 +29,13 @@ checkout. Do not write to either checkout while they run.
 On 2026-11-27 arm was re-pinned back to
 `sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`, the
 2026-11-22 build from `6161b069d` (rustc `nightly-2026-11-09`, commit
-`5b7b37aef`). It survives in the Mac's OrbStack `crabc` machine; the interim
+`5b7b37aef`). It survives in the Mac's ctrs `crabc` devbox, moved from the OrbStack
+machine with `docker save`/`docker load` on 2026-11-28; the interim
 `7ac9c379…` pin was built on another host that this phase does not use, so arm
-evidence collected in it is not admitted. The machine is Alpine 3.23, kernel
-7.2.12, 17 CPUs; the clone and `.work` live on a 40M-inode ext4 loop mount at
-`/mnt/crabc` (`/var/lib/crabc-disk/ext4.img`, in `/etc/fstab`), and Docker Engine
-keeps its data root at `/var/lib/docker`. Nothing is accepted.
+evidence collected in it is not admitted. The devbox is Alpine 3.23 with 16
+CPUs and 28 GiB; the clone and `.work` live on its ext4 `/work` volume (67M
+inodes), and its Docker Engine keeps its data root on a second ext4 volume.
+Nothing is accepted.
 
 | Step | Done on x86-64 | Still needs native arm64 |
 | --- | --- | --- |
@@ -46,7 +47,7 @@ keeps its data root at `/var/lib/docker`. Nothing is accepted.
 
 Arm64 sequence:
 
-1. Create the VM using [CRAB-8 host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack).
+1. Create the devbox using [CRAB-8 host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-ctrs-devbox).
    Keep the clone on the VM's disk and `.work/aarch64` on ext4 with about 40M
    inodes. Install Docker Engine inside the VM, and never use a macOS bind mount
    or emulation.
@@ -120,8 +121,8 @@ The owner reopened all work that can run on the Apple Silicon Mac, in parallel:
 - **macOS backend:** [CRAB-7](docs/rfc/CRAB-7-macos-libsystem-backend.md),
   D0 through D3, with the owner's decisions recorded there.
 
-Linux work runs in the OrbStack arm64 Linux VM with Docker Engine inside the VM
-([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack)). The macOS backend builds and tests natively on macOS.
+Linux work runs in the ctrs arm64 devbox with Docker Engine inside it
+([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-ctrs-devbox)). The macOS backend builds and tests natively on macOS.
 Never use the Mac's own Docker engine, a macOS bind mount or emulation. Work in
 fresh worktrees from main, never in the M6 candidate checkouts.
 
@@ -137,13 +138,14 @@ each in its owning document and continue.
 
 Owner direction 2026-11-28: dogfood the owner's ctrs engine
 (`~/repos/ctrs`) instead of OrbStack for the arm64 VM, and implement the ctrs
-features this work needs (CTRS-17 to 20). Until the ctrs devbox lands and the
-relay scripts move to it, no new arm work starts on OrbStack; the next arm
-candidate runs on ctrs.
+features this work needs (CTRS-17 to 20). The relay scripts are
+`scripts/lanes/vm-run.sh` and `vm-lane.sh`; the next arm candidate runs on
+ctrs.
 
-Host: OrbStack machine `crabc` with the clone and lane worktrees on the ext4
-volume `/mnt/crabc` ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack));
+Host: the ctrs devbox `crabc` with the clone and lane worktrees on its ext4
+`/work` volume ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-ctrs-devbox));
 arm image `sha256:7b7cd03d…`, all 18 arm manifest tool hashes verified in it.
+The arm allocator unit suite passes there (1634 tests, `4e9279e5a`).
 
 Integrated: arm re-pin `be0b2ec70`; aarch64 corpus closure re-solve
 `db3eb2f5a`; relay scripts `ae2c95b34`; M5 arm evidence fixtures and the
@@ -209,11 +211,11 @@ two concurrent-reserve fields, and an x86 route for the unown-retry pause
 (x86 data breakpoints trap after the access).
 
 Blocked here: allocator conditions that need hugetlbfs pools, physical NUMA
-nodes or 16/64 KiB pages. The OrbStack kernel has no hugetlbfs and no NUMA
-nodes and runs 4 KiB pages, so those need another native arm64 host. The
-CRAB-11 `getset` SCHED_FIFO progress proof. Pinned musl
-stalls in this VM as often as crabc (3 of 6 each), so it needs another native
-arm64 host.
+nodes or 16/64 KiB pages, and the CRAB-11 `getset` SCHED_FIFO progress proof
+(pinned musl stalled in the OrbStack VM as often as crabc, 3 of 6 each). ctrs
+lane `guest-kernel-features` is adding hugetlbfs pools, NUMA emulation and a
+16 KiB-page kernel and diagnosing SCHED_FIFO (CTRS-17 to 20); 64 KiB pages need
+non-Apple arm64 hardware.
 
 ## D25 dual-native milestone
 
@@ -430,7 +432,7 @@ reproducer is sufficient; do not wait for an R1–R4 cost gate to authorize a fi
 
 The Rust port (`crabc-mimalloc/`) and the `compat/allocator/` harness, receipts
 and milestones are open for development and correctness qualification on
-Linux/AArch64 in the native arm64 VM ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack)). Before the first
+Linux/AArch64 in the native arm64 VM ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-ctrs-devbox)). Before the first
 port change, reassess its scope against the
 [allocator obligations](docs/completion-requirements.md#native-allocator-obligations)
 and record the result there. The port stays a faithful semantic port of v3.5.0

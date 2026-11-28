@@ -1,7 +1,8 @@
 # CRAB-8: Linux/AArch64 feature completion on an Apple Silicon host
 
 Status: accepted 2026-11-18 — the owner took every recommendation in D1–D6.
-The host is an OrbStack Linux/arm64 VM on the Apple Silicon Mac.
+The host is an arm64 devbox on the owner's ctrs engine on the Apple Silicon Mac
+(OrbStack until 2026-11-28; see [Host setup](#host-setup-ctrs-devbox)).
 [`plan.md`](../../plan.md) records it as the campaign after F2.
 
 ## Summary
@@ -181,7 +182,8 @@ deferred on both architectures.
   unchanged", and the Rust allocator port stays frozen either way.
 - **D4, host:** a Lima or OrbStack Linux VM with its own disk (recommended),
   or Docker Desktop with a named volume. Accepted as OrbStack, whose machine
-  root is btrfs on the VM's block device.
+  root is btrfs on the VM's block device; replaced on 2026-11-28 by a ctrs
+  devbox whose work tree is on ext4 named volumes.
 - **D5, start:** start A0 and A1 now on a branch, with nothing merged until
   final8 is accepted (recommended). The alternative is to wait for final8
   before starting anything.
@@ -208,46 +210,51 @@ starting brief for the Apple Silicon session.
   (`PRODUCT_TREES` and `PRODUCT_FILES` in `compat/x86_64/source_seal.py`,
   including `docker/`) invalidate the running candidate.
 
-### Host setup (OrbStack)
+### Host setup (ctrs devbox)
+
+The arm64 Linux host is a devbox on the owner's ctrs engine
+(`~/repos/ctrs`): a long-lived privileged container under
+Virtualization.framework running its own Docker Engine, with `/work` and
+`/var/lib/docker` on ext4 named volumes on the guest's data disk (1 TiB
+sparse, 67M inodes), never virtiofs. It replaced the OrbStack machine on
+2026-11-28 so crabc dogfoods ctrs.
 
 ```sh
-orb create alpine crabc                  # arm64 Linux machine
-orb -m crabc
-# Inside the machine. Install Docker Engine here, not the Mac's OrbStack engine,
-# so every mounted path is on the machine's own disk.
-sudo apk add docker e2fsprogs rsync python3 git && sudo rc-update add docker default
-sudo rc-service docker start && sudo addgroup "$USER" docker
-# The machine's own disk is btrfs, which reports zero free inodes; the harness
-# needs an ext4 work volume with about 40M inodes.
-sudo mkdir -p /var/lib/crabc-disk /mnt/crabc
-sudo truncate -s 320G /var/lib/crabc-disk/ext4.img
-sudo mkfs.ext4 -q -F -i 8192 -m 0 /var/lib/crabc-disk/ext4.img
-echo '/var/lib/crabc-disk/ext4.img /mnt/crabc ext4 loop,noatime 0 0' | sudo tee -a /etc/fstab
-sudo mount /mnt/crabc && sudo chown "$USER" /mnt/crabc
-git clone /Users/$USER/d/crabc /mnt/crabc/crabc  # one-time clone of the Mac checkout
-uname -m; uname -r; getconf PAGESIZE; nproc; df -i /mnt/crabc
+cd ~/repos/ctrs && cargo xtask all            # see ctrs docs/development.md
+ln -sf ~/repos/ctrs/target/release/ctrs ~/.local/bin/ctrs
+printf '{"cpus":16,"memory_mib":28672}\n' > ~/.local/share/ctrs/vm.json
+ctrs engine start
+DEVBOX_NAME=crabc DEVBOX_PACKAGES="bash ca-certificates curl findutils gdb tar util-linux xz" \
+    examples/devbox/devbox.sh create -v "$HOME/d/crabc:$HOME/d/crabc:ro"
+DEVBOX_NAME=crabc examples/devbox/devbox.sh exec sh -c \
+    'git clone -q /Users/josh/d/crabc /work/crabc && echo /.work/ >> /work/crabc/.git/info/exclude'
+DEVBOX_NAME=crabc examples/devbox/devbox.sh exec sh -c \
+    'uname -m; uname -r; getconf PAGESIZE; nproc; df -i /work'
 ```
 
-Never pass `--platform linux/amd64` on the Mac. The VM holds no GitHub
-credentials; commits are made and pushed from the Mac.
+The pinned arm images are not reproducible; move them between hosts with
+`docker save` and `docker load`, which keep their image IDs. Never pass
+`--platform linux/amd64` on the Mac. The devbox holds no GitHub credentials;
+commits are made and pushed from the Mac.
 
-From a Mac worktree, `scripts/lanes/orb-vm-run.sh <command...>` mirrors that
-worktree into its VM worktree `/mnt/crabc/crabc/.work/wt/<name>` (`main` for
-the primary checkout); linked worktrees must stay inside the clone's `.work/`
-because the native ABI inputs are confined to the canonical checkout's `.work`, detached at the Mac HEAD with uncommitted edits copied over, and runs
-the command there; wrap builds in `scripts/lanes/rust-check.sh`.
-`scripts/lanes/orb-vm-lane.sh <name> <commit>` creates a paired lane and seeds
-its VM worktree from the `main` mirror. Run `scripts/lanes/prepare-worktree.sh`
+From a Mac worktree, `scripts/lanes/vm-run.sh <command...>` mirrors that
+worktree into its devbox worktree `/work/crabc/.work/wt/<name>` (`main` for
+the primary checkout), detached at the Mac HEAD with uncommitted edits copied
+over, and runs the command there; wrap builds in `scripts/lanes/rust-check.sh`.
+Linked worktrees stay inside the clone's `.work/` because the native ABI
+inputs are confined to the canonical checkout's `.work`.
+`scripts/lanes/vm-lane.sh <name> <commit>` creates a paired lane and seeds its
+devbox worktree from the `main` mirror. Run `scripts/lanes/prepare-worktree.sh`
 through the relay in the `main` mirror first to seed the source oracles,
 package corpus, Lua archive and Rust std/LTO vendors.
 
-OrbStack remains the host. When work needs a guest capability that OrbStack
-lacks, file a feature request in the owner's OrbStack alternative ctrs
-(`~/repos/ctrs`, with `todo add` in its `TODO.md`): say what crabc needs, the
-blocked condition, and a container-level proof. Then record the condition as
-host-limited here or in its fragment. Filed so far: hugetlbfs pools
-(CTRS-17), NUMA nodes (CTRS-18), a 16 KiB-page kernel (CTRS-19; Apple Silicon
-has no 64 KiB granule) and SCHED_FIFO progress (CTRS-20).
+When the work needs a guest capability ctrs lacks, implement it in ctrs (or
+file it in ctrs `TODO.md` with `todo add`, saying what crabc needs, the blocked
+condition and a container-level proof), then record the condition as
+host-limited here or in its fragment until it lands. Requested so far:
+hugetlbfs pools (CTRS-17), NUMA nodes (CTRS-18), a 16 KiB-page kernel
+(CTRS-19; Apple Silicon has no 64 KiB granule) and SCHED_FIFO progress
+(CTRS-20).
 
 ### A0 tasks, on `lane/a0-aarch64-image`
 
@@ -389,7 +396,7 @@ Open, in dependency order:
   governs. Implemented in `builtins/src/aarch64_binary128.rs`; the long-double
   completion evidence now reports zero differences with no allowlist.
 
-Host workflow: see [Host setup](#host-setup-orbstack). The pinned musl trees go
+Host workflow: see [Host setup](#host-setup-ctrs-devbox). The pinned musl trees go
 in the VM worktree's `.work/aarch64/musl-src/`: the `[musl]` release tarball
 (the generators' tree digest) and the `[musl_native]` snapshot (scanf and
 float-parse generators), both downloaded from `compat/upstreams.toml` and

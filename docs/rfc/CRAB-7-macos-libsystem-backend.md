@@ -248,7 +248,7 @@ cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features
 cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features --features alloc
 cargo test -p crabc-rs --target aarch64-apple-darwin
 cargo check -p crabc-rs --target x86_64-unknown-linux-musl
-scripts/lanes/orb-vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
+scripts/lanes/vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
 ```
 
 ### D3 record
@@ -322,7 +322,7 @@ cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features
 cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features --features alloc
 cargo test -p crabc-rs --target aarch64-apple-darwin --no-fail-fast
 cargo check -p crabc-rs --target x86_64-unknown-linux-musl --all-targets
-scripts/lanes/orb-vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
+scripts/lanes/vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
 ```
 
 ### Final module classification
