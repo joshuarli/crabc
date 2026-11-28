@@ -164,9 +164,15 @@ facade runs 395 native tests, the Linux suite (852) and the rustdoc public
 API are unchanged, and the RFC records decisions 1–9 and the final module
 table. Its x86-64 tests run in the x86 phase.
 
-Next: the full arm correctness candidate at one SHA after the product lanes
-land. The baseline run at `db3eb2f5a` passed its first 42 steps; VM lane
-worktrees must live inside the clone's `.work/wt/` (`e504dc870`).
+Arm candidate: the baseline at `db3eb2f5a` passed 60 of 86 steps and exposed
+four harness defects, now fixed on main: VM worktrees outside the clone's
+`.work` (`e504dc870`), no arm re-collection for the reviewed anonymous export
+rosters (`c661da885`; rerun `native-abi-exports update` on the candidate's own
+inventory when abi-evidence reports only `anon.*` changes), toolchain-hashed
+binary128 helper names (`7825f0851`, `fd1916f19`) and label-based helper
+transfer matching (`6b0f6e5f9`, a product-tree change that ended the
+baseline). A fresh candidate runs at `6b0f6e5f9` in the VM clone's
+`.work/wt/arm-cand2` (log `.work/wt/arm-cand2-run.log`).
 
 Allocator M2 on AArch64 (`fc949c1dd`): the VM component runs natively (63
 checks, no C/Rust mismatch); its conditions narrow as the arenas,
