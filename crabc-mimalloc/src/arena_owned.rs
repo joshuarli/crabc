@@ -5307,6 +5307,35 @@ mod tests {
             assert!(unsafe { backing.collect_purge(process, config(), true, false, sequence) });
             stage(name, &mut rows);
         }
+        // SAFETY: arena 0 is published by this backing and no other claim or
+        // traversal is in flight.
+        let claim = unsafe { backing.try_find_free(search(arenas[0]), 1, ARENA_SLICE_SIZE, true) }
+            .expect("arena 0 supplies one committed slice again");
+        assert!(claim.release());
+        // SAFETY: the published arena header outlives the fixture.
+        crate::atomic::i64_store_release(unsafe { &(*arenas[0].as_ptr()).purge_expire }, i64::MAX);
+        crate::atomic::i64_store_release(&backing.purge_expire, i64::MAX);
+        rows.push((std::string::String::from("contended_pending"), pending_mask()));
+        let held = crate::atomic::try_atomic_guard(&super::purge::PURGE_GUARD)
+            .expect("no traversal holds the process purge guard");
+        let held_state = (pending_mask(), expiry_mask(), global_state());
+        let held_vm = process.subprocess().vm_statistics().snapshot();
+        let held_arena = process.subprocess().arena_statistics().snapshot();
+        // SAFETY: as for the preloading traversal; the guard is held above.
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        let refused_vm = process.subprocess().vm_statistics().snapshot();
+        let refused_arena = process.subprocess().arena_statistics().snapshot();
+        rows.extend([
+            (std::string::String::from("refused_pending_same"), i64::from(pending_mask() == held_state.0)),
+            (std::string::String::from("refused_expiry_same"), i64::from(expiry_mask() == held_state.1)),
+            (std::string::String::from("refused_global_same"), i64::from(global_state() == held_state.2)),
+            (std::string::String::from("refused_visits"), refused_arena.arena_purges - held_arena.arena_purges),
+            (std::string::String::from("refused_calls"), refused_vm.purge_calls - held_vm.purge_calls),
+        ]);
+        drop(held);
+        // SAFETY: as for the preloading traversal.
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 0) });
+        stage("contended_final", &mut rows);
         let final_vm = process.subprocess().vm_statistics().snapshot();
         // SAFETY: as for `view`; the commit bitmap is only read here.
         let pinned_committed = unsafe { view(PINNED).slices_committed() }.unwrap()

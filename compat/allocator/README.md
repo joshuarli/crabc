@@ -424,14 +424,14 @@ until a native x86 run admits them:
   terminal unabandon.
 - `arena-purge-rotation-c-rust-differential`
   (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
-  eight arenas with disabled-delay, immediate-delay and preloading refusals
-  and a pinned arena.
+  eight arenas with disabled-delay, immediate-delay, preloading and
+  purge-guard refusals and a pinned arena.
 
 Pinned-C-only primitive receipts and Rust-only retained counts use the VM
 direct-receiver record; the aggregate re-parses every physical transcript.
 The component stays partial: the concurrent unown and
-unabandon interleavings, multi-arena abandoned-page search, purge-guard
-contention and the purge-delay option product remain open, and so do large-page
+unabandon interleavings, multi-arena abandoned-page search and the purge-delay
+option product remain open, and so do large-page
 and huge-page reservation success, NUMA placement and the 16 KiB and 64 KiB
 base-page geometries, which this VM cannot supply.
 

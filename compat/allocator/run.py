@@ -963,12 +963,18 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
                 )
                 for field, value in zip(("pending", "expiry", "global", "visits", "calls"), values)
             },
-            "bytes": 7 * 64 * 1024, "pinned_committed": 1, "registry": 8,
+            "contended_pending": 3, "refused_pending_same": 1, "refused_expiry_same": 1,
+            "refused_global_same": 1, "refused_visits": 0, "refused_calls": 0,
+            **{
+                f"contended_final_{field}": value
+                for field, value in zip(("pending", "expiry", "global", "visits", "calls"), (2, 253, 2, 8, 8))
+            },
+            "bytes": 8 * 64 * 1024, "pinned_committed": 1, "registry": 8,
         },
         "c_only": {},
         "rust_only": {},
         "c_receipt": None,
-        "scope": "pinned-c-rust-eight-arena-bounded-purge-rotation-with-disabled-immediate-and-preloading-refusals-pinned-skip-three-visit-budget-and-global-clear",
+        "scope": "pinned-c-rust-eight-arena-bounded-purge-rotation-with-disabled-immediate-preloading-and-guard-refusals-pinned-skip-three-visit-budget-and-global-clear",
     },
     "arena-page-abandonment-c-rust-differential": {
         "artifact": "m2-arena-abandonment",

@@ -49,7 +49,7 @@ def run(offline: bool) -> Path:
             "-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1",
             "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-I", str(source / "include"),
             "-I", str(source / "src"), *harness.CONFIGURATION_PROFILES["release"],
-            str(FIXTURE), "-pthread", "-o", str(binary),
+            str(FIXTURE), "-Wl,--wrap=madvise", "-pthread", "-o", str(binary),
         ], cwd=source, timeout_seconds=300)
         harness.require_success(build, "pinned C arena purge rotation build")
         c_run = harness.command_record([str(binary)], cwd=source, timeout_seconds=120)
