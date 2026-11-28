@@ -15,7 +15,8 @@ import run as harness
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_page_map_lazy_map_rollback_x86_64.c"
 TARGET = "process_page_map::tests::emit_m2_page_map_lazy_map_rollback_c_rust_trace"
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-page-map-lazy-map-rollback"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-page-map-lazy-map-rollback"
 FIELD = re.compile(r"^m2\.page_map\.lazy_map_rollback\.([a-z_]+)=([0-9a-f]*)$", re.MULTILINE)
 EXPECTED = {"output", "failed", "empty_after_failure", "map_attempts", "reserved_delta",
     "committed_delta", "mmap_delta", "retry", "entry_published", "retry_reused",
@@ -34,7 +35,7 @@ def parse_trace(output: str, source: str) -> dict[str, str]:
 
 
 def run(offline: bool) -> dict[str, object]:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
@@ -54,8 +55,8 @@ def run(offline: bool) -> dict[str, object]:
         harness.write_json(ARTIFACTS / "c-run.json", c_run)
         harness.require_success(c_run, "PageMap lazy-map pinned C process")
 
-    program = harness._x86_64_unit_test_program(harness._m2_x86_64_vm_rust_execution(),
-        harness.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
+    program = harness._x86_64_unit_test_program(harness._m2_x86_64_vm_rust_execution(ARCH),
+        harness.m2_memory_substrate_cargo_target(ARCH),
         gate_name="PageMap lazy-map rollback")
     rust_run = harness.command_record([str(program["path"]), TARGET, "--exact",
         "--test-threads=1", "--nocapture"], cwd=ROOT, timeout_seconds=300)

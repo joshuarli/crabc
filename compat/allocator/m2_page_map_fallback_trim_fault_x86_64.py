@@ -15,7 +15,8 @@ import run as harness
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_page_map_fallback_trim_fault_x86_64.c"
 TARGET = "process_page_map::tests::emit_m2_page_map_fallback_trim_fault_c_rust_trace"
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-page-map-fallback-trim-fault"
+ARCH = harness.native_evidence_architecture()
+ARTIFACTS = harness.ARTIFACT_ROOT / ARCH / "m2-page-map-fallback-trim-fault"
 FIELD = re.compile(r"^m2\.page_map\.fallback_trim_fault\.([a-z_]+)=([0-9a-f]*)$", re.MULTILINE)
 EXPECTED = {"output", "initialized", "reserved", "committed", "mmap_calls",
     "commit_calls", "suffix_length", "suffix_live", "allocated", "raw_cleanup"}
@@ -33,7 +34,7 @@ def parse_trace(output: str, source: str) -> dict[str, str]:
 
 
 def run(offline: bool) -> dict[str, object]:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
@@ -54,8 +55,8 @@ def run(offline: bool) -> dict[str, object]:
         harness.write_json(ARTIFACTS / "c-run.json", c_run)
         harness.require_success(c_run, "PageMap fallback trim pinned C process")
 
-    program = harness._x86_64_unit_test_program(harness._m2_x86_64_vm_rust_execution(),
-        harness.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET,
+    program = harness._x86_64_unit_test_program(harness._m2_x86_64_vm_rust_execution(ARCH),
+        harness.m2_memory_substrate_cargo_target(ARCH),
         gate_name="PageMap fallback trim fault")
     rust_run = harness.command_record([str(program["path"]), TARGET, "--exact",
         "--test-threads=1", "--nocapture"], cwd=ROOT, timeout_seconds=300)
@@ -74,7 +75,10 @@ def run(offline: bool) -> dict[str, object]:
         and "unable to free OS memory" in warnings[2]
         and "address: 0xSUFFIX" in warnings[2]):
         raise ValueError("pinned C PageMap warning order or release range changed")
-    expected_c = {"initialized": "1", "reserved": "2359296", "committed": "2359296",
+    # The good-size PageMap extent follows MI_MAX_VABITS (bits.h:119-128):
+    # 47 bits on x86-64 and 48 on AArch64 double the top-level reservation.
+    extent = {"x86_64": "2359296", "aarch64": "4456448"}[ARCH]
+    expected_c = {"initialized": "1", "reserved": extent, "committed": extent,
         "mmap_calls": "2", "commit_calls": "0", "suffix_length": "4096",
         "suffix_live": "1", "allocated": "1", "raw_cleanup": "1"}
     if any(c[key] != value for key, value in expected_c.items()):

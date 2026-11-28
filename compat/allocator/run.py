@@ -324,6 +324,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 M2_AARCH64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-aarch64-v3.5.0.fragment.json"
 M2_VM_FRAGMENTS = {"x86_64": M2_X86_64_VM_FRAGMENT, "aarch64": M2_AARCH64_VM_FRAGMENT}
 M2_AARCH64_ARENAS_FRAGMENT = ALLOCATOR_ROOT / "m2-arenas-aarch64-v3.5.0.fragment.json"
+M2_AARCH64_PAGE_MAP_FRAGMENT = ALLOCATOR_ROOT / "m2-page-map-aarch64-v3.5.0.fragment.json"
 M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
 M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
@@ -517,6 +518,10 @@ M2_X86_64_PAGE_MAP_CHECKS = (
         "target": "process_init::tests::rejected_page_map_after_heap_and_metadata_retains_ticket_zero_without_tls_publication",
     },
 )
+M2_PAGE_MAP_CHECKS = {
+    "x86_64": M2_X86_64_PAGE_MAP_CHECKS,
+    "aarch64": M2_X86_64_PAGE_MAP_CHECKS,
+}
 M2_X86_64_ARENA_CHECKS = (
     {
         "expected_passed_test_count": 1,
@@ -13804,11 +13809,13 @@ def _m2_x86_64_page_map_init_cleanup_producer() -> Any:
 
 def _run_m2_x86_64_page_map_init_cleanup_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the PageMap init-cleanup producer against the aggregate's binary."""
 
     return _m2_x86_64_page_map_init_cleanup_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -13848,11 +13855,13 @@ def _m2_x86_64_startup_statistics_producer() -> Any:
 
 def _run_m2_x86_64_startup_statistics_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the startup statistics producer against the aggregate's binary."""
 
     return _m2_x86_64_startup_statistics_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -13886,6 +13895,7 @@ M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS = {
         "fields": {"output", "initialized", "reserved", "committed", "mmap_calls",
             "commit_calls", "suffix_length", "suffix_live", "allocated", "raw_cleanup"},
         "scope": "pinned-c-rust-page-map-fallback-suffix-trim-failure-and-recovery",
+        "trace_prefix": "m2.page_map.fallback_trim_fault.",
     },
     "page-map-lazy-map-rollback-c-rust-differential": {
         "kind": "c-rust-page-map-lazy-map-rollback-differential",
@@ -13895,6 +13905,7 @@ M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS = {
             "reserved_delta", "committed_delta", "mmap_delta", "retry",
             "entry_published", "retry_reused", "cleared", "root_ready"},
         "scope": "pinned-c-rust-page-map-lazy-submap-map-rollback-and-retry",
+        "trace_prefix": "m2.page_map.lazy_map_rollback.",
     },
 }
 
@@ -14536,22 +14547,33 @@ def _m2_x86_64_page_map_first_map_fallback_producer() -> Any:
 
 def _run_m2_x86_64_page_map_fallback_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
-    """Run a source-built PageMap fallback or rollback receiver."""
+    """Run a source-built PageMap fallback or rollback receiver.
+
+    On AArch64 a process receiver also returns its physical C and Rust run
+    records, which the aggregate re-parses against the receipt.
+    """
 
     receiver = M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS.get(check["id"])
     if receiver is not None:
         command = ["python3", check["target"], *(["--offline"] if offline else [])]
         run = command_record(command, cwd=ROOT, timeout_seconds=900)
         require_success(run, "PageMap process C/Rust receiver")
-        evidence = read_json(
-            ARTIFACT_ROOT / "x86_64" / receiver["artifact"] / "evidence.json"
-        )
-        return {**evidence, "command": command}
+        artifacts = ARTIFACT_ROOT / architecture / receiver["artifact"]
+        evidence = read_json(artifacts / "evidence.json")
+        if architecture == "x86_64":
+            return {**evidence, "command": command}
+        return {
+            **evidence, "command": command,
+            "c_run": read_json(artifacts / "c-run.json"),
+            "rust_run": read_json(artifacts / "rust-run.json"),
+        }
     if check["id"] != "page-map-first-map-fallback-c-rust-differential":
         raise HarnessError("native x86 M2 PageMap fallback receiver is unknown")
     return _m2_x86_64_page_map_first_map_fallback_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -14839,13 +14861,19 @@ def _m2_x86_64_vm_component(
 
 
 M2_AARCH64_ARENAS_SOURCE_UNITS = ("src/arena.c", "src/heap.c")
-M2_AARCH64_ARENAS_BRANCH_DISPOSITIONS = frozenset(
+M2_AARCH64_PAGE_MAP_SOURCE_UNITS = ("include/mimalloc/internal.h", "src/page-map.c")
+M2_AARCH64_PARTIAL_BRANCH_DISPOSITIONS = frozenset(
     {"qualified-fixed-profile", "partial-fixed-profile", "unqualified"}
 )
+M2_AARCH64_ARENAS_BRANCH_DISPOSITIONS = M2_AARCH64_PARTIAL_BRANCH_DISPOSITIONS
 
 
-def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
-    """Materialize the AArch64 arena fragment without importing x86 status.
+def _m2_aarch64_partial_fragment_component(
+    raw_component: Mapping[str, Any], pin: Mapping[str, str], *, component_id: str,
+    fragment_path: Path, source_units: Sequence[str], checks: Sequence[Mapping[str, Any]],
+    label: str,
+) -> dict[str, Any]:
+    """Materialize one AArch64 partial-fragment component without importing x86 status.
 
     Every branch row names only checks this fragment executes, and each of its
     source anchors is one of the fragment's bounded source definitions, whose
@@ -14853,10 +14881,10 @@ def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[
     names no evidence; a partial row keeps at least one missing condition.
     """
 
-    reference = {"path": relative(M2_AARCH64_ARENAS_FRAGMENT)}
-    if dict(raw_component) != {"id": "arenas", "evidence_fragment": reference}:
-        raise HarnessError("native aarch64 M2 arena fragment reference changed")
-    fragment = read_json(M2_AARCH64_ARENAS_FRAGMENT)
+    reference = {"path": relative(fragment_path)}
+    if dict(raw_component) != {"id": component_id, "evidence_fragment": reference}:
+        raise HarnessError(f"native aarch64 M2 {label} fragment reference changed")
+    fragment = read_json(fragment_path)
     if (
         set(fragment) != {"component", "format", "schema", "target", "upstream"}
         or fragment.get("schema") != "crabc-mimalloc-aarch64-m2-component-evidence"
@@ -14870,42 +14898,42 @@ def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[
             "os": "linux", "rust_target": "aarch64-unknown-linux-musl",
         }
     ):
-        raise HarnessError("native aarch64 M2 arena fragment schema or provenance changed")
+        raise HarnessError(f"native aarch64 M2 {label} fragment schema or provenance changed")
     component = fragment.get("component")
     if not isinstance(component, Mapping) or set(component) != {
         "bounded_source_definitions", "branch_matrix", "checks", "completion_status", "id",
         "remaining_conditions", "source_map_records", "source_units", "unqualified_failure_matrix",
     }:
-        raise HarnessError("native aarch64 M2 arena fragment fields changed")
-    if component.get("id") != "arenas" or component.get("completion_status") != "partial":
-        raise HarnessError("native aarch64 M2 arena fragment must remain the partial arenas component")
-    if component.get("source_units") != list(M2_AARCH64_ARENAS_SOURCE_UNITS):
-        raise HarnessError("native aarch64 M2 arena fragment source units changed")
-    if component.get("checks") != [dict(check) for check in M2_ARENA_CHECKS["aarch64"]]:
-        raise HarnessError("native aarch64 M2 arena check inventory changed")
-    check_ids = [check["id"] for check in M2_ARENA_CHECKS["aarch64"]]
+        raise HarnessError(f"native aarch64 M2 {label} fragment fields changed")
+    if component.get("id") != component_id or component.get("completion_status") != "partial":
+        raise HarnessError(f"native aarch64 M2 {label} fragment must remain the partial {component_id} component")
+    if component.get("source_units") != list(source_units):
+        raise HarnessError(f"native aarch64 M2 {label} fragment source units changed")
+    if component.get("checks") != [dict(check) for check in checks]:
+        raise HarnessError(f"native aarch64 M2 {label} check inventory changed")
+    check_ids = [check["id"] for check in checks]
     definitions = component.get("bounded_source_definitions")
     if not isinstance(definitions, list) or not definitions:
-        raise HarnessError("native aarch64 M2 arena fragment lacks bounded source definitions")
+        raise HarnessError(f"native aarch64 M2 {label} fragment lacks bounded source definitions")
     definition_anchors: list[Mapping[str, Any]] = []
     defined_evidence: set[str] = set()
     for definition in definitions:
         if not isinstance(definition, Mapping) or not isinstance(definition.get("source_anchor"), Mapping):
-            raise HarnessError("native aarch64 M2 arena bounded source definition is invalid")
+            raise HarnessError(f"native aarch64 M2 {label} bounded source definition is invalid")
         definition_anchors.append(definition["source_anchor"])
         evidence = definition.get("evidence_check_ids")
         if isinstance(evidence, list):
             defined_evidence.update(item for item in evidence if isinstance(item, str))
     branches = component.get("branch_matrix")
     if not isinstance(branches, list) or not branches:
-        raise HarnessError("native aarch64 M2 arena fragment lacks its branch matrix")
+        raise HarnessError(f"native aarch64 M2 {label} fragment lacks its branch matrix")
     branch_ids: set[str] = set()
     branch_evidence: set[str] = set()
     for branch in branches:
         if not isinstance(branch, Mapping) or set(branch) != {
             "disposition", "evidence_check_ids", "id", "missing_conditions", "source_anchors", "source_scope",
         }:
-            raise HarnessError("native aarch64 M2 arena branch row fields changed")
+            raise HarnessError(f"native aarch64 M2 {label} branch row fields changed")
         branch_id = branch.get("id")
         evidence = branch.get("evidence_check_ids")
         missing = branch.get("missing_conditions")
@@ -14915,7 +14943,7 @@ def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[
             not isinstance(branch_id, str)
             or re.fullmatch(r"[a-z][a-z0-9-]*", branch_id) is None
             or branch_id in branch_ids
-            or disposition not in M2_AARCH64_ARENAS_BRANCH_DISPOSITIONS
+            or disposition not in M2_AARCH64_PARTIAL_BRANCH_DISPOSITIONS
             or not isinstance(branch.get("source_scope"), str)
             or not branch["source_scope"]
             or not isinstance(evidence, list)
@@ -14931,14 +14959,33 @@ def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[
             or (disposition == "partial-fixed-profile" and (not evidence or not missing))
             or (disposition == "unqualified" and (evidence or not missing))
         ):
-            raise HarnessError(f"native aarch64 M2 arena branch row {branch_id} is invalid")
+            raise HarnessError(f"native aarch64 M2 {label} branch row {branch_id} is invalid")
         branch_ids.add(branch_id)
         branch_evidence.update(evidence)
     if branch_evidence != set(check_ids) or defined_evidence != set(check_ids):
-        raise HarnessError("native aarch64 M2 arena fragment does not bind every executed check")
+        raise HarnessError(f"native aarch64 M2 {label} fragment does not bind every executed check")
     materialized = dict(component)
     materialized["native_status"] = materialized.pop("completion_status")
     return materialized
+
+
+def _m2_aarch64_arenas_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Materialize the AArch64 arena fragment without importing x86 status."""
+
+    return _m2_aarch64_partial_fragment_component(
+        raw_component, pin, component_id="arenas", fragment_path=M2_AARCH64_ARENAS_FRAGMENT,
+        source_units=M2_AARCH64_ARENAS_SOURCE_UNITS, checks=M2_ARENA_CHECKS["aarch64"], label="arena",
+    )
+
+
+def _m2_aarch64_page_map_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Materialize the AArch64 PageMap fragment without importing x86 status."""
+
+    return _m2_aarch64_partial_fragment_component(
+        raw_component, pin, component_id="page-map", fragment_path=M2_AARCH64_PAGE_MAP_FRAGMENT,
+        source_units=M2_AARCH64_PAGE_MAP_SOURCE_UNITS, checks=M2_PAGE_MAP_CHECKS["aarch64"],
+        label="PageMap",
+    )
 
 
 def _m2_x86_64_validated_component(
@@ -14972,6 +15019,9 @@ def _m2_x86_64_validated_component(
     elif component_id == "arenas" and architecture == "aarch64":
         fragment_reference = raw_component.get("evidence_fragment")
         raw_component = _m2_aarch64_arenas_component(raw_component, pin)
+    elif component_id == "page-map" and architecture == "aarch64":
+        fragment_reference = raw_component.get("evidence_fragment")
+        raw_component = _m2_aarch64_page_map_component(raw_component, pin)
     # Completion is the component's own recorded state: a complete row
     # must carry bounded source definitions and a failure matrix whose
     # every row names an executed check, and no remaining condition.
@@ -15047,7 +15097,7 @@ def _m2_x86_64_validated_component(
         if raw_checks != list(M2_X86_64_METADATA_CHECKS):
             raise HarnessError("native x86 M2 metadata check inventory changed")
     elif component_id == "page-map":
-        if raw_checks != list(M2_X86_64_PAGE_MAP_CHECKS):
+        if raw_checks != list(M2_PAGE_MAP_CHECKS[architecture]):
             raise HarnessError("native x86 M2 PageMap check inventory changed")
     elif component_id == "allocator-recursion":
         if raw_checks != list(M2_X86_64_RECURSION_CHECKS):
@@ -18046,7 +18096,11 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 
 M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-aarch64-v3.5.0.json"
 M2_AARCH64_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "aarch64/m2-memory-substrate-latest.json"
-M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "arenas")
+M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "page-map", "arenas")
+M2_AARCH64_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "aarch64/m2-page-map-trace"
+M2_AARCH64_PAGE_MAP_EVIDENCE_KEYS = frozenset({
+    "cold", "first_map_fallback", "init_cleanup", "lazy", "process", "startup_statistics", "success",
+})
 M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset({
     "added_direct", "destruction", "direct", "huge_progress", "lifecycle", "reclaim_on_free",
     "reservation_warnings",
@@ -18179,6 +18233,141 @@ def validate_aarch64_m2_memory_substrate_contract(
         "source_contracts": expected_source_contracts,
         "target": expected_target,
     }
+
+
+def _run_m2_aarch64_page_map_evidence(
+    *, pin: Mapping[str, str], offline: bool, test_program: Mapping[str, Any], summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Execute each AArch64 PageMap C/Rust differential once.
+
+    The three source-order traces and the cleanup, startup-statistics and
+    first-map producers run the aggregate's `aarch64-unknown-linux-musl`
+    test binary; the two process receivers build the same target-local
+    product and retain their physical C and Rust runs.
+    """
+
+    def check(check_id: str) -> Mapping[str, Any]:
+        return _m2_x86_64_check_by_id(summary, check_id)[1]
+
+    traces = {
+        "offline": offline, "timeout_seconds": summary["execution"]["timeout_seconds"],
+        "architecture": "aarch64", "artifact_root": M2_AARCH64_PAGE_MAP_TRACE_ARTIFACT_ROOT,
+        "test_program": test_program,
+    }
+    producers = {"offline": offline, "test_program": test_program, "architecture": "aarch64"}
+    return {
+        "success": run_m2_page_map_differential(
+            pin, check=check("successful-page-map-lifecycle"), **traces),
+        "lazy": run_m2_page_map_lazy_commit_failure_differential(
+            pin, check=check("lazy-page-map-commit-failure"), **traces),
+        "cold": run_m2_page_map_cold_init_differential(
+            pin, check=check("cold-page-map-initialization-failure"), **traces),
+        "init_cleanup": _run_m2_x86_64_page_map_init_cleanup_evidence(
+            check=check("page-map-initialization-cleanup-leak-c-rust-differential"), **producers),
+        "startup_statistics": _run_m2_x86_64_startup_statistics_evidence(
+            check=check("page-map-startup-statistics-c-rust-differential"), **producers),
+        "first_map_fallback": _run_m2_x86_64_page_map_fallback_evidence(
+            check=check("page-map-first-map-fallback-c-rust-differential"), **producers),
+        "process": {
+            check_id: _run_m2_x86_64_page_map_fallback_evidence(check=check(check_id), **producers)
+            for check_id in M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS
+        },
+    }
+
+
+def _m2_aarch64_page_map_process_trace(receiver: Mapping[str, Any], output: str, source: str) -> dict[str, str]:
+    """Re-parse one physical PageMap process transcript in its receipt format."""
+
+    values: dict[str, str] = {}
+    prefix = str(receiver["trace_prefix"])
+    for line in output.splitlines():
+        candidate = line.rsplit(" ... ", 1)[-1]
+        if not candidate.startswith(prefix):
+            continue
+        match = re.fullmatch(r"([a-z_]+)=([0-9a-f]*)", candidate[len(prefix):])
+        if match is None or match.group(1) in values:
+            raise HarnessError(f"native aarch64 M2 PageMap {source} transcript is invalid")
+        values[match.group(1)] = match.group(2)
+    return values
+
+
+def _m2_aarch64_page_map_check_records(
+    summary: Mapping[str, Any], evidence: object,
+) -> list[dict[str, Any]]:
+    """Bind every executed AArch64 PageMap differential in the fragment's check order.
+
+    The aggregate-binary differentials must have run the AArch64 Cargo test
+    product. Each process receiver's retained C and Rust runs must re-parse
+    to its receipt, and its Rust run must be the target-local AArch64
+    product's exact test.
+    """
+
+    if not isinstance(evidence, Mapping) or set(evidence) != M2_AARCH64_PAGE_MAP_EVIDENCE_KEYS:
+        raise HarnessError("native aarch64 M2 PageMap receipt inventory is invalid")
+    process = evidence["process"]
+    if not isinstance(process, Mapping) or set(process) != set(M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS):
+        raise HarnessError("native aarch64 M2 PageMap process receipt inventory is invalid")
+
+    def check(check_id: str) -> Mapping[str, Any]:
+        return _m2_x86_64_check_by_id(summary, check_id)[1]
+
+    aggregate = [
+        _m2_x86_64_differential_check_record("page-map", check("successful-page-map-lifecycle"), evidence["success"]),
+        _m2_x86_64_differential_check_record("page-map", check("lazy-page-map-commit-failure"), evidence["lazy"]),
+        _m2_x86_64_differential_check_record("page-map", check("cold-page-map-initialization-failure"), evidence["cold"]),
+        _m2_x86_64_page_map_init_cleanup_check_record(
+            check("page-map-initialization-cleanup-leak-c-rust-differential"), evidence["init_cleanup"]),
+        _m2_x86_64_startup_statistics_check_record(
+            check("page-map-startup-statistics-c-rust-differential"), evidence["startup_statistics"]),
+        _m2_x86_64_page_map_fallback_check_record(
+            check("page-map-first-map-fallback-c-rust-differential"), evidence["first_map_fallback"]),
+    ]
+    for record in aggregate:
+        command = record["command"]
+        if (
+            not command
+            or not _m2_x86_64_vm_rust_binary_path_is_bound(command[0], "aarch64")
+            or command[1] != record["target"]
+        ):
+            raise HarnessError(f"native aarch64 M2 PageMap receipt {record['id']} did not run the aarch64 test product")
+    receivers = []
+    for check_id, receiver in M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS.items():
+        observed = process[check_id]
+        record = _m2_x86_64_page_map_fallback_check_record(check(check_id), observed)
+        c_run = observed.get("c_run") if isinstance(observed, Mapping) else None
+        rust_run = observed.get("rust_run") if isinstance(observed, Mapping) else None
+        target = str(receiver["target"])
+        rust_test = {
+            "page-map-fallback-trim-fault-c-rust-differential":
+                "process_page_map::tests::emit_m2_page_map_fallback_trim_fault_c_rust_trace",
+            "page-map-lazy-map-rollback-c-rust-differential":
+                "process_page_map::tests::emit_m2_page_map_lazy_map_rollback_c_rust_trace",
+        }[check_id]
+        if (
+            not isinstance(c_run, Mapping)
+            or not isinstance(rust_run, Mapping)
+            or c_run.get("status") != 0
+            or rust_run.get("status") != 0
+            or not isinstance(rust_run.get("command"), list)
+            or not rust_run["command"]
+            or not _m2_x86_64_vm_rust_binary_path_is_bound(rust_run["command"][0], "aarch64")
+            or rust_run["command"][1:] != [rust_test, "--exact", "--test-threads=1", "--nocapture"]
+            or _m2_aarch64_page_map_process_trace(receiver, str(c_run.get("stdout", "")), "pinned C") != observed["c"]
+            or _m2_aarch64_page_map_process_trace(
+                receiver, str(rust_run.get("stdout", "")) + str(rust_run.get("stderr", "")), "Rust",
+            ) != observed["rust"]
+            or record["target"] != target
+        ):
+            raise HarnessError(f"native aarch64 M2 PageMap process receipt {check_id} is invalid")
+        receivers.append(record)
+    records = [*aggregate, *receivers]
+    by_id = {record["id"]: record for record in records}
+    order = [
+        check["id"] for check in M2_PAGE_MAP_CHECKS["aarch64"] if check["kind"] != "rust-unit"
+    ]
+    if len(by_id) != len(records) or set(by_id) != set(order):
+        raise HarnessError("native aarch64 M2 PageMap executed receipt inventory changed")
+    return [by_id[check_id] for check_id in order]
 
 
 def _run_m2_aarch64_arena_evidence(
@@ -18456,6 +18645,7 @@ def m2_aarch64_memory_substrate_report(
     process_vm_evidence: Mapping[str, Any],
     vm_direct_evidence: Mapping[str, Any],
     arena_evidence: Mapping[str, Any],
+    page_map_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Render the executed AArch64 components and keep every other component open."""
 
@@ -18469,6 +18659,10 @@ def m2_aarch64_memory_substrate_report(
         architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
     expected_arena_records = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
+    expected_component_records = {
+        "vm-primitives": expected_vm_records,
+        "page-map": _m2_aarch64_page_map_check_records(summary, page_map_evidence),
+    }
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
         for component in summary["components"]
@@ -18493,7 +18687,6 @@ def m2_aarch64_memory_substrate_report(
         if check.get("component") not in M2_AARCH64_EXECUTED_COMPONENT_IDS:
             raise HarnessError("native aarch64 M2 focused check names an unexecuted component")
         checks_by_component[check["component"]].append(dict(check))
-    expected_vm_check_ids = {check["id"] for check in expected_vm_records}
     components: list[dict[str, Any]] = []
     unmet: list[str] = []
     for component in summary["components"]:
@@ -18521,19 +18714,26 @@ def m2_aarch64_memory_substrate_report(
         if component_id == "arenas":
             if checks != expected_arena_records:
                 raise HarnessError("native aarch64 M2 arena executed receipt inventory changed")
-        elif checks != expected_vm_records + [
-            {
-                "component": "vm-primitives",
-                "command": check["command"],
-                "evidence_scope": "focused-source-test-batch",
-                "id": declared[check["id"]]["id"],
-                "passed_test_count": declared[check["id"]]["expected_passed_test_count"],
-                "target": declared[check["id"]]["target"],
-            }
-            for check in checks
-            if check["id"] not in expected_vm_check_ids
-        ]:
-            raise HarnessError("native aarch64 M2 VM executed receipt inventory changed")
+        else:
+            expected_records = expected_component_records[component_id]
+            expected_ids = {check["id"] for check in expected_records}
+            if checks != expected_records + [
+                {
+                    "component": component_id,
+                    "command": check["command"],
+                    "evidence_scope": "focused-source-test-batch",
+                    "id": declared[check["id"]]["id"],
+                    "passed_test_count": declared[check["id"]]["expected_passed_test_count"],
+                    "target": declared[check["id"]]["target"],
+                }
+                for check in checks
+                if check["id"] not in expected_ids
+            ]:
+                raise HarnessError(
+                    "native aarch64 M2 "
+                    + {"vm-primitives": "VM", "page-map": "PageMap"}[component_id]
+                    + " executed receipt inventory changed"
+                )
         complete = component["native_status"] == "complete" and not component["remaining_conditions"]
         if not complete:
             unmet.append(component_id)
@@ -18581,6 +18781,7 @@ def m2_aarch64_memory_substrate_report(
         },
         "producer_evidence": {
             "arena_evidence": dict(arena_evidence),
+            "page_map_evidence": dict(page_map_evidence),
             "vm_direct_evidence": dict(vm_direct_evidence),
             "process_vm_evidence": dict(process_vm_evidence),
             "thp_process_evidence": dict(thp_process_evidence),
@@ -18630,19 +18831,24 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     arena_evidence = _run_m2_aarch64_arena_evidence(
         offline=offline, test_program=test_program, summary=summary,
     )
+    page_map_evidence = _run_m2_aarch64_page_map_evidence(
+        pin=pin, offline=offline, test_program=test_program, summary=summary,
+    )
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
         architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
     )
     arena_checks = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
+    page_map_checks = _m2_aarch64_page_map_check_records(summary, page_map_evidence)
     focused_checks = [
         *vm_checks,
+        *page_map_checks,
         *arena_checks,
         *_run_x86_64_focused_source_checks(
             summary,
             test_program,
             already_executed_check_ids=frozenset(
-                check["id"] for check in (*vm_checks, *arena_checks)
+                check["id"] for check in (*vm_checks, *page_map_checks, *arena_checks)
             ),
             gate_name="native aarch64 M2 focused source evidence",
         ),
@@ -18662,6 +18868,7 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         process_vm_evidence=process_vm_evidence,
         vm_direct_evidence=vm_direct_evidence,
         arena_evidence=arena_evidence,
+        page_map_evidence=page_map_evidence,
     )
     report["native_execution_provenance"] = native_execution_attestation(
         execution_before, require_native_aarch64_evidence(), architecture="aarch64"

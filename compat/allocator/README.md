@@ -74,7 +74,8 @@ python3 scripts/test_python.py --module compat/allocator/tests/test_x86_64_runne
 On native AArch64 Linux, `image`, `allocator-unit`, `allocator-native-integration`,
 `allocator-m1`, `allocator-m1-read`, and `allocator-m2` use `.work/allocator-aarch64` and the
 private arm64 image. The M1 reader replays the retained native witnesses;
-`allocator-m2` runs the [AArch64 VM](#aarch64-vm-component) and
+`allocator-m2` runs the [AArch64 VM](#aarch64-vm-component),
+[page-map](#aarch64-page-map-component) and
 [arenas](#aarch64-arenas-component) components.
 The arm64 image pins Alpine 3.24.1's arm64 manifest
 `sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18`.
@@ -138,7 +139,7 @@ script defines.
 | `allocator --quick` | `run.py --quick`: verifies the annotated tag and archive identities, regenerates the checked-in contracts in memory, checks the source-map ratchet, builds the exact C oracle profiles, and checks the allocator dependency graph (see [Random state in the design](../../docs/design/allocator.md#random-state)). |
 | `allocator-m1` | `run.py --m1 --offline --architecture x86_64` (the launcher supplies the architecture; a direct `run.py` defaults to the paused AArch64 route) against `m1-foundations-x86_64-v3.5.0.json`. A partial report exits 3. |
 | `allocator-m1-clock-fallback` | `m1_clock_fallback_x86_64.py --offline` compares pinned C and Rust after the preferred monotonic clock query fails. |
-| `allocator-m2` | `m2-memory-substrate-x86_64-v3.5.0.json`: memory-substrate evidence for eight components (VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, allocator recursion). A partial report exits 3. See [What `allocator-m2` compares](#what-allocator-m2-compares). On AArch64 it reads `m2-memory-substrate-aarch64-v3.5.0.json` and executes only the [AArch64 VM](#aarch64-vm-component) and [arenas](#aarch64-arenas-component) components. |
+| `allocator-m2` | `m2-memory-substrate-x86_64-v3.5.0.json`: memory-substrate evidence for eight components (VM primitives, metadata, bitmaps, PageMap, arenas, initialization, fault injection, allocator recursion). A partial report exits 3. See [What `allocator-m2` compares](#what-allocator-m2-compares). On AArch64 it reads `m2-memory-substrate-aarch64-v3.5.0.json` and executes only the [AArch64 VM](#aarch64-vm-component), [page-map](#aarch64-page-map-component) and [arenas](#aarch64-arenas-component) components. |
 | `allocator-m3 [subset]` | `m3-local-engine-x86_64-v3.5.0.json`. Requires complete M1/M2 reports, then runs `m3_x86_64.py`: generated workloads (a sweep of every reachable bin past one page, retirement/reuse probes, generic administration, queue-candidate probes, seeded churn) run in separate pinned-C (`m3_local_trace_x86_64.c`, default Theap, `MIMALLOC_PAGE_FULL_RETAIN=-1`) and Rust (`single_thread::local_trace`) processes over identical in-place arenas, and their normalized traces must match line by line. It also derives the bin/page-class transition matrix and runs the queue reorder and retirement differentials, the persistent-owner differential (`native_allocate_aligned`/`native_free` on the initial and a later owner against `mi_malloc_aligned`/`mi_free`), the page-ownership unit batch, and the Miri ownership profiles. Unit and Miri tests are selected by exact module-path prefix from `--list` (libtest filters are substrings); each Miri test runs in its own process and results aggregate per module group, so one abort does not hide the others. Exits 3 while any prerequisite or checked-in remaining condition is unmet; the subsets are development shortcuts that never close M3. |
 | `allocator-m4 [--check\|--gate ID\|--reader-tests\|--operations-matrix [--read\|--replay]\|--differential SCENARIO …]` | `m4-gate-x86_64-v3.5.0.json` selects the standard, extended, and aligned allocation groups plus `mi_collect`, minus items the M6/M7 contracts own (`excluded_items` maps each to an `owner: reason` string). `--differential SCENARIO` links [`x86_64_m4_operations_driver.c`](x86_64_m4_operations_driver.c) against the pinned C sources and against the native adapter ([`native-mi-adapter/`](native-mi-adapter/)) and requires equal address-free traces for `operations`, `page-kinds`, `collection`, `oom`, `oom-survival` (its own driver), `threads`, `aligned-preservation`, and `api-modes`. `--differential` takes `--build-profile debug --valid-clients-only --source-profile PROFILE` options: `--build-profile debug` and a non-release `--source-profile` also require `--valid-clients-only`. `x86_64_m4_gate.py` also has `--native-tests` and `--adapter-boundary` modes that the launcher does not expose. Report: `m4-gate/report.json` (differentials write `<scenario>-<side>.trace` beside it). |
 | `allocator-m5 [--qualification-profile correctness\|full] [--check\|--gate ID\|--reader-tests]` | `m5-gate-x86_64-v3.5.0.json` (the unsuffixed `m5-gate-v3.5.0.json` is the frozen AArch64 contract) gives each M5 condition one gate: groups of `crabc-mimalloc/tests/native_*` targets (every target in exactly one group), allocator-container runners, and receipts of the runtime-launcher native-shadow runners (`./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown` and `./scripts/dev-x86_64.sh owned-native-allocator-stress`) read through [`native_shadow_receipt.py`](../x86_64/native_shadow_receipt.py). Each native target runs in its own Cargo invocation with the audit and fault seams; secure and guarded targets also run under the feature profiles that enable their tests. The report retains the checked helper argv, and its evidence log records each target command and both output streams. Receipts are accepted only when they seal the current checkout and every case passed, so run those runners on the tree first. Full M5 also consumes `compat/reports/allocator/x86_64/perf-engine/engine.json`; produce it first with `./compat/allocator/run-x86_64.sh allocator-perf-engine --full --set matrix --label engine`. The qualified reader requires the complete matrix, including cross-thread rows, a current source seal, retained products, recorded tools, and an uncontended host. M5 then requires a one-sided 95% lower wall-throughput Rust/C bound >= 0.25 for each manifest-named `local_scaling_1` and `local_scaling_4` row. Report: `m5-gate/report.json` (`m5-correctness-gate/` for the correctness profile). |
@@ -315,23 +316,21 @@ diagnostics, or an allocator/runtime caller.
 ### AArch64 VM component
 
 `m2-memory-substrate-aarch64-v3.5.0.json` names the same eight components.
-`vm-primitives` and [`arenas`](#aarch64-arenas-component) execute; the VM
-fragment,
+`vm-primitives`, [`page-map`](#aarch64-page-map-component) and
+[`arenas`](#aarch64-arenas-component) execute; the VM fragment,
 `m2-vm-aarch64-v3.5.0.fragment.json`, keeps the x86 fragment's schema, check
 inventory, bounded source definitions and branch matrix, so the same producer
 (`m2_vm_x86_64.py`) and receivers run natively in the arm64 VM. Each receiver
 takes its architecture from the launcher's `CRABC_ALLOCATOR_EVIDENCE_ARCH`, so
 its artifacts land under `target/compat/allocator/aarch64/` and its Rust test
-binary is the `aarch64-unknown-linux-musl` build. The other six components are
+binary is the `aarch64-unknown-linux-musl` build. The other five components are
 `not-executed` records that import no x86 status, so the report stays partial
 and exits 3. The report is `reports/allocator/aarch64/m2-memory-substrate-latest.json`.
 
 The AArch64 fragment's text names only evidence this gate executes. Coverage
-that the x86 record takes from its PageMap component, such as the PageMap
-startup-statistics differential, stays an open AArch64 condition until that
-component runs on arm; coverage it takes from the arenas component, such as
-the arena-reservation lifecycle companion, now comes from the AArch64 arenas
-component. The receivers' expected relations are fixed to the qualifying VM's 4 KiB
+that the x86 record takes from its PageMap and arenas components, such as the
+PageMap startup-statistics differential and the arena-reservation lifecycle
+companion, now comes from the AArch64 page-map and arenas components. The receivers' expected relations are fixed to the qualifying VM's 4 KiB
 base pages. That VM has no hugetlbfs pool and no NUMA node topology, so the
 16 KiB and 64 KiB page sizes, `MAP_HUGETLB` success, 1-GiB pages and `mbind`
 placement remain open conditions.
@@ -356,6 +355,34 @@ into the x86 fragment:
   (`m2_policy_first_arena_trim_x86_64.py`) drives the policy-first
   `mi_arena_reserve` caller through a failed aligned-overmap prefix or suffix
   release.
+
+### AArch64 page-map component
+
+`m2-page-map-aarch64-v3.5.0.fragment.json` is the PageMap component on arm.
+It keeps the x86 record's fifteen checks, four bounded `internal.h` and
+`page-map.c` source definitions and six failure rows, recorded as a branch
+matrix in the partial-fragment schema of the arenas fragment. `allocator-m2`
+runs:
+
+- the success-lifecycle, lazy-commit-failure and cold-initialization traces
+  embedded in `run.py`, built for the 48-bit AArch64 PageMap span
+  (`MI_MAX_VABITS`, `include/mimalloc/bits.h:119-128`, with no x86-64 47-bit
+  clamp), against the aggregate's `aarch64-unknown-linux-musl` test binary;
+- the initialization-cleanup, startup-statistics and first-map-fallback
+  producers (`m2_page_map_init_cleanup_x86_64.py`,
+  `m2_startup_statistics_x86_64.py`, `m2_page_map_first_map_fallback_x86_64.py`)
+  against that binary;
+- the fallback-trim-fault and lazy-map-rollback process receivers, whose
+  physical C and Rust runs the aggregate re-parses; the fallback receiver's
+  guard expects the 4.25 MiB good-size top-level extent on arm (2.25 MiB on
+  x86-64);
+- the seven Rust owner checks in the focused source batch.
+
+All eight differentials matched pinned C natively on AArch64 (the
+cold-initialization trace keeps its recorded safety divergence), and the seven
+owner checks pass. The component stays partial only
+because its relations are fixed to the VM's 4 KiB base pages; 16 KiB and
+64 KiB hosts need their own runs. The x86 PageMap record is unchanged.
 
 ### AArch64 arenas component
 

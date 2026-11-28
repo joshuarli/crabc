@@ -848,19 +848,27 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(arenas["native_status"], "partial")
         self.assertEqual(arenas["checks"], [dict(check) for check in RUNNER.M2_ARENA_CHECKS["aarch64"]])
         self.assertTrue(arenas["remaining_conditions"])
+        page_map = summary["components"][3]
+        self.assertEqual(page_map["id"], "page-map")
+        self.assertEqual(page_map["evidence_fragment"], {"path": RUNNER.relative(RUNNER.M2_AARCH64_PAGE_MAP_FRAGMENT)})
+        self.assertEqual(page_map["native_status"], "partial")
+        self.assertEqual(page_map["checks"], [dict(check) for check in RUNNER.M2_PAGE_MAP_CHECKS["aarch64"]])
+        self.assertTrue(any("16 KiB and 64 KiB" in condition for condition in page_map["remaining_conditions"]))
         self.assertEqual(
             [(component["id"], component["native_status"], component["checks"])
              for component in summary["components"]
              if component["id"] not in RUNNER.M2_AARCH64_EXECUTED_COMPONENT_IDS],
             [(component_id, "not-executed", [])
              for component_id in RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS
-             if component_id not in ("vm-primitives", "arenas")],
+             if component_id not in ("vm-primitives", "page-map", "arenas")],
         )
         self.assertEqual(summary["milestone"]["status"], "partial")
-        contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
-        contract["components"][4] = RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)["components"][4]
-        with self.assertRaises(RUNNER.HarnessError):
-            RUNNER.validate_aarch64_m2_memory_substrate_contract(contract, pin)
+        for index in (3, 4):
+            contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
+            contract["components"][index] = RUNNER.read_json(
+                RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)["components"][index]
+            with self.assertRaises(RUNNER.HarnessError):
+                RUNNER.validate_aarch64_m2_memory_substrate_contract(contract, pin)
 
         contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
         contract["components"][0]["evidence_fragment"]["path"] = RUNNER.relative(RUNNER.M2_X86_64_VM_FRAGMENT)
@@ -922,6 +930,101 @@ class NativeVmAssemblyTests(unittest.TestCase):
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_aarch64_arenas_component(
                 {"id": "arenas", "evidence_fragment": {"path": RUNNER.relative(RUNNER.M2_X86_64_VM_FRAGMENT)}}, pin)
+
+    def test_arm_page_map_fragment_fails_closed(self):
+        pin = RUNNER.load_pin()
+        original = RUNNER.read_json(RUNNER.M2_AARCH64_PAGE_MAP_FRAGMENT)
+        reference = {"id": "page-map", "evidence_fragment": {"path": RUNNER.relative(RUNNER.M2_AARCH64_PAGE_MAP_FRAGMENT)}}
+        component = RUNNER._m2_aarch64_page_map_component(reference, pin)
+        self.assertEqual(component["native_status"], "partial")
+        self.assertEqual([definition["id"] for definition in component["bounded_source_definitions"]],
+                         list(RUNNER.M2_X86_64_PAGE_MAP_BOUNDED_SOURCE_DEFINITION_IDS))
+        self.assertEqual([branch["id"] for branch in component["branch_matrix"]],
+                         list(RUNNER.M2_X86_64_PAGE_MAP_FAILURE_MATRIX_IDS))
+        mutations = {
+            "x86-schema": lambda f: f.__setitem__("schema", "crabc-mimalloc-x86_64-m2-component-evidence"),
+            "x86-target": lambda f: f["target"].__setitem__("rust_target", "x86_64-unknown-linux-musl"),
+            "complete": lambda f: f["component"].__setitem__("completion_status", "complete"),
+            "dropped-check": lambda f: f["component"]["checks"].pop(),
+            "source-units": lambda f: f["component"]["source_units"].pop(),
+            "qualified-with-missing": lambda f: f["component"]["branch_matrix"][0]["missing_conditions"].append("open"),
+            "unbound-check": lambda f: [branch["evidence_check_ids"].remove("page-map-startup-statistics-c-rust-differential")
+                                        for branch in f["component"]["branch_matrix"]
+                                        if "page-map-startup-statistics-c-rust-differential" in branch["evidence_check_ids"]],
+        }
+        read_json = RUNNER.read_json
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(original)
+                mutate(changed)
+                with mock.patch.object(RUNNER, "read_json", side_effect=lambda path: (
+                        changed if path == RUNNER.M2_AARCH64_PAGE_MAP_FRAGMENT else read_json(path))):
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_aarch64_page_map_component(reference, pin)
+
+    def test_arm_page_map_records_require_the_arm_test_product_and_physical_runs(self):
+        summary = self.arm_summary()
+        arm_binary = str(RUNNER.m2_memory_substrate_cargo_target("aarch64")
+                         / "aarch64-unknown-linux-musl/debug/deps/crabc_mimalloc-0123456789abcdef")
+        x86_binary = str(RUNNER.m2_memory_substrate_cargo_target("x86_64")
+                         / "x86_64-unknown-linux-musl/debug/deps/crabc_mimalloc-0123456789abcdef")
+        checks = {check["id"]: check for check in RUNNER.M2_PAGE_MAP_CHECKS["aarch64"]}
+
+        def trace(target, binary, status="matched"):
+            return {"rust": {"command": [binary, target, "--exact", "--test-threads=1", "--nocapture"],
+                             "passed_test_count": 1}, "comparison": {"status": status}}
+
+        def producer(target, binary):
+            return {"status": "passed", "comparison": {"status": "matched"}, "rust_passed_test_count": 1,
+                    "rust_command": [binary, target, "--exact", "--test-threads=1", "--nocapture"]}
+
+        def process(check_id, binary):
+            receiver = RUNNER.M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS[check_id]
+            values = {field: "1" for field in receiver["fields"]}
+            lines = "".join(f"{receiver['trace_prefix']}{key}={value}\n" for key, value in values.items())
+            test = {
+                "page-map-fallback-trim-fault-c-rust-differential":
+                    "process_page_map::tests::emit_m2_page_map_fallback_trim_fault_c_rust_trace",
+                "page-map-lazy-map-rollback-c-rust-differential":
+                    "process_page_map::tests::emit_m2_page_map_lazy_map_rollback_c_rust_trace",
+            }[check_id]
+            return {"status": "matched", "c": values, "rust": dict(values), "mismatches": {},
+                    "command": ["python3", receiver["target"], "--offline"],
+                    "c_run": {"status": 0, "stdout": lines, "stderr": ""},
+                    "rust_run": {"status": 0, "stdout": f"test {test} ... " + lines, "stderr": "",
+                                 "command": [binary, test, "--exact", "--test-threads=1", "--nocapture"]}}
+
+        def evidence(binary, process_binary=None):
+            return {
+                "success": trace(checks["successful-page-map-lifecycle"]["target"], binary),
+                "lazy": trace(checks["lazy-page-map-commit-failure"]["target"], binary),
+                "cold": trace(checks["cold-page-map-initialization-failure"]["target"], binary,
+                              "modeled-safety-divergence"),
+                "init_cleanup": producer(
+                    checks["page-map-initialization-cleanup-leak-c-rust-differential"]["target"], binary),
+                "startup_statistics": producer(
+                    checks["page-map-startup-statistics-c-rust-differential"]["target"], binary),
+                "first_map_fallback": producer(
+                    checks["page-map-first-map-fallback-c-rust-differential"]["target"], binary),
+                "process": {check_id: process(check_id, process_binary or binary)
+                            for check_id in RUNNER.M2_X86_64_PAGE_MAP_PROCESS_RECEIVERS},
+            }
+
+        records = RUNNER._m2_aarch64_page_map_check_records(summary, evidence(arm_binary))
+        self.assertEqual([record["id"] for record in records],
+                         [check["id"] for check in RUNNER.M2_PAGE_MAP_CHECKS["aarch64"]
+                          if check["kind"] != "rust-unit"])
+        with self.assertRaisesRegex(RUNNER.HarnessError, "aarch64 test product"):
+            RUNNER._m2_aarch64_page_map_check_records(summary, evidence(x86_binary))
+        with self.assertRaisesRegex(RUNNER.HarnessError, "process receipt"):
+            RUNNER._m2_aarch64_page_map_check_records(summary, evidence(arm_binary, x86_binary))
+        changed = evidence(arm_binary)
+        changed["process"]["page-map-lazy-map-rollback-c-rust-differential"]["c_run"]["stdout"] = ""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "process receipt"):
+            RUNNER._m2_aarch64_page_map_check_records(summary, changed)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+            RUNNER._m2_aarch64_page_map_check_records(
+                summary, {key: value for key, value in evidence(arm_binary).items() if key != "cold"})
 
     def test_arm_arena_records_require_the_arm_test_product_in_check_order(self):
         summary = self.arm_summary()

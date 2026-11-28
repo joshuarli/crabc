@@ -43,14 +43,16 @@ def parse_trace(output: str, *, source: str) -> list[int]:
 
 def run_evidence(
     harness: Any, *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(architecture)
+    label = "x86" if architecture == "x86_64" else architecture
     if check.get("id") != CHECK_ID or check.get("target") != TARGET:
-        raise harness.HarnessError("native x86 PageMap init-cleanup check changed")
+        raise harness.HarnessError(f"native {label} PageMap init-cleanup check changed")
     fixture = harness.ALLOCATOR_ROOT / FIXTURE_NAME
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-page-map-init-cleanup"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-page-map-init-cleanup"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "oracle"
     from pathlib import Path
@@ -72,14 +74,14 @@ def run_evidence(
     try:
         c_trace = parse_trace(str(run["stdout"]), source="pinned C")
         rust, rust_output = harness._x86_64_run_exact_program_check(
-            test_program, check, nocapture=True, gate_name="native x86 M2 PageMap init cleanup",
+            test_program, check, nocapture=True, gate_name=f"native {label} M2 PageMap init cleanup",
         )
         rust_trace = parse_trace(rust_output, source="Rust")
     except ValueError as error:
         raise harness.HarnessError(str(error)) from error
     if c_trace != rust_trace:
         raise harness.HarnessError(
-            f"native x86 PageMap init-cleanup differs from pinned C: C={c_trace} Rust={rust_trace}"
+            f"native {label} PageMap init-cleanup differs from pinned C: C={c_trace} Rust={rust_trace}"
         )
     evidence = {
         "c_command": command,
