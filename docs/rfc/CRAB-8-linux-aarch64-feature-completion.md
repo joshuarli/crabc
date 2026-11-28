@@ -232,8 +232,9 @@ Never pass `--platform linux/amd64` on the Mac. The VM holds no GitHub
 credentials; commits are made and pushed from the Mac.
 
 From a Mac worktree, `scripts/lanes/orb-vm-run.sh <command...>` mirrors that
-worktree into its VM worktree `/mnt/crabc/wt/<name>` (`main` for the primary
-checkout), detached at the Mac HEAD with uncommitted edits copied over, and runs
+worktree into its VM worktree `/mnt/crabc/crabc/.work/wt/<name>` (`main` for
+the primary checkout); linked worktrees must stay inside the clone's `.work/`
+because the native ABI inputs are confined to the canonical checkout's `.work`, detached at the Mac HEAD with uncommitted edits copied over, and runs
 the command there; wrap builds in `scripts/lanes/rust-check.sh`.
 `scripts/lanes/orb-vm-lane.sh <name> <commit>` creates a paired lane and seeds
 its VM worktree from the `main` mirror. Run `scripts/lanes/prepare-worktree.sh`

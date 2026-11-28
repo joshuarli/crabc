@@ -1,7 +1,7 @@
 #!/bin/sh
 # CRAB-8 relay for an Apple Silicon Mac driving the OrbStack Linux/arm64
 # machine `crabc`. Mirror the current Mac git worktree into its VM worktree
-# under /mnt/crabc/wt/<name> (ext4) and run a command there. The VM worktree
+# under the VM clone's .work/wt/<name> (ext4) and run a command there. The VM worktree
 # is detached at the Mac HEAD, so git-based collectors see the same commit;
 # uncommitted Mac edits, additions and deletions appear as working-tree
 # changes. Usage (from a worktree root): orb-vm-run.sh [--no-sync] <command...>
@@ -17,7 +17,7 @@ case "$top" in
     */.work/wt/*) name=$(basename "$top") ;;
     *) name=main ;;
 esac
-vm=/mnt/crabc/wt/$name
+vm=/mnt/crabc/crabc/.work/wt/$name
 if [ "$sync" = 1 ]; then
     head=$(git -C "$top" rev-parse HEAD)
     mkdir -p "$top/.work"

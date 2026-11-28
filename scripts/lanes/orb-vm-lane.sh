@@ -1,6 +1,6 @@
 #!/bin/sh
 # CRAB-8: create a Mac worktree on lane/<name> plus the matching worktree in
-# the OrbStack Linux/arm64 machine `crabc` at /mnt/crabc/wt/<name>, seeded
+# the OrbStack Linux/arm64 machine `crabc` at /mnt/crabc/crabc/.work/wt/<name>, seeded
 # from the VM's main mirror with the pinned musl source trees, source oracles,
 # package-corpus input and verified mimalloc archive, so
 # scripts/lanes/orb-vm-run.sh can drive it. Usage: orb-vm-lane.sh <name> <commit>
@@ -14,9 +14,9 @@ git -C "$root" worktree add -q -b "lane/$name" "$root/.work/wt/$name" "$rev"
 orb -m crabc sh -c "set -eu
     cd /mnt/crabc/crabc
     git cat-file -e $rev^{commit} 2>/dev/null || git fetch -q '$common' $rev
-    git worktree add -q --detach /mnt/crabc/wt/$name $rev
-    seed=/mnt/crabc/wt/main
-    lane=/mnt/crabc/wt/$name
+    git worktree add -q --detach .work/wt/$name $rev
+    seed=/mnt/crabc/crabc/.work/wt/main
+    lane=/mnt/crabc/crabc/.work/wt/$name
     mkdir -p \$lane/.work/aarch64
     for item in musl-src source-oracles owned-package-corpus-input; do
         [ ! -d \$seed/.work/aarch64/\$item ] || cp -a \$seed/.work/aarch64/\$item \$lane/.work/aarch64/
