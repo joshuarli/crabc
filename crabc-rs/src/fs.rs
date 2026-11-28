@@ -32,13 +32,61 @@
 //! Allocation-free Linux `getdents64` streams are admitted through [`RawDir`]
 //! and [`Dir`]: their caller-owned record buffer and opaque cursor semantics do
 //! not select a C `DIR` ABI.
+//!
+//! # Darwin
+//!
+//! On macOS the module calls libSystem and its flag types carry Darwin values.
+//! It ports the path argument boundary, the `openat` family, `fstat` and
+//! `statat` with a Darwin `Stat`, directory streams, node creation and
+//! removal, hard and symbolic links, `readlinkat`, `renameat_with` over
+//! `renameatx_np`, access checks and permission changes, the timestamp family,
+//! file length, position and synchronization, advisory locks, and the named
+//! temporary-file and temporary-directory family. Behavior that differs from
+//! Linux:
+//!
+//! - APFS stores names as UTF-8. Creating an entry whose name is not UTF-8
+//!   fails with `EILSEQ`, and looking one up finds nothing.
+//! - `chmodat` with `AtFlags::SYMLINK_NOFOLLOW` changes a symbolic link's own
+//!   mode instead of returning `EOPNOTSUPP`.
+//! - `Dir` wraps a libSystem `DIR`: libSystem allocates its records, so the
+//!   caller buffer is not used; `fdopendir` sets `FD_CLOEXEC` on the adopted
+//!   descriptor; seek cookies come from `telldir`.
+//! - `readlinkat_raw` with an empty buffer returns an empty prefix.
+//! - Temporary objects open their parent with `O_SEARCH`, as Darwin has no
+//!   `O_PATH`, so the parent needs search permission.
+//! - `fsync` does not flush the storage device's own cache, and `sync` may
+//!   return before writeback completes.
+//!
+//! These items are absent on Darwin:
+//!
+//! - `RawDir` and `RawDirEntry`: libSystem exposes directory records only
+//!   through `DIR` streams, not a caller-buffer record interface.
+//! - `statx` and its types, `openat2` and `ResolveFlags`, `memfd_create` and
+//!   the seal operations, `TempFile` (`O_TMPFILE`), `copy_file_range`,
+//!   `syncfs`, `fadvise` and `Advice`, and `readahead`: Linux interfaces
+//!   with no libSystem counterpart.
+//! - `fdatasync`: libSystem exports no declared `fdatasync`.
+//! - `fallocate`, `posix_fallocate` and `FallocateFlags`: libSystem has no
+//!   `posix_fallocate`, and `F_PREALLOCATE` has a different contract.
+//! - `sendfile`: Darwin's `sendfile` sends only from a file to a socket.
+//! - `StatFs`, `StatVfs`, `StatVfsMountFlags` and the `statfs`/`statvfs`
+//!   family: Darwin's `struct statfs` is a different record and its
+//!   `statvfs` reports 32-bit block and file counts.
+//! - The extended-attribute family and `XattrFlags`: Darwin's interface has
+//!   position and option arguments and no attribute namespaces.
+//! - `fchown`, `chownat`, `chown`, `lchown` and `ChownFlags`: their `Uid` and
+//!   `Gid` types belong to `process`, which is not ported yet.
+//! - `canonicalize`, `canonicalize_into` and `CANONICAL_PATH_MAX`: the
+//!   algorithm reads the current directory through `process`.
 
 #[cfg(feature = "alloc")]
 use alloc::{ffi::CString, string::String, vec::Vec};
 use bitflags::bitflags;
 use crate::buffer::Buffer;
 use core::ffi::CStr;
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::ManuallyDrop;
+#[cfg(target_os = "linux")]
+use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
 use core::ptr;
 
@@ -49,13 +97,32 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
-use crate::{
-    process::{Gid, Uid},
-    AsFd, BorrowedFd, Errno, OwnedFd, Result,
-};
+#[cfg(target_os = "linux")]
+use crate::process::{Gid, Uid};
+use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
+#[cfg(target_os = "linux")]
 pub use crate::{RawDir, RawDirEntry};
 
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::fs::{
+    access, accessat, chmodat, fchmod, fcntl_getfl, fcntl_lock, fcntl_setfl, flock, fstat, fsync,
+    ftruncate, futimens, futimes, futimesat, linkat, lock_from_current, lutimes, mkdirat, mknodat,
+    openat, readlinkat_raw, renameat_with, seek, statat, symlinkat, sync, tell, truncate, unlinkat,
+    utime, utimensat, utimes, AccessAtFlags, AtFlags, Dev, Dir, DirEntry, LinkAtFlags, OFlags,
+    RenameFlags, Stat, TimestampAtFlags, UnlinkAtFlags, CWD, UTIME_NOW, UTIME_OMIT,
+};
+#[cfg(all(target_os = "macos", feature = "alloc"))]
+#[doc(inline)]
+pub use crate::darwin::fs::readlinkat;
+
+#[cfg(target_os = "linux")]
+use crate::rand::getentropy;
+#[cfg(target_os = "macos")]
+use crate::darwin::fs::{getentropy, TEMP_PARENT_FLAGS};
+
+#[cfg(target_os = "linux")]
 bitflags! {
     /// The bounded Linux `fallocate` modes supported by this facade.
     ///
@@ -99,6 +166,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// `XATTR_*` flags accepted by Linux extended-attribute setters.
     ///
@@ -116,6 +184,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Known Linux/x86-64 `O_*` values for [`openat`], [`fcntl_getfl`], and
     /// [`fcntl_setfl`].
@@ -198,6 +267,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux pathname-resolution controls accepted by [`openat2`].
     ///
@@ -493,6 +563,7 @@ impl PathArg for PathBuf {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
@@ -503,6 +574,7 @@ pub const CWD: BorrowedFd<'static> =
     // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
     unsafe { BorrowedFd::borrow_raw(crabc_core::AT_FDCWD) };
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// The closed `fstatat(2)` flag vocabulary admitted by [`statat`].
     ///
@@ -517,6 +589,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `statx(2)` lookup and synchronization flags accepted by [`statx`].
     ///
@@ -543,6 +616,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by [`unlinkat`].
     ///
@@ -557,6 +631,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by [`linkat`].
     ///
@@ -570,6 +645,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `renameat2(2)` flags admitted by [`renameat_with`].
     ///
@@ -586,6 +662,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by [`chownat`].
     ///
@@ -599,6 +676,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// The closed `utimensat(2)` pathname flag vocabulary.
     ///
@@ -616,6 +694,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by [`accessat`].
     ///
@@ -635,6 +714,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Tests a pathname using Linux's standard `access()` behavior.
 ///
 /// The pathname is resolved relative to the process current working
@@ -648,6 +728,7 @@ pub fn access<P: PathArg>(path: P, access: Access) -> Result<()> {
     path.into_with_c_str(|path| crabc_core::fs::access(path, access.bits()))
 }
 
+#[cfg(target_os = "linux")]
 /// Tests a pathname relative to `dirfd` using Linux's `faccessat` and
 /// `faccessat2` contracts.
 ///
@@ -679,6 +760,7 @@ pub fn accessat<P: PathArg, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads the open-file-description status flags through `fcntl(F_GETFL)`.
 ///
 /// The returned [`OFlags`] includes the access mode and status flags reported
@@ -691,6 +773,7 @@ pub fn fcntl_getfl<Fd: AsFd>(fd: Fd) -> Result<OFlags> {
     crabc_core::io::fcntl_getfl(fd.as_fd().as_raw_fd()).map(OFlags::from_bits_retain)
 }
 
+#[cfg(target_os = "linux")]
 /// Replaces the open-file-description status flags through `fcntl(F_SETFL)`.
 ///
 /// Linux changes only status bits supported for the open file. Access,
@@ -703,6 +786,7 @@ pub fn fcntl_setfl<Fd: AsFd>(fd: Fd, flags: OFlags) -> Result<()> {
     crabc_core::io::fcntl_setfl(fd.as_fd().as_raw_fd(), flags.bits())
 }
 
+#[cfg(target_os = "linux")]
 /// Acquires or releases a Linux whole-file `flock(2)` advisory lock.
 ///
 /// The descriptor is borrowed only for the direct syscall. Blocking operations
@@ -713,12 +797,18 @@ pub fn flock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
     crabc_core::fs::flock(fd.as_fd().as_raw_fd(), operation as u32)
 }
 
+#[cfg(target_os = "linux")]
 const F_GETLK: i32 = 5;
+#[cfg(target_os = "linux")]
 const F_SETLK: i32 = 6;
+#[cfg(target_os = "linux")]
 const F_SETLKW: i32 = 7;
+#[cfg(target_os = "linux")]
 const F_WRLCK: i16 = 1;
+#[cfg(target_os = "linux")]
 const F_UNLCK: i16 = 2;
 
+#[cfg(target_os = "linux")]
 /// Acquires or releases a whole-file, process-associated `fcntl` lock.
 ///
 /// The range extends from byte zero through the dynamically changing EOF.
@@ -749,6 +839,7 @@ pub fn fcntl_lock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
         core::ptr::addr_of_mut!(lock).cast()).map(|_| ()) }
 }
 
+#[cfg(target_os = "linux")]
 /// Acquires, tests, or releases an exclusive process-associated record lock
 /// relative to a descriptor's observed current file offset.
 ///
@@ -802,6 +893,7 @@ pub fn lock_from_current<Fd: AsFd>(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// The six POSIX filesystem access-pattern policies accepted by Linux
 /// `fadvise64`.
 ///
@@ -876,6 +968,7 @@ bitflags! {
 /// Raw Linux st_mode bits.
 pub type RawMode = u32;
 
+#[cfg(target_os = "linux")]
 /// Linux `dev_t` used by [`mknodat`].
 ///
 /// Linux/x86-64 carries this value in one 64-bit syscall argument. FIFO
@@ -911,10 +1004,12 @@ pub struct Timespec {
 const _: [(); 16] = [(); core::mem::size_of::<Timespec>()];
 const _: [(); 8] = [(); core::mem::align_of::<Timespec>()];
 
+#[cfg(target_os = "linux")]
 /// The current-time sentinel accepted in [`Timespec::tv_nsec`] by Linux
 /// `utimensat`.
 pub const UTIME_NOW: Nsecs = 0x3fff_ffff;
 
+#[cfg(target_os = "linux")]
 /// The leave-unchanged sentinel accepted in [`Timespec::tv_nsec`] by Linux
 /// `utimensat`.
 pub const UTIME_OMIT: Nsecs = 0x3fff_fffe;
@@ -1065,6 +1160,7 @@ impl FileType {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A descriptor-owning, allocation-free Linux directory stream.
 ///
 /// `Dir` takes ownership of the directory descriptor and borrows caller-owned
@@ -1082,9 +1178,11 @@ pub struct Dir<'buffer> {
     done: bool,
 }
 
+#[cfg(target_os = "linux")]
 /// One byte-preserving entry borrowed from [`Dir`].
 pub type DirEntry<'entry> = RawDirEntry<'entry>;
 
+#[cfg(target_os = "linux")]
 impl<'buffer> Dir<'buffer> {
     /// Opens `path` as a close-on-exec directory stream.
     ///
@@ -1191,6 +1289,7 @@ impl<'buffer> Dir<'buffer> {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl AsFd for Dir<'_> {
     #[inline]
     fn as_fd(&self) -> BorrowedFd<'_> {
@@ -1216,6 +1315,7 @@ impl std::os::fd::AsFd for Dir<'_> {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Stable Linux `MFD_*` creation flags for [`memfd_create`].
     ///
@@ -1238,6 +1338,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux `F_SEAL_*` flags returned by [`fcntl_get_seals`].
     ///
@@ -1273,6 +1374,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Creates an anonymous Linux memory file and returns its unique owner.
 ///
 /// `name` follows the bounded [`PathArg`] boundary: it is a borrowed
@@ -1298,6 +1400,7 @@ pub fn memfd_create<P: PathArg>(name: P, flags: MemfdFlags) -> Result<OwnedFd> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads the Linux `F_SEAL_*` flags associated with a descriptor's inode.
 ///
 /// This is an observation-only operation over a borrowed descriptor. Linux
@@ -1309,6 +1412,7 @@ pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
     crabc_core::io::fcntl_get_seals(fd.as_fd().as_raw_fd()).map(SealFlags::from_bits_retain)
 }
 
+#[cfg(target_os = "linux")]
 /// Adds Linux `F_SEAL_*` flags to a descriptor's inode.
 ///
 /// The descriptor must have been created with [`MemfdFlags::ALLOW_SEALING`],
@@ -1340,13 +1444,18 @@ const TEMP_FILE_NAME_MAX: usize = 255;
 const TEMP_FILE_SUFFIX_LENGTH: usize = TEMP_FILE_RANDOM_BYTES * 2;
 const TEMP_FILE_MODE_BITS: u32 = 0o600;
 
+/// Opens the directory that temporary-object creation works relative to.
+#[cfg(target_os = "linux")]
+const TEMP_PARENT_FLAGS: OFlags = OFlags::PATH.union(OFlags::DIRECTORY).union(OFlags::CLOEXEC);
+
 /// An owned named temporary regular file with descriptor-relative cleanup.
 ///
 /// Creation opens a stable directory descriptor, then atomically creates a
 /// private `O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC` entry with a 96-bit
-/// `getrandom` suffix. The value owns both descriptors and unlinks its
-/// basename on drop. [`Self::into_owned_fd`] deliberately persists the
-/// directory entry and transfers only the file descriptor to the caller.
+/// kernel-random suffix (`getrandom` on Linux, `getentropy` on Darwin). The
+/// value owns both descriptors and unlinks its basename on drop.
+/// [`Self::into_owned_fd`] deliberately persists the directory entry and
+/// transfers only the file descriptor to the caller.
 ///
 /// The name is a basename, not a process-relative pathname. Callers that need
 /// a full path retain the directory authority they supplied and join it with
@@ -1456,12 +1565,7 @@ pub fn create_temp_file<P: PathArg, Prefix: PathArg>(
     prefix: Prefix,
 ) -> Result<NamedTempFile> {
     parent.into_with_c_str(|parent| {
-        let directory = openat(
-            CWD,
-            parent,
-            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )?;
+        let directory = openat(CWD, parent, TEMP_PARENT_FLAGS, Mode::empty())?;
         create_temp_file_at(&directory, prefix)
     })
 }
@@ -1504,7 +1608,7 @@ fn create_temp_file_at_bytes<Fd: AsFd>(
     let hex = b"0123456789abcdef";
     let mut attempt = 0;
     while attempt < TEMP_FILE_MAX_ATTEMPTS {
-        crate::rand::getentropy(&mut entropy)?;
+        getentropy(&mut entropy)?;
         candidate[..prefix.len()].copy_from_slice(prefix);
         for (index, byte) in entropy.iter().enumerate() {
             candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
@@ -1542,6 +1646,7 @@ fn validate_temp_file_prefix(prefix: &[u8]) -> Result<usize> {
     Ok(name_len)
 }
 
+#[cfg(target_os = "linux")]
 /// A descriptor-owned anonymous temporary regular file.
 ///
 /// `TempFile` uses Linux `O_TMPFILE | O_RDWR | O_CLOEXEC` relative to the
@@ -1558,6 +1663,7 @@ pub struct TempFile {
     fd: OwnedFd,
 }
 
+#[cfg(target_os = "linux")]
 impl TempFile {
     /// Opens an anonymous temporary file in `directory` relative to CWD.
     ///
@@ -1604,6 +1710,7 @@ impl TempFile {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl AsFd for TempFile {
     #[inline]
     fn as_fd(&self) -> BorrowedFd<'_> {
@@ -1611,6 +1718,7 @@ impl AsFd for TempFile {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(feature = "std")]
 impl std::os::fd::AsRawFd for TempFile {
     #[inline]
@@ -1619,6 +1727,7 @@ impl std::os::fd::AsRawFd for TempFile {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(feature = "std")]
 impl std::os::fd::AsFd for TempFile {
     #[inline]
@@ -1629,6 +1738,7 @@ impl std::os::fd::AsFd for TempFile {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sets the length of an open file descriptor.
 ///
 /// The length is an unsigned byte count at this facade boundary. Values above
@@ -1645,6 +1755,7 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
 }
 
+#[cfg(target_os = "linux")]
 /// Sets the length of a pathname-selected file.
 ///
 /// This is the direct Linux `truncate(2)` operation through the fixed-stack
@@ -1660,6 +1771,7 @@ pub fn truncate<P: PathArg>(path: P, length: u64) -> Result<()> {
     path.into_with_c_str(|path| crabc_core::fs::truncate(path, length as i64))
 }
 
+#[cfg(target_os = "linux")]
 /// Sets access and modification timestamps relative to `dirfd`.
 ///
 /// The descriptor and fixed-stack pathname are borrowed only for the direct
@@ -1690,6 +1802,7 @@ pub fn utimensat<P: PathArg, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Sets access and modification timestamps on an open file or directory.
 ///
 /// This is the descriptor-only `utimensat(2)` form: Linux receives the
@@ -1712,6 +1825,7 @@ pub fn futimens<Fd: AsFd>(fd: Fd, times: &Timestamps) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sets access and modification times on an open file using microseconds.
 ///
 /// `None` sends a null timestamp pointer and asks Linux to set both values to
@@ -1744,6 +1858,7 @@ pub fn futimes<Fd: AsFd>(fd: Fd, times: Option<&[Timeval; 2]>) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sets timestamps for a final symbolic link rather than its target.
 ///
 /// `None` asks Linux to set both link timestamps to the current time. Explicit
@@ -1776,6 +1891,7 @@ pub fn lutimes<P: PathArg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> 
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Sets timestamps for a path relative to `dirfd`, following a final symlink.
 ///
 /// `None` asks Linux to set both timestamps to the current time. Explicit
@@ -1813,6 +1929,7 @@ pub fn futimesat<P: PathArg, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Sets timestamps for a current-directory-relative path, following a final
 /// symbolic link.
 ///
@@ -1846,6 +1963,7 @@ pub fn utimes<P: PathArg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Sets timestamps for a current-directory-relative path at whole-second
 /// precision, following a final symbolic link.
 ///
@@ -1885,7 +2003,7 @@ pub fn utime<P: PathArg>(path: P, times: Option<&Utimbuf>) -> Result<()> {
 }
 
 #[inline]
-fn timeval_to_timespec(time: Timeval) -> Result<Timespec> {
+pub(crate) fn timeval_to_timespec(time: Timeval) -> Result<Timespec> {
     if time.tv_usec < 0 || time.tv_usec >= 1_000_000 {
         return Err(Errno::INVAL);
     }
@@ -1895,6 +2013,7 @@ fn timeval_to_timespec(time: Timeval) -> Result<Timespec> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Allocates, zeros, or punches a range in an open file.
 ///
 /// The syscall borrows the supplied raw descriptor for its duration: passing a
@@ -1936,6 +2055,7 @@ pub fn fallocate<Fd: AsFd>(
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Allocates a non-negative byte range using Linux `fallocate(2)` mode zero,
 /// the native Rust spelling of POSIX `posix_fallocate`.
 ///
@@ -1949,6 +2069,7 @@ pub fn posix_fallocate<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()>
     fallocate(fd, FallocateFlags::empty(), offset, length)
 }
 
+#[cfg(target_os = "linux")]
 /// Transfers up to `count` bytes from the supplied input descriptor to the
 /// supplied output descriptor through Linux `sendfile(2)`.
 ///
@@ -1989,6 +2110,7 @@ pub fn sendfile<OutFd: AsFd, InFd: AsFd>(
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Copies up to `len` bytes between the supplied descriptors through Linux
 /// `copy_file_range(2)`.
 ///
@@ -2076,6 +2198,7 @@ pub enum SeekFrom {
     Hole(u64),
 }
 
+#[cfg(target_os = "linux")]
 /// Repositions an open descriptor through Linux `lseek(2)`.
 ///
 /// Successful Linux positions are non-negative and are returned as an
@@ -2101,6 +2224,7 @@ pub fn seek<Fd: AsFd>(fd: Fd, position: SeekFrom) -> Result<u64> {
     crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), offset, whence).map(|offset| offset as u64)
 }
 
+#[cfg(target_os = "linux")]
 /// Returns an open descriptor's current byte position without changing it.
 #[inline]
 #[doc(alias = "lseek")]
@@ -2109,6 +2233,7 @@ pub fn tell<Fd: AsFd>(fd: Fd) -> Result<u64> {
         .map(|offset| offset as u64)
 }
 
+#[cfg(target_os = "linux")]
 /// Flushes file data and metadata for an open descriptor through Linux
 /// `fsync(2)`.
 ///
@@ -2119,6 +2244,7 @@ pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
     crabc_core::fs::fsync(fd.as_fd().as_raw_fd())
 }
 
+#[cfg(target_os = "linux")]
 /// Flushes file data for an open descriptor through Linux `fdatasync(2)`.
 ///
 /// The descriptor is borrowed only for the direct syscall; filesystem and
@@ -2128,6 +2254,7 @@ pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
     crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
 }
 
+#[cfg(target_os = "linux")]
 /// Requests system-wide filesystem synchronization through Linux `sync(2)`.
 ///
 /// Unlike [`syncfs`], this operation is neither descriptor- nor
@@ -2142,6 +2269,7 @@ pub fn sync() {
     crabc_core::fs::sync();
 }
 
+#[cfg(target_os = "linux")]
 /// Requests synchronization of the filesystem associated with `fd`
 /// through Linux `syncfs(2)`.
 ///
@@ -2155,6 +2283,7 @@ pub fn syncfs<Fd: AsFd>(fd: Fd) -> Result<()> {
     crabc_core::fs::syncfs(fd.as_fd().as_raw_fd())
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 /// Linux/AArch64 `struct stat` metadata.
 ///
@@ -2205,6 +2334,7 @@ pub struct Stat {
 }
 
 
+#[cfg(target_os = "linux")]
 /// Linux/x86-64 `struct stat` returned by `fstat(2)`.
 ///
 /// This is the private-kernel-shaped record exposed by the bounded native
@@ -2253,6 +2383,7 @@ pub struct Stat {
     __unused: [i64; 3],
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "aarch64")]
 const _: () = {
     assert!(core::mem::size_of::<Stat>() == 128);
@@ -2324,6 +2455,7 @@ impl Stat {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Linux `struct statx` metadata returned by [`statx`].
 ///
 /// The 256-byte record is shared by the admitted Linux targets. Optional
@@ -2396,6 +2528,7 @@ pub struct Statx {
     __spare3: [u64; 8],
 }
 
+#[cfg(target_os = "linux")]
 /// One timestamp in Linux's `struct statx` output.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -2408,6 +2541,7 @@ pub struct StatxTimestamp {
     __reserved: i32,
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// `STATX_*` fields accepted by [`statx`].
     ///
@@ -2452,6 +2586,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl StatxFlags {
     /// Reserved mask bit rejected before entering the kernel.
     ///
@@ -2461,6 +2596,7 @@ impl StatxFlags {
     pub const RESERVED_MASK: u32 = 0x8000_0000;
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// `STATX_ATTR_*` bits reported in [`Statx::stx_attributes`].
     ///
@@ -2491,33 +2627,60 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 const _: [(); 256] = [(); core::mem::size_of::<Statx>()];
+#[cfg(target_os = "linux")]
 const _: [(); 8] = [(); core::mem::align_of::<Statx>()];
+#[cfg(target_os = "linux")]
 const _: [(); 16] = [(); core::mem::size_of::<StatxTimestamp>()];
+#[cfg(target_os = "linux")]
 const _: [(); 8] = [(); core::mem::align_of::<StatxTimestamp>()];
+#[cfg(target_os = "linux")]
 const _: [(); 0] = [(); core::mem::offset_of!(Statx, stx_mask)];
+#[cfg(target_os = "linux")]
 const _: [(); 4] = [(); core::mem::offset_of!(Statx, stx_blksize)];
+#[cfg(target_os = "linux")]
 const _: [(); 8] = [(); core::mem::offset_of!(Statx, stx_attributes)];
+#[cfg(target_os = "linux")]
 const _: [(); 16] = [(); core::mem::offset_of!(Statx, stx_nlink)];
+#[cfg(target_os = "linux")]
 const _: [(); 20] = [(); core::mem::offset_of!(Statx, stx_uid)];
+#[cfg(target_os = "linux")]
 const _: [(); 24] = [(); core::mem::offset_of!(Statx, stx_gid)];
+#[cfg(target_os = "linux")]
 const _: [(); 28] = [(); core::mem::offset_of!(Statx, stx_mode)];
+#[cfg(target_os = "linux")]
 const _: [(); 32] = [(); core::mem::offset_of!(Statx, stx_ino)];
+#[cfg(target_os = "linux")]
 const _: [(); 40] = [(); core::mem::offset_of!(Statx, stx_size)];
+#[cfg(target_os = "linux")]
 const _: [(); 48] = [(); core::mem::offset_of!(Statx, stx_blocks)];
+#[cfg(target_os = "linux")]
 const _: [(); 56] = [(); core::mem::offset_of!(Statx, stx_attributes_mask)];
+#[cfg(target_os = "linux")]
 const _: [(); 64] = [(); core::mem::offset_of!(Statx, stx_atime)];
+#[cfg(target_os = "linux")]
 const _: [(); 80] = [(); core::mem::offset_of!(Statx, stx_btime)];
+#[cfg(target_os = "linux")]
 const _: [(); 96] = [(); core::mem::offset_of!(Statx, stx_ctime)];
+#[cfg(target_os = "linux")]
 const _: [(); 112] = [(); core::mem::offset_of!(Statx, stx_mtime)];
+#[cfg(target_os = "linux")]
 const _: [(); 128] = [(); core::mem::offset_of!(Statx, stx_rdev_major)];
+#[cfg(target_os = "linux")]
 const _: [(); 132] = [(); core::mem::offset_of!(Statx, stx_rdev_minor)];
+#[cfg(target_os = "linux")]
 const _: [(); 136] = [(); core::mem::offset_of!(Statx, stx_dev_major)];
+#[cfg(target_os = "linux")]
 const _: [(); 140] = [(); core::mem::offset_of!(Statx, stx_dev_minor)];
+#[cfg(target_os = "linux")]
 const _: [(); 144] = [(); core::mem::offset_of!(Statx, stx_mnt_id)];
+#[cfg(target_os = "linux")]
 const _: [(); 152] = [(); core::mem::offset_of!(Statx, stx_dio_mem_align)];
+#[cfg(target_os = "linux")]
 const _: [(); 156] = [(); core::mem::offset_of!(Statx, stx_dio_offset_align)];
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Linux mount flags reported by [`StatFs`] and [`StatVfs`].
     ///
@@ -2550,6 +2713,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Linux/x86-64 `struct statfs` filesystem statistics.
 ///
 /// This is the kernel representation returned by [`statfs`] and
@@ -2585,21 +2749,36 @@ pub struct StatFs {
     __spare: [i64; 4],
 }
 
+#[cfg(target_os = "linux")]
 const _: [(); 120] = [(); core::mem::size_of::<StatFs>()];
+#[cfg(target_os = "linux")]
 const _: [(); 8] = [(); core::mem::align_of::<StatFs>()];
+#[cfg(target_os = "linux")]
 const _: [(); 0] = [(); core::mem::offset_of!(StatFs, f_type)];
+#[cfg(target_os = "linux")]
 const _: [(); 8] = [(); core::mem::offset_of!(StatFs, f_bsize)];
+#[cfg(target_os = "linux")]
 const _: [(); 16] = [(); core::mem::offset_of!(StatFs, f_blocks)];
+#[cfg(target_os = "linux")]
 const _: [(); 24] = [(); core::mem::offset_of!(StatFs, f_bfree)];
+#[cfg(target_os = "linux")]
 const _: [(); 32] = [(); core::mem::offset_of!(StatFs, f_bavail)];
+#[cfg(target_os = "linux")]
 const _: [(); 40] = [(); core::mem::offset_of!(StatFs, f_files)];
+#[cfg(target_os = "linux")]
 const _: [(); 48] = [(); core::mem::offset_of!(StatFs, f_ffree)];
+#[cfg(target_os = "linux")]
 const _: [(); 56] = [(); core::mem::offset_of!(StatFs, f_fsid)];
+#[cfg(target_os = "linux")]
 const _: [(); 64] = [(); core::mem::offset_of!(StatFs, f_namelen)];
+#[cfg(target_os = "linux")]
 const _: [(); 72] = [(); core::mem::offset_of!(StatFs, f_frsize)];
+#[cfg(target_os = "linux")]
 const _: [(); 80] = [(); core::mem::offset_of!(StatFs, f_flags)];
+#[cfg(target_os = "linux")]
 const _: [(); 88] = [(); core::mem::offset_of!(StatFs, __spare)];
 
+#[cfg(target_os = "linux")]
 /// POSIX-shaped filesystem statistics derived from Linux [`StatFs`].
 ///
 /// Linux has no separate `statvfs` syscall. The facade performs `statfs` or
@@ -2635,6 +2814,7 @@ pub struct StatVfs {
     pub f_namemax: u64,
 }
 
+#[cfg(target_os = "linux")]
 impl From<StatFs> for StatVfs {
     #[inline]
     fn from(statfs: StatFs) -> Self {
@@ -2655,6 +2835,7 @@ impl From<StatFs> for StatVfs {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Queries filesystem statistics for an open file or directory.
 #[inline]
 pub fn fstatfs<Fd: AsFd>(fd: Fd) -> Result<StatFs> {
@@ -2666,6 +2847,7 @@ pub fn fstatfs<Fd: AsFd>(fd: Fd) -> Result<StatFs> {
     Ok(unsafe { statfs.assume_init() })
 }
 
+#[cfg(target_os = "linux")]
 /// Queries filesystem statistics for `path` using the fixed-stack path boundary.
 #[inline]
 pub fn statfs<P: PathArg>(path: P) -> Result<StatFs> {
@@ -2678,18 +2860,21 @@ pub fn statfs<P: PathArg>(path: P) -> Result<StatFs> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Queries POSIX-shaped filesystem statistics for an open descriptor.
 #[inline]
 pub fn fstatvfs<Fd: AsFd>(fd: Fd) -> Result<StatVfs> {
     fstatfs(fd).map(StatVfs::from)
 }
 
+#[cfg(target_os = "linux")]
 /// Queries POSIX-shaped filesystem statistics for `path`.
 #[inline]
 pub fn statvfs<P: PathArg>(path: P) -> Result<StatVfs> {
     statfs(path).map(StatVfs::from)
 }
 
+#[cfg(target_os = "linux")]
 /// Queries extended Linux metadata for `path` relative to `dirfd`.
 ///
 /// This direct x86-64 `statx` shape enters Linux through syscall 332, returns
@@ -2726,6 +2911,7 @@ pub fn statx<P: PathArg, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Queries metadata for an open file or directory descriptor.
 ///
 /// The descriptor is borrowed for the duration of the direct Linux syscall;
@@ -2743,6 +2929,7 @@ pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
     Ok(unsafe { stat.assume_init() })
 }
 
+#[cfg(target_os = "linux")]
 /// Queries x86-64 Linux metadata for `path` relative to `dirfd`.
 ///
 /// The returned [`Stat`] is exactly the 144-byte Linux/x86-64 kernel layout.
@@ -2772,7 +2959,7 @@ pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Resul
     })
 }
 
-/// Queries x86-64 Linux metadata for `path` relative to the current directory.
+/// Queries metadata for `path` relative to the current directory.
 ///
 /// This is [`statat`] with [`CWD`] and no flags.
 #[inline]
@@ -2780,12 +2967,13 @@ pub fn stat<P: PathArg>(path: P) -> Result<Stat> {
     statat(CWD, path, AtFlags::empty())
 }
 
-/// Queries x86-64 Linux metadata for a final symbolic link itself.
+/// Queries metadata for a final symbolic link itself.
 #[inline]
 pub fn lstat<P: PathArg>(path: P) -> Result<Stat> {
     statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
 }
 
+#[cfg(target_os = "linux")]
 /// Opens `path` relative to `dirfd` through Linux `openat(2)`.
 ///
 /// The directory descriptor is borrowed and a successful direct syscall
@@ -2816,6 +3004,7 @@ pub fn openat<P: PathArg, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Opens `path` relative to `dirfd` with explicit Linux resolution controls.
 ///
 /// The supplied flag and mode words are passed unchanged through `openat2`.
@@ -2851,8 +3040,8 @@ pub fn open<P: PathArg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<Ow
 /// Creates or truncates a current-directory-relative file with `creat(2)`
 /// semantics.
 ///
-/// The returned descriptor is write-only. Linux applies the process umask to
-/// `mode` when creating the entry; no close-on-exec policy is implied.
+/// The returned descriptor is write-only. The process umask applies to `mode`
+/// when creating the entry; no close-on-exec policy is implied.
 #[inline]
 #[doc(alias = "creat")]
 pub fn create<P: PathArg>(path: P, mode: Mode) -> Result<OwnedFd> {
@@ -2864,6 +3053,7 @@ pub fn create<P: PathArg>(path: P, mode: Mode) -> Result<OwnedFd> {
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a directory relative to `dirfd`.
 ///
 /// The fixed-stack path and borrowed directory descriptor remain live only
@@ -2880,6 +3070,7 @@ pub fn mkdir<P: PathArg>(path: P, mode: Mode) -> Result<()> {
     mkdirat(CWD, path, mode)
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a Linux filesystem node relative to `dirfd`.
 ///
 /// The file kind and permission/special bits are separate so callers cannot
@@ -2922,6 +3113,7 @@ pub fn mkfifo<P: PathArg>(path: P, mode: Mode) -> Result<()> {
     mkfifoat(CWD, path, mode)
 }
 
+#[cfg(target_os = "linux")]
 /// Removes a path relative to `dirfd`.
 ///
 /// Removing a file's directory entry does not close its open descriptors.
@@ -2981,7 +3173,8 @@ const TEMP_DIR_PATH_MAX: usize = 4096;
 /// callers coordinating CWD changes should prefer [`create_temp_dir_at_into`].
 /// `prefix` is a non-empty, NUL-free single directory-entry prefix; it may
 /// contain arbitrary non-UTF-8 bytes but may not contain `/`. The generated
-/// suffix contains 96 bits from Linux `getrandom`, and each candidate is
+/// suffix contains 96 kernel-random bits (`getrandom` on Linux, `getentropy`
+/// on Darwin), and each candidate is
 /// created atomically with `mkdirat` using mode `0700` (the process umask may
 /// only remove permissions). Up to [`TEMP_DIR_MAX_ATTEMPTS`] `EEXIST`
 /// collisions are retried; another kernel error is returned unchanged.
@@ -3017,12 +3210,7 @@ pub fn create_temp_dir_into<P: PathArg, Prefix: PathArg, Buf: Buffer<u8>>(
                 return Err(Errno::RANGE);
             }
 
-            let directory = openat(
-                CWD,
-                parent,
-                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
-                Mode::empty(),
-            )?;
+            let directory = openat(CWD, parent, TEMP_PARENT_FLAGS, Mode::empty())?;
             let mut basename = [0u8; TEMP_DIR_NAME_MAX + 1];
             let basename_length =
                 create_temp_dir_at_bytes(&directory, prefix_bytes, &mut basename)?;
@@ -3141,7 +3329,7 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
 
     let mut attempt = 0;
     while attempt < TEMP_DIR_MAX_ATTEMPTS {
-        crate::rand::getentropy(&mut entropy)?;
+        getentropy(&mut entropy)?;
         candidate[..prefix.len()].copy_from_slice(prefix);
         for (index, byte) in entropy.iter().enumerate() {
             candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
@@ -3149,7 +3337,7 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
         }
         let candidate_cstr =
             unsafe { CStr::from_bytes_with_nul_unchecked(&candidate[..name_length + 1]) };
-        match crabc_core::fs::mkdirat(parent.as_raw_fd(), candidate_cstr, TEMP_DIR_MODE.bits()) {
+        match mkdirat(parent, candidate_cstr, TEMP_DIR_MODE) {
             Ok(()) => {
                 output[..name_length].copy_from_slice(&candidate[..name_length]);
                 return Ok(name_length);
@@ -3161,6 +3349,7 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
     Err(Errno::EXIST)
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a hard link between paths relative to their directory descriptors.
 ///
 /// [`LinkAtFlags::SYMLINK_FOLLOW`] selects final-source-link resolution. This
@@ -3196,6 +3385,7 @@ pub fn link<P: PathArg, Q: PathArg>(old_path: P, new_path: Q) -> Result<()> {
     linkat(CWD, old_path, CWD, new_path, LinkAtFlags::empty())
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a symbolic link relative to `new_dirfd`.
 ///
 /// The link target is stored as supplied and is not resolved at creation.
@@ -3239,6 +3429,7 @@ pub fn renameat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Renames a path or directory using the admitted Linux `renameat2(2)` flags.
 ///
 /// [`RenameFlags::NOREPLACE`] and [`RenameFlags::EXCHANGE`] are mutually
@@ -3279,12 +3470,14 @@ pub fn rename<P: PathArg, Q: PathArg>(old_path: P, new_path: Q) -> Result<()> {
     renameat(CWD, old_path, CWD, new_path)
 }
 
+#[cfg(target_os = "linux")]
 /// Changes permissions for an open file or directory.
 #[inline]
 pub fn fchmod<Fd: AsFd>(fd: Fd, mode: Mode) -> Result<()> {
     crabc_core::fs::fchmod(fd.as_fd().as_raw_fd(), mode.bits())
 }
 
+#[cfg(target_os = "linux")]
 /// Changes permissions for `path` relative to `dirfd`.
 ///
 /// Linux cannot change a symbolic link's mode. Passing exactly
@@ -3316,6 +3509,7 @@ pub fn chmod<P: PathArg>(path: P, mode: Mode) -> Result<()> {
     chmodat(CWD, path, mode, AtFlags::empty())
 }
 
+#[cfg(target_os = "linux")]
 /// Converts optional typed ownership IDs to Linux's `fchown*` words.
 ///
 /// Linux reserves all ones as the no-change sentinel. `None` is the only way
@@ -3336,6 +3530,7 @@ fn ownership_words(owner: Option<Uid>, group: Option<Gid>) -> Result<(u32, u32)>
     Ok((owner, group))
 }
 
+#[cfg(target_os = "linux")]
 /// Changes ownership for an open file or directory.
 #[inline]
 pub fn fchown<Fd: AsFd>(fd: Fd, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
@@ -3343,6 +3538,7 @@ pub fn fchown<Fd: AsFd>(fd: Fd, owner: Option<Uid>, group: Option<Gid>) -> Resul
     crabc_core::fs::fchown(fd.as_fd().as_raw_fd(), owner, group)
 }
 
+#[cfg(target_os = "linux")]
 /// Changes ownership for `path` relative to `dirfd`.
 ///
 /// [`ChownFlags::SYMLINK_NOFOLLOW`] selects the final symbolic link itself.
@@ -3364,18 +3560,21 @@ pub fn chownat<P: PathArg, Fd: AsFd>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Changes ownership for a path, following a final symbolic link.
 #[inline]
 pub fn chown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
     chownat(CWD, path, owner, group, ChownFlags::empty())
 }
 
+#[cfg(target_os = "linux")]
 /// Changes ownership for a final symbolic link itself.
 #[inline]
 pub fn lchown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
     chownat(CWD, path, owner, group, ChownFlags::SYMLINK_NOFOLLOW)
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a symbolic-link target relative to `dirfd` into caller-owned storage.
 ///
 /// Linux returns the exact initialized target-byte prefix and never appends a
@@ -3412,6 +3611,7 @@ pub fn readlinkat_raw<P: PathArg, Fd: AsFd, Buf: Buffer<u8>>(
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a complete symbolic-link target relative to `dirfd` into owned
 /// byte-path storage.
 ///
@@ -3473,6 +3673,7 @@ pub fn readlink<P: PathArg, B: Into<Vec<u8>>>(path: P, reuse: B) -> Result<CStri
     readlinkat(CWD, path, reuse)
 }
 
+#[cfg(target_os = "linux")]
 /// The Linux pathname bound used by the native canonicalization operation.
 ///
 /// Linux pathname arguments and the musl `realpath` implementation are both
@@ -3481,9 +3682,12 @@ pub fn readlink<P: PathArg, B: Into<Vec<u8>>>(path: P, reuse: B) -> Result<CStri
 /// bytes, while preserving arbitrary non-NUL bytes in those bytes.
 pub const CANONICAL_PATH_MAX: usize = 4096;
 
+#[cfg(target_os = "linux")]
 const CANONICAL_PENDING_CAPACITY: usize = CANONICAL_PATH_MAX * 2;
+#[cfg(target_os = "linux")]
 const CANONICAL_MAX_SYMLINKS: usize = 40;
 
+#[cfg(target_os = "linux")]
 /// Resolves a pathname to an absolute, byte-preserving physical pathname.
 ///
 /// This is the allocation-free caller-buffered equivalent of [`canonicalize`].
@@ -3523,6 +3727,7 @@ pub fn canonicalize_into<P: PathArg, Buf: Buffer<u8>>(
     unsafe { Ok(output.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Resolves a pathname to an owned, NUL-terminated physical pathname.
 ///
 /// This alloc-enabled spelling is useful when the result must outlive the
@@ -3543,12 +3748,14 @@ pub fn canonicalize<P: PathArg>(path: P) -> Result<CString> {
     })
 }
 
+#[cfg(target_os = "linux")]
 #[cfg(feature = "alloc")]
 #[inline]
 fn canonical_path_bytes<P: PathArg>(path: P) -> Result<Vec<u8>> {
     path.into_with_c_str(|path| Ok(path.to_bytes().to_vec()))
 }
 
+#[cfg(target_os = "linux")]
 /// Runs `f` with a canonical pathname assembled in a fixed, no-alloc
 /// workspace. Keeping this workspace bounded makes the same resolution
 /// algorithm available to `--no-default-features` static probes and to the
@@ -3569,6 +3776,7 @@ where
     f(workspace.resolved())
 }
 
+#[cfg(target_os = "linux")]
 struct CanonicalWorkspace {
     pending: [u8; CANONICAL_PENDING_CAPACITY],
     pending_len: usize,
@@ -3582,6 +3790,7 @@ struct CanonicalWorkspace {
     symlink_count: usize,
 }
 
+#[cfg(target_os = "linux")]
 impl CanonicalWorkspace {
     fn new(path: &[u8]) -> Result<Self> {
         let mut pending = [0; CANONICAL_PENDING_CAPACITY];
@@ -3908,6 +4117,7 @@ impl CanonicalWorkspace {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn canonical_path_cstr<T, F>(path: &[u8], f: F) -> Result<T>
 where
     F: FnOnce(&CStr) -> Result<T>,
@@ -3924,6 +4134,7 @@ where
     f(path)
 }
 
+#[cfg(target_os = "linux")]
 /// Queries the byte length of an extended attribute, following the final link.
 ///
 /// This sizing observation initializes no caller buffer and allocates nothing.
@@ -3944,6 +4155,7 @@ pub fn getxattr_size<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<u
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads an extended attribute into caller-provided storage.
 ///
 /// A successful read returns only the initialized prefix. [`Errno::RANGE`]
@@ -3978,6 +4190,7 @@ pub fn getxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
     unsafe { Ok(value.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Queries an attribute's byte length without following a final symbolic link.
 ///
 /// This observes the link's own attributes. The size may change before
@@ -3997,6 +4210,7 @@ pub fn lgetxattr_size<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads an extended attribute without following a final symbolic link.
 ///
 /// The initialized-prefix and undersized-buffer rules are those of [`getxattr`].
@@ -4029,6 +4243,7 @@ pub fn lgetxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
     unsafe { Ok(value.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Queries an open descriptor's extended-attribute byte length.
 ///
 /// The descriptor borrow keeps the object live; its value may still change
@@ -4045,6 +4260,7 @@ pub fn fgetxattr_size<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<usi
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Reads a descriptor extended attribute into caller-provided storage.
 ///
 /// The initialized-prefix and undersized-buffer rules are those of [`getxattr`].
@@ -4071,6 +4287,7 @@ pub fn fgetxattr<Fd: AsFd, Name: PathArg, Buf: Buffer<u8>>(
     unsafe { Ok(value.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Sets an extended attribute on a path.
 #[inline]
 pub fn setxattr<P: PathArg, Name: PathArg>(
@@ -4096,6 +4313,7 @@ pub fn setxattr<P: PathArg, Name: PathArg>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Sets an extended attribute without following a final symbolic link.
 #[inline]
 pub fn lsetxattr<P: PathArg, Name: PathArg>(
@@ -4121,6 +4339,7 @@ pub fn lsetxattr<P: PathArg, Name: PathArg>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Sets an extended attribute on an open descriptor.
 #[inline]
 pub fn fsetxattr<Fd: AsFd, Name: PathArg>(
@@ -4145,6 +4364,7 @@ pub fn fsetxattr<Fd: AsFd, Name: PathArg>(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Queries the byte length of a path's NUL-separated extended-attribute names.
 ///
 /// The final symbolic link is followed. Names may change before [`listxattr`]
@@ -4158,6 +4378,7 @@ pub fn listxattr_size<P: PathArg>(path: P) -> Result<usize> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Lists extended-attribute names into caller-provided storage.
 ///
 /// Returned names are Linux's NUL-separated byte sequence, without a lossy
@@ -4182,6 +4403,7 @@ pub fn listxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<
     unsafe { Ok(list.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Queries name-list byte length without following a final symbolic link.
 ///
 /// The result includes each NUL terminator. Names may change before
@@ -4195,6 +4417,7 @@ pub fn llistxattr_size<P: PathArg>(path: P) -> Result<usize> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Lists extended-attribute names without following a final symbolic link.
 ///
 /// The initialized-prefix and undersized-buffer rules are those of [`listxattr`].
@@ -4214,6 +4437,7 @@ pub fn llistxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result
     unsafe { Ok(list.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Queries name-list byte length on an open descriptor's object.
 ///
 /// The result includes each NUL terminator. Names may change before
@@ -4226,6 +4450,7 @@ pub fn flistxattr_size<Fd: AsFd>(fd: Fd) -> Result<usize> {
     unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), ptr::null_mut(), 0) }
 }
 
+#[cfg(target_os = "linux")]
 /// Lists descriptor extended-attribute names into caller-provided storage.
 ///
 /// The initialized-prefix and undersized-buffer rules are those of [`listxattr`].
@@ -4244,6 +4469,7 @@ pub fn flistxattr<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut list: Buf) -> Result<Bu
     unsafe { Ok(list.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Removes an extended attribute from a path.
 #[inline]
 pub fn removexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()> {
@@ -4255,6 +4481,7 @@ pub fn removexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()>
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Removes an extended attribute without following a final symbolic link.
 #[inline]
 pub fn lremovexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()> {
@@ -4266,6 +4493,7 @@ pub fn lremovexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Removes an extended attribute from an open descriptor.
 #[inline]
 pub fn fremovexattr<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<()> {
@@ -4277,6 +4505,7 @@ pub fn fremovexattr<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<()> {
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Gives Linux a POSIX filesystem access-pattern advisory through the native
 /// x86-64 `fadvise64` syscall.
 ///
@@ -4300,6 +4529,7 @@ pub fn fadvise<Fd: AsFd>(
     crabc_core::fs::fadvise64(fd.as_fd().as_raw_fd(), offset, length, advice as u32)
 }
 
+#[cfg(target_os = "linux")]
 /// Initiates Linux file readahead for a byte range of an open file.
 ///
 /// `offset` and `length` are unsigned byte quantities at this safe boundary.

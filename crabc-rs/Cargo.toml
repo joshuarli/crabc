@@ -862,5 +862,9 @@ runtime-stdio = []
 runtime-thread-alloc = ["runtime-thread", "alloc"]
 
 [dependencies]
-crabc-core = { path = "../crabc-core" }
 bitflags = { version = "2.4.0", default-features = false }
+
+# The macOS backend calls libSystem directly; crabc-core is the Linux kernel
+# seam and is not built there.
+[target.'cfg(target_os = "linux")'.dependencies]
+crabc-core = { path = "../crabc-core" }

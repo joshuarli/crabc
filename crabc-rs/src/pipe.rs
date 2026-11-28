@@ -3,24 +3,43 @@
 //! The returned descriptors own their kernel resources and all operations use
 //! the shared `crabc-core` syscall seam. No public C ABI or TLS `errno` state
 //! is involved.
+//!
+//! On Darwin, [`pipe`] and [`pipe_with`] call libSystem `pipe2`, which macOS
+//! 27 provides, so close-on-exec is atomic there as well. Darwin's
+//! [`PIPE_BUF`] is 512 bytes and [`PipeFlags`] has no packet-mode `DIRECT`
+//! flag. The Linux splice family (`SpliceFlags`, `IoSliceRaw`, `tee`,
+//! `splice`, `vmsplice`) and `fcntl_getpipe_size` have no Darwin counterpart
+//! and are absent.
 
+#[cfg(target_os = "linux")]
 use bitflags::bitflags;
+#[cfg(target_os = "linux")]
 use core::marker::PhantomData;
 
-use crate::{AsFd, OwnedFd, Result};
+#[cfg(target_os = "linux")]
+use crate::AsFd;
+use crate::{OwnedFd, Result};
 
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::pipe::{pipe_with, PipeFlags, PIPE_BUF};
+
+#[cfg(target_os = "linux")]
 /// The maximum size of an atomically written pipe record on Linux.
 pub const PIPE_BUF: usize = 4096;
 
+#[cfg(target_os = "linux")]
 // `O_DIRECT` is an architecture-specific Linux UAPI value even though
 // `pipe2` uses it for the target-independent packet-mode operation. Keep the
 // target distinction at this ABI boundary rather than making the public flag
 // silently select AArch64's value on x86-64.
 #[cfg(target_arch = "aarch64")]
 const PIPE2_O_DIRECT: u32 = 0x0001_0000;
+#[cfg(target_os = "linux")]
 #[cfg(target_arch = "x86_64")]
 const PIPE2_O_DIRECT: u32 = 0x0000_4000;
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `pipe2` on the 64-bit targets.
     ///
@@ -40,6 +59,7 @@ bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags! {
     /// Flags accepted by Linux `tee` and the related splice operations.
     #[repr(transparent)]
@@ -58,6 +78,7 @@ pub struct SpliceFlags: u32 {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// A raw-memory iovec accepted by [`vmsplice`].
 ///
 /// This intentionally mirrors Rustix's `IoSliceRaw`: an immutable source
@@ -72,6 +93,7 @@ pub struct IoSliceRaw<'a> {
     _lifetime: PhantomData<&'a ()>,
 }
 
+#[cfg(target_os = "linux")]
 impl<'a> IoSliceRaw<'a> {
     /// Wraps an immutable source range for a pipe's write end.
     #[inline]
@@ -107,6 +129,7 @@ pub fn pipe() -> Result<(OwnedFd, OwnedFd)> {
     pipe_with(PipeFlags::empty())
 }
 
+#[cfg(target_os = "linux")]
 /// Creates a pipe with the requested Linux `pipe2` flags.
 #[inline]
 pub fn pipe_with(flags: PipeFlags) -> Result<(OwnedFd, OwnedFd)> {
@@ -116,6 +139,7 @@ pub fn pipe_with(flags: PipeFlags) -> Result<(OwnedFd, OwnedFd)> {
     unsafe { Ok((OwnedFd::from_raw_fd(reader), OwnedFd::from_raw_fd(writer))) }
 }
 
+#[cfg(target_os = "linux")]
 /// Returns a pipe's current Linux kernel capacity in bytes through
 /// `fcntl(F_GETPIPE_SZ)`.
 ///
@@ -129,6 +153,7 @@ pub fn fcntl_getpipe_size<Fd: AsFd>(fd: Fd) -> Result<usize> {
     crabc_core::pipe::fcntl_getpipe_size(fd.as_fd().as_raw_fd())
 }
 
+#[cfg(target_os = "linux")]
 /// Copies up to `len` bytes from one pipe to another without consuming the
 /// source pipe's data.
 ///
@@ -150,6 +175,7 @@ pub fn tee<FdIn: AsFd, FdOut: AsFd>(
     )
 }
 
+#[cfg(target_os = "linux")]
 /// Transfers bytes between a file and a pipe through Linux `splice(2)`.
 ///
 /// `off_in` and `off_out` must be `None` for pipe descriptors. For a regular
@@ -219,6 +245,7 @@ pub fn splice<FdIn: AsFd, FdOut: AsFd>(
     Ok(copied)
 }
 
+#[cfg(target_os = "linux")]
 /// Transfers raw memory to or from a pipe through Linux `vmsplice(2)`.
 ///
 /// # Safety

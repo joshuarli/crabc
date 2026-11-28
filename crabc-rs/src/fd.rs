@@ -1,7 +1,16 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-/// The Linux file-descriptor integer representation.
+#[cfg(target_os = "linux")]
+use crabc_core::io::close as close_raw;
+#[cfg(target_os = "linux")]
+use crabc_core::AT_FDCWD;
+#[cfg(target_os = "macos")]
+use crate::darwin::io::close_raw;
+#[cfg(target_os = "macos")]
+use crate::darwin::sys::AT_FDCWD;
+
+/// The file-descriptor integer representation shared by Linux and Darwin.
 pub type RawFd = i32;
 
 /// Extracts a raw descriptor without transferring ownership.
@@ -27,7 +36,7 @@ pub trait FromRawFd {
     /// # Safety
     ///
     /// `fd` must be open, uniquely owned, and suitable for release by the
-    /// Linux `close` operation.
+    /// target's `close` operation.
     unsafe fn from_raw_fd(fd: RawFd) -> Self;
 }
 
@@ -70,13 +79,14 @@ impl<'fd> BorrowedFd<'fd> {
     /// `fd` must be a valid, open file descriptor, and the resource owner must
     /// keep it open for the entire lifetime of the returned value. The value
     /// must not be closed through another alias during that lifetime. The sole
-    /// exceptions are Linux's reserved `AT_FDCWD` token (`-100`) and the
-    /// Rustix-compatible `ABS` token (`-EBADF`, `-9`). Both are safe to borrow
-    /// only as directory arguments to `*at` operations.
+    /// exceptions are the target's reserved `AT_FDCWD` token (`-100` on Linux,
+    /// `-2` on Darwin) and the Rustix-compatible `ABS` token (`-EBADF`, `-9`
+    /// on both). Both are safe to borrow only as directory arguments to `*at`
+    /// operations.
     #[must_use]
     pub const unsafe fn borrow_raw(fd: RawFd) -> Self {
         assert!(
-            fd >= 0 || fd == crabc_core::AT_FDCWD || fd == -9,
+            fd >= 0 || fd == AT_FDCWD || fd == -9,
             "a borrowed file descriptor must be open, AT_FDCWD, or ABS"
         );
 
@@ -142,9 +152,9 @@ impl<T: std::os::fd::AsFd + ?Sized> AsFd for &T {
 /// An owned file descriptor closed when it is dropped.
 ///
 /// This type is the ownership boundary for descriptors returned by native
-/// operations. Dropping it invokes the direct Linux syscall seam in
+/// operations. On Linux, dropping it invokes the direct syscall seam in
 /// `crabc-core`; it never calls the public C ABI or transports an error through
-/// thread-local `errno`.
+/// thread-local `errno`. On Darwin it calls libSystem `close`.
 #[repr(transparent)]
 pub struct OwnedFd {
     fd: RawFd,
@@ -156,7 +166,7 @@ impl OwnedFd {
     /// # Safety
     ///
     /// `fd` must be a valid, open descriptor whose ownership is transferred to
-    /// the returned value. It must be valid to release it with the Linux
+    /// the returned value. It must be valid to release it with the target's
     /// `close` operation, and no other owner may close it while this value
     /// exists.
     #[must_use]
@@ -180,19 +190,20 @@ impl OwnedFd {
         fd
     }
 
-    /// Closes this descriptor exactly once through Linux's direct `close(2)`.
+    /// Closes this descriptor exactly once through `close(2)`.
     ///
     /// This consuming operation models the POSIX close boundary: ownership is
-    /// released before the result is returned, and Linux's `EINTR` is treated
-    /// as success because Linux has already released the descriptor. Other
-    /// kernel errors are reported as ordinary [`crate::Errno`] values. The
-    /// descriptor must not be used after this call, regardless of the result.
+    /// released before the result is returned, and `EINTR` is treated as
+    /// success because both Linux and XNU have already released the
+    /// descriptor when they report it. Other errors are reported as ordinary
+    /// [`crate::Errno`] values. The descriptor must not be used after this
+    /// call, regardless of the result.
     #[inline]
     pub fn close(self) -> crate::Result<()> {
         // This releases the Rust owner before the syscall, preventing Drop
         // from retrying or double-closing a descriptor number Linux may reuse.
         let fd = self.into_raw_fd();
-        match crabc_core::io::close(fd) {
+        match close_raw(fd) {
             Err(error) if error == crate::Errno::INTR => Ok(()),
             result => result,
         }
@@ -252,7 +263,7 @@ impl Drop for OwnedFd {
         // Closing errors cannot be returned from `Drop`. Retrying after an
         // interrupt could close a different descriptor that has been reused,
         // so the direct close result is intentionally discarded.
-        let _ = crabc_core::io::close(self.fd);
+        let _ = close_raw(self.fd);
     }
 }
 

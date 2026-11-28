@@ -490,7 +490,10 @@ mod tests {
         let bytes = [b'a'; SMALL_PATH_BUFFER_SIZE];
         let result = bytes.as_slice().into_with_c_str(|_| Ok(()));
 
-        assert_eq!(result.unwrap_err().raw(), 36);
+        let error = result.unwrap_err();
+        assert_eq!(error, crate::Errno::NAMETOOLONG);
+        #[cfg(target_os = "linux")]
+        assert_eq!(error.raw(), 36);
     }
 }
 

@@ -1,24 +1,37 @@
 //! Native Rust vocabulary for the crabc implementation.
 //!
 //! This crate is the Rust-facing side of crabc. It is intentionally independent
-//! of the public C ABI: the types here do not call C functions, read C
-//! `errno`, or translate C sentinel return values. Operations will be added
+//! of the public C ABI: on Linux the types here do not call C functions, read
+//! C `errno`, or translate C sentinel return values. Operations will be added
 //! behind this vocabulary as their shared implementation seams are extracted.
 //!
 //! The crate is `no_std` at its core. The default `std` feature enables
 //! standard-library integration points as they are added, while the separate
 //! `alloc` feature is reserved for APIs that need owned allocation.
+//!
+//! On macOS/AArch64 the crate builds a libSystem backend for a subset of its
+//! modules instead: [`buffer`], [`collections`], [`fd`], [`ffi`], [`fs`],
+//! [`io`], [`numeric`], [`path`] and [`pipe`]. The other modules are not
+//! compiled there, so using one is a compile-time error. libSystem reports
+//! failures through thread-local `errno`; the Darwin backend reads it
+//! immediately after each failing call and returns the typed [`Errno`],
+//! whose values are Darwin's.
 #![no_std]
 #![deny(clippy::missing_safety_doc)]
 
 // Runtime-owned features stay behind their own features until their native
 // boundaries exist.
-#[cfg(not(all(
-    target_os = "linux",
-    any(target_arch = "aarch64", target_arch = "x86_64"),
-    target_endian = "little"
+#[cfg(not(any(
+    all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64"),
+        target_endian = "little"
+    ),
+    all(target_os = "macos", target_arch = "aarch64", target_endian = "little"),
 )))]
-compile_error!("crabc-rs supports little-endian Linux/AArch64 and staged Linux/x86-64 only");
+compile_error!(
+    "crabc-rs supports little-endian Linux/AArch64, staged Linux/x86-64, and macOS/AArch64 only"
+);
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -31,83 +44,119 @@ pub mod buffer;
 // algorithms are shared by the AArch64 facade and the private
 // x86-64 civil-time module. They define no C time ABI or process timezone
 // state.
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 mod civil_time;
 // The three private RuntimeV1 consumers (`cfile`, `dl`, `runtime_thread`)
 // are target-neutral. Each opt-in feature needs a crabc process whose loaded
 // libc exports `__crabc_runtime_v1`; on x86-64 that is the installed owned
 // dynamic product.
-#[cfg(feature = "runtime-stdio")]
+#[cfg(all(target_os = "linux", feature = "runtime-stdio"))]
 pub mod cfile;
 pub mod collections;
+#[cfg(target_os = "macos")]
+mod darwin;
+#[cfg(target_os = "linux")]
 mod eventfd;
+#[cfg(target_os = "linux")]
 pub mod event;
-#[cfg(feature = "runtime-loader")]
+#[cfg(all(target_os = "linux", feature = "runtime-loader"))]
 pub mod dl;
 pub mod fd;
+#[cfg(target_os = "linux")]
 pub mod fenv;
 pub mod ffi;
 pub mod fs;
 pub mod io;
+#[cfg(target_os = "linux")]
 pub mod ioctl;
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod ipc;
+#[cfg(target_os = "linux")]
 pub mod memory;
+#[cfg(target_os = "linux")]
 pub mod mm;
+#[cfg(target_os = "linux")]
 pub mod mount;
 // Socket transport, allocation-free address/message values, bounded
 // network-device ioctl/rtnetlink snapshots, and the caller-owned resolver plus
 // conventional hosts/service/protocol snapshots use the Linux LP64 layouts
 // shared by both architectures.
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod net;
-#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(all(
+    target_os = "linux",
+    feature = "alloc",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 pub mod netdb;
 pub mod numeric;
+#[cfg(target_os = "linux")]
 pub mod param;
 // Path arguments and borrowed component extraction use byte/C-string values,
 // with no architecture-specific kernel records or process state.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod path;
+#[cfg(target_os = "linux")]
 pub mod pattern;
 pub mod pipe;
+#[cfg(target_os = "linux")]
 pub mod process;
+#[cfg(target_os = "linux")]
 pub mod pty;
+#[cfg(target_os = "linux")]
 pub mod rand;
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 mod raw_dir;
-#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(all(
+    target_os = "linux",
+    feature = "alloc",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 pub mod resolver;
-#[cfg(feature = "runtime-thread")]
+#[cfg(all(target_os = "linux", feature = "runtime-thread"))]
 pub mod runtime_thread;
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod shm;
+#[cfg(target_os = "linux")]
 pub mod signal;
+#[cfg(target_os = "linux")]
 pub mod stdio;
 // Rust-owned process-private synchronization uses only atomics and the direct
 // futex seam. Both admitted targets use the same 64-bit relative timespec.
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod sync;
+#[cfg(target_os = "linux")]
 pub mod system;
+#[cfg(target_os = "linux")]
 pub mod termios;
+#[cfg(target_os = "linux")]
 pub mod text;
+#[cfg(target_os = "linux")]
 pub mod thread;
+#[cfg(target_os = "linux")]
 pub mod time;
 #[cfg(all(
+    target_os = "linux",
     feature = "alloc",
     any(target_arch = "aarch64", target_arch = "x86_64")
 ))]
 pub mod timezone;
 #[cfg(all(
+    target_os = "linux",
     feature = "alloc",
     any(target_arch = "aarch64", target_arch = "x86_64")
 ))]
 pub mod users;
 
+#[cfg(target_os = "linux")]
 pub use crabc_core::{Errno, Result};
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use darwin::errno::{Errno, Result};
 pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+#[cfg(target_os = "linux")]
 pub use signal::Pid;
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub use raw_dir::{RawDir, RawDirEntry};
 
 #[cfg(test)]

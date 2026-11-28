@@ -1,15 +1,43 @@
 //! Direct descriptor I/O.
 //!
-//! These operations use the shared typed kernel seam in `crabc-core`; they do
-//! not call crabc's public C ABI and never read or write TLS `errno`.
+//! On Linux these operations use the shared typed kernel seam in
+//! `crabc-core`; they do not call crabc's public C ABI and never read or write
+//! TLS `errno`.
+//!
+//! On Darwin the same operations call libSystem and read `errno` immediately
+//! after a failure. macOS 27 provides `dup3`, so [`dup3`] and
+//! [`fcntl_dupfd_cloexec`] set close-on-exec atomically there too. These
+//! Linux interfaces have no Darwin counterpart and are absent:
+//!
+//! - `ReadWriteFlags`, `preadv2` and `pwritev2`: Darwin's `preadv`/`pwritev`
+//!   take no per-call `RWF_*` flag word.
+//! - `SyncFileRangeFlags` and `sync_file_range`: Darwin has no range
+//!   writeback request.
 
 use core::marker::PhantomData;
 use core::slice;
 
+#[cfg(target_os = "linux")]
 use crate::buffer::Buffer;
-use crate::{AsFd, BorrowedFd, OwnedFd, RawFd, Result};
+#[cfg(target_os = "linux")]
+use crate::{AsFd, BorrowedFd, OwnedFd, RawFd};
+use crate::Result;
+#[cfg(target_os = "linux")]
+use crabc_core::io::{Iovec, FD_CLOEXEC};
+#[cfg(target_os = "macos")]
+use crate::darwin::sys::Iovec;
+
+#[cfg(target_os = "macos")]
+const FD_CLOEXEC: u32 = crate::darwin::sys::FD_CLOEXEC as u32;
 
 pub use crate::Errno;
+#[cfg(target_os = "macos")]
+#[doc(inline)]
+pub use crate::darwin::io::{
+    close, dup, dup2, dup3, fcntl_dupfd, fcntl_dupfd_cloexec, fcntl_getfd, fcntl_setfd,
+    ioctl_fionbio, ioctl_fionclex, ioctl_fioclex, ioctl_fionread, pread, preadv, pwrite, pwritev,
+    read, readv, write, writev, DupFlags,
+};
 
 bitflags::bitflags! {
     /// `FD_*` flags used by [`fcntl_getfd`] and [`fcntl_setfd`].
@@ -17,13 +45,14 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
     pub struct FdFlags: u32 {
         /// `FD_CLOEXEC`: close this descriptor during a successful exec.
-        const CLOEXEC = crabc_core::io::FD_CLOEXEC;
+        const CLOEXEC = FD_CLOEXEC;
 
-        /// Preserve unknown Linux flag bits when round-tripping kernel values.
+        /// Preserve unknown flag bits when round-tripping kernel values.
         const _ = !0;
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags::bitflags! {
     /// The bounded Linux `RWF_*` flags accepted by [`preadv2`] and
     /// [`pwritev2`].
@@ -50,6 +79,7 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags::bitflags! {
     /// The three Linux `SYNC_FILE_RANGE_*` controls accepted by
     /// [`sync_file_range`].
@@ -78,7 +108,7 @@ bitflags::bitflags! {
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct IoSlice<'a> {
-    iovec: crabc_core::io::Iovec,
+    iovec: Iovec,
     _lifetime: PhantomData<&'a [u8]>,
 }
 
@@ -87,7 +117,7 @@ impl<'a> IoSlice<'a> {
     #[inline]
     pub fn new(buffer: &'a [u8]) -> Self {
         Self {
-            iovec: crabc_core::io::Iovec {
+            iovec: Iovec {
                 // Linux's iovec uses a mutable C pointer even for writev;
                 // the immutable Rust borrow is retained by `_lifetime`.
                 iov_base: buffer.as_ptr().cast_mut(),
@@ -132,7 +162,7 @@ impl<'a> IoSlice<'a> {
 /// initialized prefix and uninitialized suffix must be represented explicitly.
 #[repr(transparent)]
 pub struct IoSliceMut<'a> {
-    iovec: crabc_core::io::Iovec,
+    iovec: Iovec,
     _lifetime: PhantomData<&'a mut [u8]>,
 }
 
@@ -141,7 +171,7 @@ impl<'a> IoSliceMut<'a> {
     #[inline]
     pub fn new(buffer: &'a mut [u8]) -> Self {
         Self {
-            iovec: crabc_core::io::Iovec {
+            iovec: Iovec {
                 iov_base: buffer.as_mut_ptr(),
                 iov_len: buffer.len(),
             },
@@ -184,6 +214,7 @@ impl<'a> IoSliceMut<'a> {
     }
 }
 
+#[cfg(target_os = "linux")]
 bitflags::bitflags! {
     /// `O_*` flags accepted by [`dup3`].
     #[repr(transparent)]
@@ -197,6 +228,7 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// `dup(fd)`—duplicate a descriptor with a fresh owner.
 #[inline]
 pub fn dup<Fd: AsFd>(fd: Fd) -> Result<OwnedFd> {
@@ -206,6 +238,7 @@ pub fn dup<Fd: AsFd>(fd: Fd) -> Result<OwnedFd> {
     unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
 }
 
+#[cfg(target_os = "linux")]
 /// `dup2(fd, new)`—replace the descriptor held by `new`.
 ///
 /// The mutable owner prevents aliasing the target through this API. Linux's
@@ -216,24 +249,28 @@ pub fn dup2<Fd: AsFd>(fd: Fd, new: &mut OwnedFd) -> Result<()> {
     crabc_core::io::dup2(fd.as_fd().as_raw_fd(), new.as_raw_fd())
 }
 
+#[cfg(target_os = "linux")]
 /// `dup3(fd, new, flags)`—replace the descriptor held by `new` with flags.
 #[inline]
 pub fn dup3<Fd: AsFd>(fd: Fd, new: &mut OwnedFd, flags: DupFlags) -> Result<()> {
     crabc_core::io::dup3(fd.as_fd().as_raw_fd(), new.as_raw_fd(), flags.bits())
 }
 
+#[cfg(target_os = "linux")]
 /// `fcntl(fd, F_GETFD)`—read descriptor flags.
 #[inline]
 pub fn fcntl_getfd<Fd: AsFd>(fd: Fd) -> Result<FdFlags> {
     crabc_core::io::fcntl_getfd(fd.as_fd().as_raw_fd()).map(FdFlags::from_bits_retain)
 }
 
+#[cfg(target_os = "linux")]
 /// `fcntl(fd, F_SETFD, flags)`—replace descriptor flags.
 #[inline]
 pub fn fcntl_setfd<Fd: AsFd>(fd: Fd, flags: FdFlags) -> Result<()> {
     crabc_core::io::fcntl_setfd(fd.as_fd().as_raw_fd(), flags.bits())
 }
 
+#[cfg(target_os = "linux")]
 /// `fcntl(fd, F_DUPFD)`—duplicate at or above `minimum`.
 #[inline]
 pub fn fcntl_dupfd<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> {
@@ -243,6 +280,7 @@ pub fn fcntl_dupfd<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> {
     unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
 }
 
+#[cfg(target_os = "linux")]
 /// `fcntl(fd, F_DUPFD_CLOEXEC)`—duplicate with close-on-exec set.
 #[inline]
 pub fn fcntl_dupfd_cloexec<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> {
@@ -252,6 +290,7 @@ pub fn fcntl_dupfd_cloexec<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> 
     unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Issues a checked Linux range-writeback request for an open regular file.
 ///
 /// `offset` and `length` are unsigned at this Rust boundary and describe the
@@ -287,6 +326,7 @@ pub fn sync_file_range(
     crabc_core::io::sync_file_range(fd.as_raw_fd(), offset as i64, length as i64, flags.bits())
 }
 
+#[cfg(target_os = "linux")]
 /// Reads bytes into initialized or potentially uninitialized storage.
 ///
 /// For initialized buffers the returned value is the number of bytes read. For
@@ -307,6 +347,7 @@ pub fn read<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut buffer: Buf) -> Result<Buf::O
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads into initialized byte segments in order.
 ///
 /// Linux fills the segments as one logical concatenated buffer and may return
@@ -329,6 +370,7 @@ pub fn readv<Fd: AsFd>(fd: Fd, buffers: &mut [IoSliceMut<'_>]) -> Result<usize> 
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads bytes at `offset` without changing the descriptor's file position.
 ///
 /// The descriptor is borrowed for the operation, and the buffer contract is
@@ -354,6 +396,7 @@ pub fn pread<Fd: AsFd, Buf: Buffer<u8>>(
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads initialized byte segments from `offset` without changing the
 /// descriptor's file position.
 ///
@@ -379,6 +422,7 @@ pub fn preadv<Fd: AsFd>(fd: Fd, buffers: &mut [IoSliceMut<'_>], offset: u64) -> 
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Reads initialized byte segments with Linux `preadv2` flags.
 ///
 /// `offset == u64::MAX` is the explicit Linux sentinel for the descriptor's
@@ -413,6 +457,7 @@ pub fn preadv2<Fd: AsFd>(
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Writes the complete byte slice as far as the kernel accepts it.
 ///
 /// A successful short write is reported as its actual byte count, matching the
@@ -424,6 +469,7 @@ pub fn write<Fd: AsFd>(fd: Fd, buffer: &[u8]) -> Result<usize> {
     unsafe { crabc_core::io::write_raw(fd.as_raw_fd(), buffer.as_ptr(), buffer.len()) }
 }
 
+#[cfg(target_os = "linux")]
 /// Writes initialized byte segments in order.
 ///
 /// Linux treats the segments as one logical concatenated buffer and may
@@ -445,6 +491,7 @@ pub fn writev<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>]) -> Result<usize> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Writes bytes at `offset` without changing the descriptor's file position.
 ///
 /// A successful short write is returned as the number of bytes accepted by
@@ -457,6 +504,7 @@ pub fn pwrite<Fd: AsFd>(fd: Fd, buffer: &[u8], offset: u64) -> Result<usize> {
     unsafe { crabc_core::io::pwrite_raw(fd.as_raw_fd(), buffer.as_ptr(), buffer.len(), offset) }
 }
 
+#[cfg(target_os = "linux")]
 /// Writes initialized byte segments at `offset` without changing the
 /// descriptor's file position.
 ///
@@ -479,6 +527,7 @@ pub fn pwritev<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], offset: u64) -> Result
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Writes initialized byte segments with Linux `pwritev2` flags.
 ///
 /// `offset == u64::MAX` is the explicit Linux sentinel for the descriptor's
@@ -513,6 +562,7 @@ pub fn pwritev2<Fd: AsFd>(
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Closes a raw descriptor without retrying errors.
 ///
 /// # Safety
@@ -541,6 +591,7 @@ where
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Sets `FD_CLOEXEC` through Linux `FIOCLEX`.
 #[inline]
 pub fn ioctl_fioclex<Fd: AsFd>(fd: Fd) -> Result<()> {
@@ -548,6 +599,7 @@ pub fn ioctl_fioclex<Fd: AsFd>(fd: Fd) -> Result<()> {
     unsafe { crate::ioctl::ioctl(fd, crate::ioctl::NoArg::<0x5451>::new()) }
 }
 
+#[cfg(target_os = "linux")]
 /// Clears `FD_CLOEXEC` through Linux `FIONCLEX`.
 #[inline]
 pub fn ioctl_fionclex<Fd: AsFd>(fd: Fd) -> Result<()> {
@@ -555,6 +607,7 @@ pub fn ioctl_fionclex<Fd: AsFd>(fd: Fd) -> Result<()> {
     unsafe { crate::ioctl::ioctl(fd, crate::ioctl::NoArg::<0x5450>::new()) }
 }
 
+#[cfg(target_os = "linux")]
 /// Enables or disables nonblocking I/O through Linux `FIONBIO`.
 #[inline]
 pub fn ioctl_fionbio<Fd: AsFd>(fd: Fd, value: bool) -> Result<()> {
@@ -568,6 +621,7 @@ pub fn ioctl_fionbio<Fd: AsFd>(fd: Fd, value: bool) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Returns the byte count currently available to read through `FIONREAD`.
 #[inline]
 pub fn ioctl_fionread<Fd: AsFd>(fd: Fd) -> Result<u64> {
