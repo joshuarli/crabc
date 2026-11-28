@@ -837,6 +837,34 @@ def _m2_aarch64_arena_purge_delay_trace() -> dict[str, int]:
 
 
 M2_AARCH64_ARENA_PURGE_DELAY_TRACE = _m2_aarch64_arena_purge_delay_trace()
+
+
+def _m2_aarch64_arena_abandoned_search_trace() -> dict[str, int]:
+    """Pinned relations of `m2_arena_abandoned_search_x86_64.c` on 4 KiB AArch64.
+
+    The owning heap is the third of three live heaps over three 64-MiB
+    arenas, so `mi_arena_start_idx` starts its search at the middle arena
+    (frac 170, hspot 2; src/arena.c:429-452) and its 256 fresh medium pages
+    fill that arena, then the first and last. Five siblings raise the live
+    heap count to eight and move the start to the first arena; releasing
+    them moves it back. The drain takes the middle arena's remaining pages,
+    then the first's, then the last's, and leaves the other heap's page in
+    the last arena for that heap.
+    """
+
+    return {
+        "registry": 3, "placement.0": 126, "placement.1": 125, "placement.2": 5,
+        "other.placement": 2, "main.reclaimed": 0,
+        "first.reclaimed": 1, "first.arena": 1,
+        "siblings.reclaimed": 1, "siblings.arena": 0,
+        "released.reclaimed": 1, "released.arena": 1,
+        "drain.0.arena": 1, "drain.0.count": 123, "drain.1.arena": 0, "drain.1.count": 125,
+        "drain.2.arena": 2, "drain.2.count": 5, "drain.segments": 3, "drain.fresh": 1,
+        "drain.remaining": 0, "other.reclaimed": 1, "other.arena": 2,
+    }
+
+
+M2_AARCH64_ARENA_ABANDONED_SEARCH_TRACE = _m2_aarch64_arena_abandoned_search_trace()
 # Their records use the direct-receiver format of the VM component: shared
 # relations on both sides, plus a pinned-C-only primitive receipt or a
 # Rust-only retained count where the receiver reports one.
@@ -1046,6 +1074,19 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "rust_only": {},
         "c_receipt": None,
         "scope": "pinned-c-rust-owner-exit-mapped-and-full-unmapped-arena-page-abandonment-foreign-unown-reabandon-to-mapped-and-terminal-unabandon-free",
+    },
+    "arena-abandoned-page-search-c-rust-differential": {
+        "artifact": "m2-arena-abandoned-search",
+        "kind": "c-rust-arena-abandonment-differential",
+        "target": "compat/allocator/m2_arena_abandoned_search_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_abandoned_search_x86_64.c",
+        "rust_test": "native_arena_abandoned_search::abandoned_page_search_follows_the_source_arena_and_heap_order",
+        "trace_prefix": "m2.arena_abandoned_search.",
+        "common": M2_AARCH64_ARENA_ABANDONED_SEARCH_TRACE,
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-abandoned-page-search-across-three-arenas-and-two-heaps-with-live-heap-count-start-rotation-per-heap-records-and-full-drain",
     },
 }
 # The huge-progress receiver writes a matched C/Rust report. It substitutes

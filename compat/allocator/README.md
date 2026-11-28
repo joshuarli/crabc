@@ -428,15 +428,15 @@ of the fragment's bounded definitions. `allocator-m2` runs:
 - the lifecycle, destruction and reservation-warning differentials against the
   aggregate's `aarch64-unknown-linux-musl` test binary (the record refuses any
   other Rust product);
-- the eight x86-inventory direct arena receivers and the nine arm-admitted
+- the eight x86-inventory direct arena receivers and the ten arm-admitted
   receivers below, whose physical C and Rust transcripts the aggregate
   re-parses under `target/compat/allocator/aarch64/`.
 
 The receivers take their architecture from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a
 direct x86 invocation keeps its historical paths and messages.
 
-The AArch64 fragment adds twelve checks to the x86 inventory, each a
-pinned-C/Rust receiver that ran natively on arm. All twelve are pending on x86
+The AArch64 fragment adds thirteen checks to the x86 inventory, each a
+pinned-C/Rust receiver that ran natively on arm. All thirteen are pending on x86
 until a native x86 run admits them into the x86 arenas record, whose manifest
 and inventory are unchanged. Nine are existing receivers:
 
@@ -469,7 +469,7 @@ and inventory are unchanged. Nine are existing receivers:
   which the x86 M5 gate also runs) compares the `mi_abandoned_page_try_reclaim`
   decisions on free under its seven option profiles.
 
-Three further receivers are new with this component and run only on AArch64
+Four further receivers are new with this component and run only on AArch64
 until a native x86 run admits them:
 
 - `arena-page-abandonment-c-rust-differential`
@@ -478,6 +478,15 @@ until a native x86 run admits them:
   and OS-list page abandonment through the ordinary owner exit and
   pointer-centered free, including the mostly-used reabandon to mapped and
   terminal unabandon.
+- `arena-abandoned-page-search-c-rust-differential`
+  (`m2_arena_abandoned_search_x86_64.{c,py}` and the
+  `native_arena_abandoned_search` integration test) abandons 256 partly used
+  medium pages of one non-main heap across three reserved arenas and one page
+  of a second heap, then reclaims through `mi_arenas_page_try_find_abandoned`
+  from fresh threads: the main heap skips at a zero `abandoned_count`, five
+  sibling heaps move the search start from the middle arena to the first and
+  back, and a drain takes the arenas in source order while the second heap's
+  page stays in its own record.
 - `arena-purge-rotation-c-rust-differential`
   (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
   eight arenas with disabled-delay, immediate-delay, preloading and
@@ -494,8 +503,7 @@ until a native x86 run admits them:
 Pinned-C-only primitive receipts and Rust-only retained counts use the VM
 direct-receiver record; the aggregate re-parses every physical transcript.
 The component stays partial: the concurrent unown and
-unabandon interleavings and multi-arena abandoned-page search remain open,
-and so do large-page
+unabandon interleavings remain open, and so do large-page
 and huge-page reservation success, NUMA placement and the 16 KiB and 64 KiB
 base-page geometries, which this VM cannot supply.
 
