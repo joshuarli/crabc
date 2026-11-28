@@ -691,6 +691,24 @@ class InventoryTests(unittest.TestCase):
                 RUNNER.validate_native_execution_provenance({key: value for key, value in record.items()
                                                              if key != 'image_id'}, expected_image_id=image)
 
+    def test_aarch64_native_provenance_requires_matching_host_and_image(self):
+        image = "sha256:" + "a" * 64
+        environment = {"CRABC_EXECUTION_MODE": "native", "CRABC_HOST_ARCH": "aarch64",
+                       "CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID": image}
+        with mock.patch.dict(os.environ, environment, clear=True), \
+             mock.patch.object(RUNNER.platform, "system", return_value="Linux"), \
+             mock.patch.object(RUNNER.platform, "machine", return_value="aarch64"):
+            record = RUNNER.require_native_aarch64_evidence()
+            self.assertEqual(RUNNER.native_execution_attestation(record, dict(record), architecture="aarch64"), record)
+            for changed in ({**record, "host_architecture": "x86_64"},
+                            {**record, "execution_mode": "emulated"},
+                            {**record, "image_id": "sha256:" + "b" * 64}):
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER.native_execution_attestation(record, changed, architecture="aarch64")
+            with mock.patch.dict(os.environ, {"CRABC_HOST_ARCH": "x86_64"}):
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER.require_native_aarch64_evidence()
+
     def test_full_native_execution_attestation_rejects_changed_or_historical_identity(self):
         image = 'sha256:' + 'a' * 64
         before = {'execution_mode': 'native', 'host_architecture': 'x86_64', 'image_id': image}
@@ -1797,6 +1815,23 @@ CRABC_MI_M1_RAW_TRACE_END
                 "test bits::tests::emit_m1_bit_arithmetic_c_rust_trace ... ok\n",
                 source="test input",
             )
+
+    def test_m1_bit_trace_checks_the_selected_architecture_geometry(self) -> None:
+        def trace(max_vabits: int) -> str:
+            geometry = [f"g {name} {max_vabits if name == 'MI_MAX_VABITS' else value}"
+                        for name, value in RUNNER.M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY]
+            return "\n".join(["CRABC_MI_M1_BITS_TRACE_BEGIN", *geometry,
+                              "v 0 0000000000000000 0 64 64 - -",
+                              "CRABC_MI_M1_BITS_TRACE_END"])
+        with mock.patch.object(RUNNER, "m1_bit_arithmetic_values", return_value=(0,)), \
+             mock.patch.object(RUNNER, "M1_BITS_ARITHMETIC_ROTATION_SHIFTS", ()), \
+             mock.patch.object(RUNNER, "M1_BITS_ARITHMETIC_ROTATION32_SHIFTS", ()):
+            RUNNER.parse_m1_bit_arithmetic_trace(trace(47), source="x86", architecture="x86_64")
+            RUNNER.parse_m1_bit_arithmetic_trace(trace(48), source="arm", architecture="aarch64")
+            with self.assertRaisesRegex(RUNNER.HarnessError, "incorrect aarch64 geometry"):
+                RUNNER.parse_m1_bit_arithmetic_trace(trace(47), source="wrong", architecture="aarch64")
+            with self.assertRaisesRegex(RUNNER.HarnessError, "incorrect x86_64 geometry"):
+                RUNNER.parse_m1_bit_arithmetic_trace(trace(48), source="wrong", architecture="x86_64")
 
     def test_m1_compiler_tls_trace_schema_requires_every_selected_source_fact(self) -> None:
         self.assertEqual(RUNNER.M1_COMPILER_TLS_TRACE_EXPECTED_COUNT, 32)

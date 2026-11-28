@@ -12194,10 +12194,11 @@ def run_x86_64_m1_bit_arithmetic_differential(
     test_program: Mapping[str, Any],
     check: Mapping[str, Any],
     artifact_root: Path = M1_X86_64_BITS_TRACE_ARTIFACT_ROOT,
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
-    """Compare the selected x86-64 bit helpers with their pinned C definitions."""
+    """Compare selected bit helpers with their pinned C definitions."""
 
-    require_native_architecture("x86_64")
+    require_native_architecture(architecture)
     target = "bits::tests::emit_m1_bit_arithmetic_c_rust_trace"
     if check.get("target") != target:
         raise HarnessError("M1 bit-arithmetic differential lost its exact Rust source witness")
@@ -12211,12 +12212,13 @@ def run_x86_64_m1_bit_arithmetic_differential(
             source,
             artifact_root,
             CONFIGURATION_PROFILES["release"],
+            architecture=architecture,
         )
 
     rust, rust_output = _m1_foundations_run_exact_program_check(
         test_program, check, nocapture=True
     )
-    rust_lines = parse_m1_bit_arithmetic_trace(rust_output, source="Rust")
+    rust_lines = parse_m1_bit_arithmetic_trace(rust_output, source="Rust", architecture=architecture)
     if rust["passed_test_count"] != 1:
         raise HarnessError(
             "Rust M1 bit-arithmetic trace passed an unexpected test count: "
@@ -12264,7 +12266,7 @@ def run_x86_64_m1_bit_arithmetic_differential(
             },
         },
         "scope": (
-            "pinned v3.5.0 include/mimalloc/bits.h inline operations and selected x86-64 "
+            f"pinned v3.5.0 include/mimalloc/bits.h inline operations and selected {architecture} "
             "word/address geometry; 653 zero, boundary, single-bit, single-clear-bit, and "
             "fixed-seed broad inputs; all 64-bit and 32-bit rotation classes plus wrap "
             "boundaries. This does not claim whole-header or allocator-lifecycle parity."
@@ -20348,6 +20350,17 @@ def require_native_x86_64(*, require_image_identity: bool = False) -> dict[str, 
     return result
 
 
+def require_native_aarch64_evidence() -> dict[str, str]:
+    require_native_aarch64()
+    result = {
+        "execution_mode": os.environ.get("CRABC_EXECUTION_MODE"),
+        "host_architecture": os.environ.get("CRABC_HOST_ARCH"),
+        "image_id": os.environ.get("CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"),
+    }
+    image_id = _immutable_native_evidence_image_id(result["image_id"])
+    return validate_native_execution_provenance(result, expected_image_id=image_id, architecture="aarch64")
+
+
 def _immutable_native_evidence_image_id(value: object) -> str:
     """Accept only the immutable Docker identity inspected by the launcher."""
     if not isinstance(value, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
@@ -20359,7 +20372,7 @@ def _immutable_native_evidence_image_id(value: object) -> str:
 
 
 def validate_native_execution_provenance(
-    value: object, *, expected_image_id: str,
+    value: object, *, expected_image_id: str, architecture: str = "x86_64",
 ) -> dict[str, str]:
     """Admit a native aggregate only against the current launcher's image.
 
@@ -20370,22 +20383,25 @@ def validate_native_execution_provenance(
     expected_image_id = _immutable_native_evidence_image_id(expected_image_id)
     if not isinstance(value, Mapping) or set(value) != {"execution_mode", "host_architecture", "image_id"}:
         raise HarnessError("native execution provenance lacks its exact host and image identity")
+    aliases = {"x86_64": {"x86_64", "amd64"}, "aarch64": {"aarch64", "arm64"}}
+    if architecture not in aliases:
+        raise HarnessError(f"unsupported native evidence architecture: {architecture}")
     if (value["execution_mode"] != "native" or not isinstance(value["host_architecture"], str)
-            or value["host_architecture"] not in {"x86_64", "amd64"}):
-        raise HarnessError("native execution provenance does not attest a native x86-64 host")
+            or value["host_architecture"] not in aliases[architecture]):
+        raise HarnessError(f"native execution provenance does not attest a native {architecture} host")
     image_id = _immutable_native_evidence_image_id(value["image_id"])
     if image_id != expected_image_id:
         raise HarnessError("native execution image differs from the current launcher identity")
     return {"execution_mode": "native", "host_architecture": value["host_architecture"], "image_id": image_id}
 
 
-def native_execution_attestation(before: object, after: object) -> dict[str, str]:
+def native_execution_attestation(before: object, after: object, *, architecture: str = "x86_64") -> dict[str, str]:
     """Keep one qualified native host and image fixed across the full execution."""
     if not isinstance(before, Mapping):
         raise HarnessError("native execution provenance before collection is missing")
     expected_image_id = _immutable_native_evidence_image_id(before.get("image_id"))
-    execution_before = validate_native_execution_provenance(before, expected_image_id=expected_image_id)
-    execution_after = validate_native_execution_provenance(after, expected_image_id=expected_image_id)
+    execution_before = validate_native_execution_provenance(before, expected_image_id=expected_image_id, architecture=architecture)
+    execution_after = validate_native_execution_provenance(after, expected_image_id=expected_image_id, architecture=architecture)
     if execution_before != execution_after:
         raise HarnessError("native execution provenance changed during collection")
     return execution_before
@@ -21174,7 +21190,7 @@ def m1_bit_arithmetic_trace_summary() -> dict[str, int]:
     }
 
 
-def parse_m1_bit_arithmetic_trace(output: str, *, source: str) -> list[str]:
+def parse_m1_bit_arithmetic_trace(output: str, *, source: str, architecture: str = "x86_64") -> list[str]:
     """Validate each pinned-C or Rust arithmetic result against fixed 64-bit semantics."""
 
     begin = "CRABC_MI_M1_BITS_TRACE_BEGIN"
@@ -21198,11 +21214,14 @@ def parse_m1_bit_arithmetic_trace(output: str, *, source: str) -> list[str]:
             f"expected {expected_line_count}"
         )
 
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported bit-arithmetic architecture: {architecture}")
     expected_geometry = [
-        f"g {name} {value}" for name, value in M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY
+        f"g {name} {48 if name == 'MI_MAX_VABITS' and architecture == 'aarch64' else value}"
+        for name, value in M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY
     ]
     if lines[: len(expected_geometry)] != expected_geometry:
-        raise HarnessError(f"{source} M1 bit-arithmetic trace has incorrect x86-64 geometry")
+        raise HarnessError(f"{source} M1 bit-arithmetic trace has incorrect {architecture} geometry")
 
     mask64 = (1 << 64) - 1
     cursor = len(expected_geometry)
@@ -23823,6 +23842,8 @@ def build_x86_64_m1_bit_arithmetic_trace(
     source: Path,
     artifact_root: Path,
     profile_flags: Sequence[str],
+    *,
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Build and run the pinned header's inline word-operation probe."""
 
@@ -23844,7 +23865,7 @@ def build_x86_64_m1_bit_arithmetic_trace(
     require_success(build, "pinned C M1 bit-arithmetic trace build")
     run = command_record((str(trace_binary),), cwd=source)
     require_success(run, "pinned C M1 bit-arithmetic trace execution")
-    lines = parse_m1_bit_arithmetic_trace(str(run["stdout"]), source="pinned C")
+    lines = parse_m1_bit_arithmetic_trace(str(run["stdout"]), source="pinned C", architecture=architecture)
     raw = artifact_root / "m1-bits-c-trace.txt"
     raw_bytes = ("\n".join(lines) + "\n").encode("ascii")
     raw.write_bytes(raw_bytes)
