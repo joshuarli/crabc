@@ -278,14 +278,17 @@ configure_work_dir() {
 }
 
 require_native_x86_64_host() {
-    case "$(uname -m)" in
-        x86_64|amd64|aarch64|arm64) ;;
-        *) fail "native x86-64 allocator evidence refuses emulation (host: $(uname -m))" ;;
+    local docker_arch
+    docker_arch="$(docker info --format '{{.Architecture}}')" || fail "cannot identify Docker host architecture"
+    case "$ARCH:$docker_arch" in
+        x86_64:x86_64|x86_64:amd64|aarch64:aarch64|aarch64:arm64) ;;
+        *) fail "native allocator evidence refuses emulation (host: $ARCH, Docker: $docker_arch)" ;;
     esac
 }
 
 build_image() {
     configure_work_dir
+    require_native_x86_64_host
     docker build \
         --platform "$PLATFORM" \
         --tag "$IMAGE" \
@@ -295,6 +298,7 @@ build_image() {
 
 ensure_image() {
     configure_work_dir
+    require_native_x86_64_host
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         build_image
     fi
@@ -311,15 +315,14 @@ ensure_image() {
     rust_channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$ROOT_DIR/rust-toolchain.toml")"
     [[ "$rust_channel" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
         || fail "allocator Rust channel is not a dated nightly"
-    # Authenticate the same immutable bytes that the producer will execute.
-    # No checkout, cache, network or mutable filesystem can supply these tools.
+    if [ "$ARCH" = x86_64 ]; then
     docker run --rm --read-only --network none --platform "$PLATFORM" \
         --env RUSTC_WRAPPER=/usr/local/bin/kache \
         --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-x86_64-mold-gcc \
         --entrypoint /bin/sh "$ALLOCATOR_IMAGE_ID" -ec '
-            test "$(uname -m)" = "$3"
-            test "$(rustup show active-toolchain)" = "$1-$3-unknown-linux-musl (default)"
-            test "$(rustc -vV | sed -n "s/^host: //p")" = "$3-unknown-linux-musl"
+            test "$(uname -m)" = x86_64
+            test "$(rustup show active-toolchain)" = "$1-x86_64-unknown-linux-musl (default)"
+            test "$(rustc -vV | sed -n "s/^host: //p")" = x86_64-unknown-linux-musl
             test -f "$(rustc --print target-libdir)/self-contained/libunwind.a"
             test "$(cat /opt/musl-1.2.6/.crabc-oracle)" = "$2"
             sha256sum -c /usr/local/share/crabc-allocator-image-tools.sha256 >/dev/null
@@ -327,8 +330,26 @@ ensure_image() {
             cmake --version >/dev/null
             cargo miri --version >/dev/null
         ' allocator-image-authentication "$rust_channel" \
-        "$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" --architecture "$ARCH" manifest)" "$ARCH" \
+        "$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" manifest)" \
         || fail "allocator image authentication failed; rebuild with ./compat/allocator/run-x86_64.sh image"
+    else
+        docker run --rm --read-only --network none --platform "$PLATFORM" \
+            --env RUSTC_WRAPPER=/usr/local/bin/kache \
+            --env CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/crabc-aarch64-mold-gcc \
+            --entrypoint /bin/sh "$ALLOCATOR_IMAGE_ID" -ec '
+                test "$(uname -m)" = "$3"
+                test "$(rustup show active-toolchain)" = "$1-$3-unknown-linux-musl (default)"
+                test "$(rustc -vV | sed -n "s/^host: //p")" = "$3-unknown-linux-musl"
+                test -f "$(rustc --print target-libdir)/self-contained/libunwind.a"
+                test "$(cat /opt/musl-1.2.6/.crabc-oracle)" = "$2"
+                sha256sum -c /usr/local/share/crabc-allocator-image-tools.sha256 >/dev/null
+                /opt/musl-1.2.6/lib/libc.so 2>&1 | grep -F "Version 1.2.6" >/dev/null
+                cmake --version >/dev/null
+                cargo miri --version >/dev/null
+            ' allocator-image-authentication "$rust_channel" \
+            "$(python3 -B "$ROOT_DIR/compat/x86_64/musl_oracle.py" --pins "$ROOT_DIR/compat/upstreams.toml" --architecture "$ARCH" manifest)" "$ARCH" \
+            || fail "allocator image authentication failed; rebuild with ./compat/allocator/run-x86_64.sh image"
+    fi
 }
 
 linked_worktree_git_mounts() {
@@ -508,7 +529,6 @@ case "$command" in
 esac
 
 configure_execution_budget
-require_native_x86_64_host
 if [ "$ARCH" = aarch64 ]; then
     case "$command" in
         image|allocator-unit|allocator-native-integration|allocator-m1) ;;

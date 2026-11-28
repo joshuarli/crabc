@@ -44,7 +44,9 @@ class X86AllocatorWorkspaceTests(unittest.TestCase):
         docker.write_text('''#!/usr/bin/env bash
 set -eu
 printf '%s\\n' "$1" >> "$DOCKER_CAPTURE.calls"
-if [ "$1" = image ]; then
+if [ "$1" = info ]; then
+    printf '%s\\n' "${DOCKER_ARCH:-x86_64}"
+elif [ "$1" = image ]; then
     if [ "${3:-}" = --format ]; then
         if [ "${4:-}" = '{{.Id}}' ]; then
             if [[ "${5:-}" = sha256:* ]]; then
@@ -92,6 +94,13 @@ fi
             ["bash", str(self.launcher), *arguments], cwd=self.checkout,
             env=env, text=True, capture_output=True,
         )
+
+    def test_refuses_host_and_docker_architecture_mismatch(self):
+        (self.bin / "uname").write_text("#!/bin/sh\nprintf 'aarch64\\n'\n")
+        result = self.launch("image")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("refuses emulation", result.stderr)
+        self.assertEqual(Path(str(self.capture) + ".calls").read_text(), "info\n")
 
     def test_native_commands_bind_all_mutable_state_to_the_checkout(self):
         for command in (("allocator", "--quick"), ("allocator-m1",), ("allocator-m2",), ("allocator-init-recursion",), ("allocator-initialization-tld",), ("allocator-unit",),
