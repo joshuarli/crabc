@@ -134,6 +134,20 @@ def allocator_popcount_witness_for_profile(profile: object) -> str:
     return ALLOCATOR_POPCOUNT_WITNESSES[profile]
 
 
+def _direct_helper_transfers(definitions: str, disassembly: str, names: set[str], architecture: str) -> set[str]:
+    """Return the helpers some direct call or branch targets by address.
+
+    Aliased helpers share one definition (for example __netf2 and __eqtf2),
+    and the disassembler labels the shared address with only one name.
+    """
+
+    addresses = {fields[2]: int(fields[0], 16)
+                 for fields in (line.split() for line in definitions.splitlines()) if len(fields) == 3}
+    transfer = r"\bbl?" if architecture == "aarch64" else r"(?:call|jmp)\S*"
+    targets = {int(match.group(1), 16) for match in re.finditer(transfer + r"\s+([0-9a-f]+)\s+<", disassembly)}
+    return {name for name in names if addresses.get(name) in targets}
+
+
 def dynamic_product_profile_from_admitted_manifest(product: Path, manifest: Mapping[str, Any]) -> str:
     """Resolve a validated dynamic profile from a standalone or combined tree."""
     import crabc_cc_owned_dynamic as driver
@@ -1799,10 +1813,9 @@ def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], ev
     require(re.search(r"\((NEEDED|JMPREL|PLTGOT)\)", dynamic) is None,
             "aggregate candidate dynamic linkage differs")
     disassembly = _event_text(work, events, "candidate-disassembly", "stdout")
-    transfer = r"\bb(?:l)?" if architecture == "aarch64" else r"(?:call|jmp)\S*"
-    direct = [name for name in names
-              if re.search(transfer + r"\s+[^\n]*<" + re.escape(name) + r">", disassembly)]
-    require(set(direct) == names, "aggregate candidate did not transfer to every helper")
+    direct = _direct_helper_transfers(
+        _event_text(work, events, "candidate-definitions", "stdout"), disassembly, names, architecture)
+    require(direct == names, "aggregate candidate did not transfer to every helper")
     require(_event_bytes(work, events, "reference-execute", "stdout") == EXPECTED_TRANSCRIPT
             and _event_bytes(work, events, "candidate-execute", "stdout") == EXPECTED_TRANSCRIPT,
             "aggregate candidate/reference transcript differs")
@@ -2014,9 +2027,8 @@ def _live_artifact_observations(work: Path, contract: Mapping[str, Any], artifac
             "retained aggregate candidate has an interpreter or TLS")
     require(re.search(r"\((NEEDED|JMPREL|PLTGOT)\)", dynamic) is None,
             "retained aggregate candidate dynamic linkage differs")
-    transfer = r"\bb(?:l)?" if architecture == "aarch64" else r"(?:call|jmp)\S*"
-    direct = {name for name in names
-              if re.search(transfer + r"\s+[^\n]*<" + re.escape(name) + r">", disassembly)}
+    definitions = _live_tool(["nm", "--defined-only", str(candidate)], "aggregate candidate definitions")
+    direct = _direct_helper_transfers(definitions, disassembly, names, architecture)
     require(direct == names, "retained aggregate candidate direct helper transfers differ")
     result = {"archive": artifacts["libcrabc-builtins.a"], "candidate": artifacts["candidate"],
               "archive_global_default_functions": list(helper_names(contract)) if architecture == "x86_64"
