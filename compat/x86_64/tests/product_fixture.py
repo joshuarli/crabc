@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import unittest
 
 COMPAT = Path(__file__).resolve().parents[1]
 
@@ -36,3 +37,12 @@ def write_compatibility_provenance(product: Path, *, dynamic: bool) -> None:
             "artifact": {"path": "lib/ld-crabc-x86_64.so.1",
                          "sha256": digest(product / "lib/ld-crabc-x86_64.so.1")},
         }))
+
+
+def requires_debug_dynamic_product(test):
+    if str(COMPAT) not in sys.path:
+        sys.path.insert(0, str(COMPAT))
+    from native_arch import native_arch
+
+    return unittest.skipIf(native_arch()["arch"] == "aarch64",
+                           "AArch64 dynamic products support only the release profile")(test)

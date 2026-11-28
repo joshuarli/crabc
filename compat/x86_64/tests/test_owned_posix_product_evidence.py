@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from product_fixture import requires_debug_dynamic_product
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -39,7 +40,7 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def sealed_elf(linkage: str, interpreter_path: str = "/lib/ld-crabc-x86_64.so.1") -> bytes:
+def sealed_elf(linkage: str, interpreter_path: str = evidence.INTERPRETER) -> bytes:
     """Minimal ELF64 byte fixture for the replay reader, never executable."""
     dynamic = linkage in {"pie", "non-pie"}
     elf_type = 3 if linkage in {"static-pie", "pie"} else 2
@@ -56,7 +57,7 @@ def sealed_elf(linkage: str, interpreter_path: str = "/lib/ld-crabc-x86_64.so.1"
     data = bytearray(768)
     data[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
     data[16:64] = struct.pack(
-        "<HHIQQQIHHHHHH", elf_type, 62, 1, 0, 64 if dynamic else 0,
+        "<HHIQQQIHHHHHH", elf_type, evidence.NATIVE_ELF_MACHINE, 1, 0, 64 if dynamic else 0,
         0, 0, 64, 56, 3 if dynamic else 0, 0, 0, 0,
     )
     if dynamic:
@@ -264,7 +265,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     """Use files with injected ELF inspections; this is not a native build test."""
 
     def setUp(self) -> None:
-        temporary_root = ROOT / ".work" / "x86_64" / "tmp"
+        temporary_root = ROOT / ".work" / evidence.ARCH / "tmp"
         temporary_root.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(
             prefix="owned-posix-product-evidence.", dir=temporary_root
@@ -348,10 +349,10 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def test_retained_elf_reader_parses_rehashed_dynamic_metadata_without_a_host_tool(self) -> None:
         path = self.put("shared", sealed_shared_elf("libfixture.so"))
         with mock.patch.object(evidence.subprocess, "run", side_effect=AssertionError("host ELF tool ran")):
-            facts = evidence.retained_elf_facts(path, machine_id=62)
+            facts = evidence.retained_elf_facts(path, machine_id=evidence.NATIVE_ELF_MACHINE)
         self.assertEqual(
             facts,
-            {"type": 3, "machine": 62, "interpreters": ["/lib/ld-crabc-x86_64.so.1"],
+            {"type": 3, "machine": evidence.NATIVE_ELF_MACHINE, "interpreters": [evidence.INTERPRETER],
              "dynamic": True, "needed": ["libc.so"], "runpaths": ["/usr/lib"], "rpaths": [],
              "sonames": ["libfixture.so"], "textrel": False},
         )
@@ -461,7 +462,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "usr/lib/libc.a",
             "usr/lib/libcrabc-builtins.a",
         ):
-            self.put(str(product.relative_to(self.root) / relative), relative.encode())
+            payload = relative.encode()
+            if evidence.ARCH == "aarch64" and relative in {"usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o"}:
+                payload = bytearray(sealed_elf("static"))
+                struct.pack_into("<H", payload, 16, 1)
+            self.put(str(product.relative_to(self.root) / relative), payload)
         os.chmod(product / "bin/crabc-cc", 0o755)
         self.write_json(product / "share/crabc/crt.provenance.json", {
             "hardening_profile": "compatibility",
@@ -469,8 +474,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         })
         manifest = {
             "schema": 1,
-            "format": "crabc-x86-64-owned-static-sysroot-v1",
-            "target": "x86_64-unknown-linux-musl",
+            "format": evidence.STATIC_PRODUCT_FORMAT,
+            "target": evidence.TARGET,
             "hardening_profile": "compatibility",
             "producer_tools": self.compiler_tools,
             "installed": {
@@ -485,7 +490,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 "files": self.payload_manifest(product),
             },
             "sealed_static_driver": {
-                "format": "crabc-x86-64-sealed-static-driver-v1",
+                "format": evidence.STATIC_FORMAT,
                 "path": "bin/crabc-cc",
                 "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
                 "modes": [
@@ -581,7 +586,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "share/crabc/owned_dynamic_elf.py",
             "share/crabc/dynamic-product-state.json",
             "usr/include/fixture.h",
-            "lib/ld-crabc-x86_64.so.1",
+            evidence.INTERPRETER.lstrip("/"),
             "usr/lib/crt1.o",
             "usr/lib/Scrt1.o",
             "usr/lib/crti.o",
@@ -590,29 +595,44 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "usr/lib/libc.so",
             "usr/lib/libcrabc-builtins.a",
         ):
-            self.put(str(product.relative_to(self.root) / relative), relative.encode())
+            payload = relative.encode()
+            if evidence.ARCH == "aarch64" and relative in {"usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o"}:
+                payload = bytearray(sealed_elf("static"))
+                struct.pack_into("<H", payload, 16, 1)
+            elif evidence.ARCH == "aarch64" and relative == "usr/lib/libc.so":
+                payload = sealed_elf("pie")
+            self.put(str(product.relative_to(self.root) / relative), payload)
+        if evidence.ARCH == "aarch64":
+            loader = product / evidence.INTERPRETER.lstrip("/")
+            loader.unlink()
+            os.link(product / "usr/lib/libc.so", loader)
+            for relative in ("share/crabc/crt.commands.json", "share/crabc/crabc_cc_owned_dynamic.py"):
+                self.put(str(product.relative_to(self.root) / relative), relative.encode())
         os.chmod(product / "bin/crabc-cc-dynamic", 0o755)
-        os.chmod(product / "lib/ld-crabc-x86_64.so.1", 0o755)
+        os.chmod(product / evidence.INTERPRETER.lstrip("/"), 0o755)
         os.chmod(product / "usr/lib/libc.so", 0o755)
         self.write_json(product / "share/crabc/crt.provenance.json", {
             "hardening_profile": "compatibility",
             "objects": {"Scrt1.o": {"sha256": digest(product / "usr/lib/Scrt1.o")}},
+            **({"target": evidence.TARGET} if evidence.ARCH == "aarch64" else {}),
         })
         self.write_json(product / "share/crabc/loader.provenance.json", {
             "cargo": {"rustflags": "-C panic=abort"},
-            "artifact": {"path": "lib/ld-crabc-x86_64.so.1", "sha256": digest(product / "lib/ld-crabc-x86_64.so.1")},
+            "artifact": {"path": evidence.INTERPRETER.lstrip("/"), "sha256": digest(product / evidence.INTERPRETER.lstrip("/"))},
         })
-        alias = product / "lib/ld-musl-x86_64.so.1"
-        alias.symlink_to("ld-crabc-x86_64.so.1")
+        alias = product / f"lib/ld-musl-{evidence.ARCH}.so.1"
+        alias.symlink_to(f"ld-crabc-{evidence.ARCH}.so.1")
+        if evidence.ARCH == "aarch64":
+            (product / "lib/libc.musl-aarch64.so.1").symlink_to("../usr/lib/libc.so")
         self.write_json(product / "share/crabc/producer-tools.json", {"schema": 1, **self.compiler_tools})
         manifest = {
             "schema": 1,
-            "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
-            "target": "x86_64-unknown-linux-musl",
+            "format": evidence.DYNAMIC_PRODUCT_FORMAT,
+            "target": evidence.TARGET,
             "hardening_profile": "compatibility",
             "build_profile": "release",
             "files": self.payload_manifest(product),
-            "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+            "symlinks": evidence.NativeRuntimeProfile.COMPATIBILITY.aliases_for_architecture(evidence.ARCH),
         }
         self.write_json(product / "share/crabc/manifest.json", manifest)
         return product
@@ -638,10 +658,12 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def hardened_dynamic_product(self) -> Path:
         product = self.dynamic
         profile = evidence.NativeRuntimeProfile.HARDENED
-        old = product / "lib/ld-crabc-x86_64.so.1"
-        new = product / profile.interpreter.lstrip("/")
+        old = product / evidence.INTERPRETER.lstrip("/")
+        new = product / profile.interpreter.replace("x86_64", evidence.ARCH).lstrip("/")
         old.rename(new)
-        (product / "lib/ld-musl-x86_64.so.1").unlink()
+        (product / f"lib/ld-musl-{evidence.ARCH}.so.1").unlink()
+        if evidence.ARCH == "aarch64":
+            (product / "lib/libc.musl-aarch64.so.1").unlink()
         crt_path = product / "share/crabc/crt.provenance.json"
         crt = json.loads(crt_path.read_text())
         crt["hardening_profile"] = profile.value
@@ -649,11 +671,11 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         loader_path = product / "share/crabc/loader.provenance.json"
         loader = json.loads(loader_path.read_text())
         loader["cargo"]["rustflags"] += " --cfg crabc_hardened"
-        loader["artifact"]["path"] = profile.interpreter.lstrip("/")
+        loader["artifact"]["path"] = profile.interpreter.replace("x86_64", evidence.ARCH).lstrip("/")
         self.write_json(loader_path, loader)
         manifest_path = product / "share/crabc/manifest.json"
         manifest = json.loads(manifest_path.read_text())
-        manifest.update(hardening_profile=profile.value, symlinks=profile.aliases)
+        manifest.update(hardening_profile=profile.value, symlinks=profile.aliases_for_architecture(evidence.ARCH))
         self.write_json(manifest_path, manifest)
         self.refresh_dynamic_manifest()
         return product
@@ -667,7 +689,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         receipt = self.dynamic_receipt("pie")
         inspection = self.readelf("pie")
         inspection["program"] = inspection["program"].replace(
-            "/lib/ld-crabc-x86_64.so.1", evidence.NativeRuntimeProfile.HARDENED.interpreter)
+            evidence.INTERPRETER, evidence.NativeRuntimeProfile.HARDENED.interpreter.replace("x86_64", evidence.ARCH))
         with mock.patch.object(evidence, "_readelf", return_value=inspection):
             evidence.validate_link(product, self.workload, self.executable, receipt, "pie")
         retained, linker = self.retained_receipt_from(receipt)
@@ -737,10 +759,10 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         ]
         self.write_json(receipt, {
             "schema": 1,
-            "format": "crabc-x86-64-sealed-static-driver-v1",
-            "target": "x86_64-unknown-linux-musl",
+            "format": evidence.STATIC_FORMAT,
+            "target": evidence.TARGET,
             "mode": {"id": mode[0], "elf_type": mode[1], "crt_object": mode[2], "interpreter": "absent"},
-            "resolved_linker": {"path": str(self.linker), "sha256": digest(self.linker)},
+            "resolved_linker": (dict(self.compiler_tools["linker"]) if evidence.ARCH == "aarch64" else {"path": str(self.linker), "sha256": digest(self.linker)}),
             "owned_link_contract": self.static_plan(mode[2], linkage == "static-pie"),
             "input_receipts": [
                 {"role": role, "path": path.relative_to(self.static).as_posix() if role != "application" else str(path), "sha256": digest(path)}
@@ -814,7 +836,9 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             Path(self.linker).name, "-static", *(["-pie"] if pie else []), "--no-dynamic-linker",
             "--no-undefined", "--eh-frame-hdr", "--gc-sections", "-z", "relro", "-z", "now", "-e", "_start",
             str(library / crt), str(library / "crti.o"), "<application-objects>",
+            *(["--start-group"] if evidence.ARCH == "aarch64" else []),
             str(library / "libc.a"), str(library / "libcrabc-builtins.a"),
+            *(["--end-group"] if evidence.ARCH == "aarch64" else []),
             str(library / "crtn.o"), "-o", "<output>",
         ]
 
@@ -822,7 +846,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                         workloads: tuple[Path, ...] | None = None) -> Path:
         manifest = self.dynamic / "share/crabc/manifest.json"
         profile = evidence.NativeRuntimeProfile(json.loads(manifest.read_text())["hardening_profile"])
-        self.executable.write_bytes(sealed_elf(linkage, profile.interpreter))
+        self.executable.write_bytes(sealed_elf(linkage, profile.interpreter.replace("x86_64", evidence.ARCH)))
         mode, entry = {"pie": ("pie", "Scrt1.o"), "non-pie": ("exec", "crt1.o")}[linkage]
         receipt = self.root / f"{linkage}.crabc-link.json"
         runtime = self.dynamic / "usr/lib"
@@ -839,7 +863,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "--exclude-libs=libcrabc-builtins.a",
             *(["--export-dynamic"] if export_dynamic else []),
             *evidence.receipt_contract.EXECUTABLE_WEAK_IMPORT_FLAGS,
-            "--dynamic-linker", profile.interpreter, str(runtime / entry),
+            "--dynamic-linker", profile.interpreter.replace("x86_64", evidence.ARCH), str(runtime / entry),
             str(runtime / "crabc-dynamic-attach.o"), str(runtime / "crti.o"),
             *(str(workload) for workload in workload_objects),
             str(runtime / "libcrabc-builtins.a"), str(runtime / "libc.so"), str(runtime / "crtn.o"),
@@ -848,7 +872,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         manifest = self.dynamic / "share/crabc/manifest.json"
         self.write_json(receipt, {
             "schema": 1,
-            "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
+            "format": evidence.DYNAMIC_PRODUCT_FORMAT,
             "mode": mode,
             "binding": "now",
             "runtime_imports": [],
@@ -859,7 +883,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             "application_dsos": {},
             "owned_runtime_inputs": sorted(path.relative_to(self.dynamic).as_posix() for path in [*direct, runtime / "libcrabc-builtins.a"]),
             "input_receipts": [{"path": str(path), "sha256": digest(path)} for path in inputs],
-            "resolved_linker": {"path": str(self.linker), "sha256": digest(self.linker)},
+            "resolved_linker": (dict(self.compiler_tools["linker"]) if evidence.ARCH == "aarch64" else {"path": str(self.linker), "sha256": digest(self.linker)}),
             "link_command": link,
             "link_trace": [str(path) for path in [runtime / entry, runtime / "crabc-dynamic-attach.o", runtime / "crti.o", *workload_objects, runtime / "libcrabc-builtins.a", runtime / "libc.so", runtime / "crtn.o"]],
             "campaign_complete": False,
@@ -870,10 +894,10 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
     def readelf(linkage: str) -> dict[str, str]:
         dynamic = linkage in {"pie", "non-pie"}
         return {
-            "header": "  Machine:                           Advanced Micro Devices X86-64\n"
+            "header": f"  Machine:                           {'AArch64' if evidence.ARCH == 'aarch64' else 'Advanced Micro Devices X86-64'}\n"
                       + ("  Type:                              DYN (Position-Independent Executable file)\n" if linkage in {"static-pie", "pie"} else "  Type:                              EXEC (Executable file)\n"),
             "program": ("  INTERP         0x000000 0x0000000000000000\n"
-                        "      [Requesting program interpreter: /lib/ld-crabc-x86_64.so.1]\n") if dynamic else "",
+                        f"      [Requesting program interpreter: {evidence.INTERPRETER}]\n") if dynamic else "",
             "dynamic": " 0x0000000000000001 (NEEDED)             Shared library: [libc.so]\n 0x000000000000001d (RUNPATH)            Library runpath: [/usr/lib]\n" if dynamic else "",
         }
 
@@ -906,7 +930,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
         record = mounted(record)
         assert isinstance(record, dict)
-        tools = {"path": str(evidence.native_build_tools.MOLD), "sha256": digest(self.linker)}
+        tools = (dict(self.compiler_tools["linker"]) if evidence.ARCH == "aarch64" else
+                 {"path": str(evidence.native_build_tools.MOLD), "sha256": digest(self.linker)})
         record["resolved_linker"] = dict(tools)
         if "link_command" in record:
             record["link_command"][0] = tools["path"]
@@ -1265,7 +1290,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
     def test_combined_product_reader_rejects_extra_profile_alias(self) -> None:
         root = self.combined_product()
-        (root / "lib/extra-loader.so").symlink_to("ld-crabc-x86_64.so.1")
+        (root / "lib/extra-loader.so").symlink_to(f"ld-crabc-{evidence.ARCH}.so.1")
         path = root / "share/crabc/manifest.json"
         manifest = json.loads(path.read_text())
         manifest["symlinks"]["lib/extra-loader.so"] = "ld-crabc-x86_64.so.1"
@@ -1301,7 +1326,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         import compiler_helper_evidence as compiler_helpers
 
         manifest = driver.validate_installation(root)
-        self.assertEqual(manifest["format"], driver.COMBINED_FORMAT)
+        self.assertEqual(manifest["format"], evidence.COMBINED_SYSROOT_FORMAT)
         self.assertEqual(
             compiler_helpers.dynamic_product_profile_from_admitted_manifest(root, manifest), "release"
         )
@@ -1331,7 +1356,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             record["products"]["static"]["placements"]["usr/lib/crt1.o"] = None
 
         def forget_alias(record: dict) -> None:
-            (root / "lib/ld-musl-x86_64.so.1").unlink()
+            (root / f"lib/ld-musl-{evidence.ARCH}.so.1").unlink()
             record["symlinks"] = {}
 
         for validate, edit, message in (
@@ -1348,8 +1373,8 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     validate(root)
                 path.write_text(original, encoding="utf-8")
                 (root / "usr/lib/libc.a").write_bytes((self.static / "usr/lib/libc.a").read_bytes())
-                if not (root / "lib/ld-musl-x86_64.so.1").is_symlink():
-                    (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+                if not (root / f"lib/ld-musl-{evidence.ARCH}.so.1").is_symlink():
+                    (root / f"lib/ld-musl-{evidence.ARCH}.so.1").symlink_to(f"ld-crabc-{evidence.ARCH}.so.1")
                 validate(root)
 
     def debug_product(self) -> Path:
@@ -1369,6 +1394,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.write_json(manifest_path, manifest)
         return self.dynamic
 
+    @requires_debug_dynamic_product
     def test_debug_product_source_and_installed_driver_accept_the_same_sealed_payload(self) -> None:
         import crabc_cc_owned_dynamic as driver
         product = self.debug_product()
@@ -1376,6 +1402,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         evidence.validate_debug_product_source(product, "a" * 64)
         self.assertEqual(driver.validate(product)["source_sha256"], "a" * 64)
 
+    @requires_debug_dynamic_product
     def test_combined_debug_product_source_uses_embedded_dynamic_manifest(self) -> None:
         sys.path.insert(0, str(ROOT / "scripts"))
         import build_x86_64_owned_combined_sysroot as combined
@@ -1394,6 +1421,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaises(evidence.ProductEvidenceError):
             evidence.validate_dynamic_product_source(root, "b" * 64)
 
+    @requires_debug_dynamic_product
     def test_dynamic_product_reader_rejects_debug_loader_labelled_release(self) -> None:
         product = self.debug_product()
         path = product / "share/crabc/manifest.json"
@@ -1445,11 +1473,13 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "source state schema"):
             evidence.validate_dynamic_product_source(self.dynamic, "a" * 64)
 
+    @requires_debug_dynamic_product
     def test_rehashed_debug_product_stale_source_is_rejected(self) -> None:
         product = self.debug_product()
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "source differs"):
             evidence.validate_debug_product_source(product, "b" * 64)
 
+    @requires_debug_dynamic_product
     def test_debug_product_missing_source_is_rejected_by_installed_driver(self) -> None:
         import crabc_cc_owned_dynamic as driver
         product = self.debug_product()
@@ -1464,6 +1494,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(evidence.ProductEvidenceError, "source digest"):
                     evidence._validate_dynamic_product(product)
 
+    @requires_debug_dynamic_product
     def test_rehashed_debug_product_state_and_provenance_drift_are_rejected(self) -> None:
         product = self.debug_product()
         for filename, key, value in (

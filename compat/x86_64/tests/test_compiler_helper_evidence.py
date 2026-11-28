@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
-from product_fixture import write_compatibility_provenance
+from product_fixture import requires_debug_dynamic_product, write_compatibility_provenance
 
 ROOT = Path(__file__).resolve().parents[3]
 PATH = ROOT / "compat/x86_64/compiler_helper_evidence.py"
@@ -22,6 +22,9 @@ assert SPEC and SPEC.loader
 EVIDENCE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = EVIDENCE
 SPEC.loader.exec_module(EVIDENCE)
+
+ARCH = EVIDENCE.native_arch()
+from owned_posix_product_evidence import NATIVE_ELF_MACHINE
 
 
 def _helper_elf(path: Path, binding: str, dynamic_binding: str | None = None,
@@ -61,7 +64,7 @@ def _helper_elf(path: Path, binding: str, dynamic_binding: str | None = None,
             link, info, alignment, entry_size,
         ))
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
-    header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, 62, 1, 0, 0, sections_offset,
+    header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, NATIVE_ELF_MACHINE, 1, 0, 0, sections_offset,
                          0, 64, 56, 0, 64, len(section_rows), 5)
     image = bytearray(header)
     image.extend(b"\x90" * 4)
@@ -88,7 +91,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
     def test_combined_product_profile_comes_from_the_embedded_dynamic_manifest(self) -> None:
         import crabc_cc_owned_dynamic as driver
 
-        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             product = Path(temporary)
@@ -180,8 +183,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
 
         return source_seal.product_source_digest(source_seal.ROOT)
 
+    @requires_debug_dynamic_product
     def test_materialized_debug_product_binds_current_source_and_installed_payload(self) -> None:
-        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             product = self._debug_dynamic_product(Path(temporary))
@@ -190,8 +194,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             manifest = json.loads((product / "share/crabc/manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(EVIDENCE.dynamic_product_profile_from_admitted_manifest(product, manifest), "debug")
 
+    @requires_debug_dynamic_product
     def test_materialized_debug_product_rejects_stale_source_and_changed_payload(self) -> None:
-        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             product = self._debug_dynamic_product(Path(temporary))
@@ -213,7 +218,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
     def test_complex_edge_differential_keeps_final_elf_and_rejects_tampering(self) -> None:
         if not Path(EVIDENCE.ORACLE_CC).is_file():
             self.skipTest("pinned musl compiler is available only in the native image")
-        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
@@ -226,7 +231,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                 EVIDENCE.validate_complex_edge_differential(work / "complex-edge-report.json")
 
     def test_supplied_product_runner_rejects_overlap_and_empty_argument_before_writes(self):
-        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         runner = ROOT / EVIDENCE.SHARED_PLACEMENT_RUNNER
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
@@ -460,7 +465,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         self.assertIn("validate-aggregate-report", runner)
 
     def test_command_reader_rejects_argv_substitution_and_wrong_artifact_input(self) -> None:
-        test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        test_root = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         test_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=test_root) as temporary:
             work = self._temporary_work(temporary)
@@ -491,8 +496,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         self.assertTrue(EVIDENCE._ambient_link_input("/opt/toolchain/rcrt1.o\n"))
 
     def test_provenance_binds_the_retained_archive_sha256(self) -> None:
-        contract = EVIDENCE.load_contract(ROOT)
-        test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        contract = (EVIDENCE._aggregate_native_contract(ROOT) if ARCH["arch"] == "aarch64"
+                    else EVIDENCE.load_contract(ROOT))
+        test_root = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         test_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=test_root) as temporary:
             work = Path(temporary)
@@ -506,16 +512,32 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                             "defined_symbols": list(EVIDENCE.helper_names(contract)),
                             "archive_sha256": archive_identity["sha256"], "contract": contract},
             }
+            if ARCH["arch"] == "aarch64":
+                command_path = work / "libcrabc-builtins.a.commands.json"
+                command_path.write_text("{}\n")
+                names = ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "aarch64-helper-exports.txt",
+                         "aarch64-helper-symbols.txt", "src/lib.rs", "src/aarch64_complex.rs")
+                provenance = {
+                    "archive": {"members": [EVIDENCE.ARCHIVE_MEMBER], "sha256": archive_identity["sha256"],
+                                "undefined_symbols": [], "defined_symbols": (ROOT / "builtins/aarch64-helper-exports.txt").read_text().splitlines()},
+                    "build": {"reproducible": True, "exact_command_record": {"name": command_path.name, "sha256": EVIDENCE.digest(command_path)}},
+                    "component": {"name": "crabc-builtins", "target": ARCH["target_triple"], "archive_member": EVIDENCE.ARCHIVE_MEMBER},
+                    "dependency_purity": {"cargo_dependencies": [], "build_dependencies": [],
+                        **{key: False for key in ("links", "uses_alloc", "uses_unwinding", "requires_panic_runtime", "uses_native_source", "uses_native_assembly")},
+                        "upstream_source_build": {"package": "compiler_builtins", "version": "0.1.160", "disabled_features": ["c", "mem"],
+                            "native_build_commands": [], "target_link_directives": [], "prebuilt_compiler_builtins_input": False}},
+                    "source": {"languages": ["Rust"], "files": [{"path": name, "sha256": EVIDENCE.digest(ROOT / "builtins" / name)} for name in names]},
+                }
             path = work / "libcrabc-builtins.a.provenance.json"
             path.write_text(EVIDENCE.canonical_json(provenance), encoding="utf-8")
             EVIDENCE._provenance(path, contract, archive_identity)
-            provenance["archive"]["archive_sha256"] = "0" * 64
+            provenance["archive"]["sha256" if ARCH["arch"] == "aarch64" else "archive_sha256"] = "0" * 64
             path.write_text(EVIDENCE.canonical_json(provenance), encoding="utf-8")
-            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provenance roster"):
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "provenance (differs|roster)"):
                 EVIDENCE._provenance(path, contract, archive_identity)
 
     def test_aggregate_join_binds_source_and_both_installed_archive_roles(self) -> None:
-        test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        test_root = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         test_root.mkdir(parents=True, exist_ok=True)
         supplied_source = {"revision": "a" * 40, "content_sha256": "b" * 64}
         aggregate = {"product_source_before": supplied_source, "product_source_after": supplied_source,
@@ -554,7 +576,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             EVIDENCE.validate_aggregate_report = original_validate
 
     def test_ordinary_popcount_attachment_resolves_checkout_receipts_and_relative_maps(self) -> None:
-        test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        test_root = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         test_root.mkdir(parents=True, exist_ok=True)
         expected_inputs = {"source": {"revision": "same"}, "product": {"sha256": "same"}}
         _facts, ordinary = EVIDENCE._load_companion_modules()
@@ -683,7 +705,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
             EVIDENCE._link_map_rows(["VMA Size Align Out In", f"0x200160 10 16 {name}"])
 
     def test_retained_helper_final_binding_tracks_the_validated_linkage(self) -> None:
-        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             directory = Path(temporary)
@@ -737,7 +759,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
     def test_writer_then_reader_rejects_mutated_member_and_source(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
         source = EVIDENCE.source_binding(ROOT, contract)
-        work = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        work = ROOT / ".work" / ARCH["work_name"] / "compiler-helper-evidence-tests"
         work.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=work) as temporary:
             output = Path(temporary) / "receipt.json"
