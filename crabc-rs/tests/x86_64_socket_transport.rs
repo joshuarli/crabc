@@ -689,9 +689,12 @@ fn loopback_tcp_connect_accept_and_peer_name_preserve_typed_addresses() {
     // XNU delivers loopback TCP asynchronously, so the nonblocking receiver
     // can report EAGAIN before the sent bytes arrive.
     #[cfg(target_os = "macos")]
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let (initialized, count) = loop {
         match net::recv(&accepted, &mut payload, net::RecvFlags::empty()) {
-            Err(crabc_rs::Errno::AGAIN) => std::thread::yield_now(),
+            Err(crabc_rs::Errno::AGAIN) if std::time::Instant::now() < deadline => {
+                std::thread::yield_now()
+            }
             result => break result.unwrap(),
         }
     };

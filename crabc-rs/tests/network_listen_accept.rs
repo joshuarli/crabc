@@ -186,10 +186,11 @@ fn accept_from_a_nonblocking_listener_returns_a_blocking_descriptor() {
 
     let mut client = TcpStream::connect(("127.0.0.1", address.port()))
         .expect("connect standard-library client to nonblocking listener");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let accepted = loop {
         match net::accept(&listener) {
             Ok(accepted) => break accepted,
-            Err(Errno::AGAIN) => std::thread::yield_now(),
+            Err(Errno::AGAIN) if std::time::Instant::now() < deadline => std::thread::yield_now(),
             Err(error) => panic!("accept from nonblocking listener: {error}"),
         }
     };

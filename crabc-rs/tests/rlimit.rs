@@ -144,3 +144,22 @@ fn setrlimit_rejects_an_inverted_limit_before_crossing_the_facade() {
         Err(Errno::INVAL),
     );
 }
+
+// Darwin reserves 2^63 - 1 as RLIM_INFINITY, so a finite limit at or above it
+// cannot be told apart from unlimited.
+#[cfg(target_os = "macos")]
+#[test]
+fn setrlimit_rejects_a_finite_limit_that_aliases_darwin_infinity() {
+    assert_eq!(
+        process::setrlimit(
+            Resource::Core,
+            Rlimit {
+                current: Some(i64::MAX as u64),
+                maximum: None,
+            },
+        ),
+        Err(Errno::INVAL),
+    );
+    let original = process::getrlimit(Resource::Core).expect("read core limit");
+    assert_ne!(original.current, Some(i64::MAX as u64));
+}
