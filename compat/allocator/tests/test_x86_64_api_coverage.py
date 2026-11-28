@@ -68,6 +68,17 @@ class X86_64ApiCoverageTests(unittest.TestCase):
             self.contract["coverage"]["target-preprocessor-selection"], "not-assessed"
         )
 
+    def test_aarch64_ledger_records_its_own_unassessed_target(self) -> None:
+        arm = COVERAGE.load_contract("aarch64")
+        self.assertEqual(arm["target_context"]["architecture"], "aarch64")
+        self.assertEqual(arm["target_context"]["rust_target"], "aarch64-unknown-linux-musl")
+        self.assertEqual(arm["source"], self.contract["source"])
+        self.assertEqual(arm["coverage"]["overall_status"], "incomplete")
+        self.assertEqual(arm["coverage"]["native-aarch64-execution"], "not-assessed")
+        self.assertNotIn("native-x86_64-execution", arm["coverage"])
+        self.assertEqual(arm["base_c_function_inventory"]["checked_in_inventory"]["path"],
+                         "compat/allocator/aarch64-api-v3.5.0.json")
+
     def test_root_cmake_public_header_boundary_and_source_hash_coverage_are_complete(self) -> None:
         self.assertEqual(
             set(self.headers),

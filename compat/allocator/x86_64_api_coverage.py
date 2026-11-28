@@ -590,6 +590,7 @@ def source_header_surface(
     install_line: int,
     *,
     base_function_summary: dict[str, object],
+    architecture: str = "x86_64",
 ) -> dict[str, object]:
     """Return one installed-header source surface with no active mode claim."""
 
@@ -641,7 +642,7 @@ def source_header_surface(
         "member": member,
         "mode": {
             "source_form": PUBLIC_HEADER_MODE[member],
-            "x86_64_preprocessor_selection": "not-assessed",
+            f"{architecture}_preprocessor_selection": "not-assessed",
         },
         "runtime_option_enumerators": option_enumerators,
         "source": {"bytes": len(contents), "sha256": sha256_bytes(contents)},
@@ -649,18 +650,20 @@ def source_header_surface(
     }
 
 
-def base_function_inventory_summary(base_header: bytes) -> dict[str, object]:
+def base_function_inventory_summary(base_header: bytes, architecture: str = "x86_64") -> dict[str, object]:
     """Cross-check the older narrow inventory before the broader ledger uses it."""
 
+    inventory_path = BASE_FUNCTION_INVENTORY_PATH if architecture == "x86_64" else ROOT / f"compat/allocator/{architecture}-api-v3.5.0.json"
     try:
-        base_contract = json.loads(BASE_FUNCTION_INVENTORY_PATH.read_text(encoding="utf-8"))
+        base_contract = json.loads(inventory_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise CoverageError(
             f"missing target-local base function inventory: {BASE_FUNCTION_INVENTORY_PATH}"
         ) from error
     if not isinstance(base_contract, dict):
         raise CoverageError("target-local base function inventory is not a JSON object")
-    if base_contract.get("target_context") != TARGET_CONTEXT:
+    target_context = {**TARGET_CONTEXT, "architecture": architecture, "rust_target": f"{architecture}-unknown-linux-musl"}
+    if base_contract.get("target_context") != target_context:
         raise CoverageError("base function inventory target context changed")
     source = base_contract.get("source")
     if not isinstance(source, dict) or source.get("member") != BASE_HEADER_MEMBER:
@@ -680,13 +683,13 @@ def base_function_inventory_summary(base_header: bytes) -> dict[str, object]:
         raise CoverageError("base function inventory declaration digest disagrees with pinned source")
 
     return {
-        "checked_in_inventory": {"path": relative(BASE_FUNCTION_INVENTORY_PATH)},
+        "checked_in_inventory": {"path": relative(inventory_path)},
         "source_declared_function_count": count,
         "source_declared_function_names_sha256": digest,
     }
 
 
-def source_symbol_dispositions(header_surfaces: list[dict[str, object]]) -> list[dict[str, object]]:
+def source_symbol_dispositions(header_surfaces: list[dict[str, object]], architecture: str = "x86_64") -> list[dict[str, object]]:
     """Classify source forms without turning them into link/export claims."""
 
     by_member = {surface["member"]: surface for surface in header_surfaces}
@@ -701,37 +704,37 @@ def source_symbol_dispositions(header_surfaces: list[dict[str, object]]) -> list
     return [
         {
             "entry_count": base_external["source_declared_function_count"],
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "mimalloc.h mi_decl_export function declarations",
             "surface": "base-c-functions",
         },
         {
             "entry_count": stats_external["source_declared_function_count"],
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "mimalloc-stats.h mi_decl_export function declarations",
             "surface": "statistics-extension-functions",
         },
         {
             "entry_count": len(base["c_static_inline_functions"]),
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "static inline C helper definitions",
             "surface": "base-header-inline-helpers",
         },
         {
             "entry_count": len(stats["c_static_inline_functions"]),
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "static inline C statistics helper definitions",
             "surface": "statistics-header-inline-helpers",
         },
         {
             "entry_count": len(base["cxx_template_structures"]),
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "optional C++ template structures",
             "surface": "base-header-cxx-templates",
         },
         {
             "entry_count": len(new_delete["cxx_operator_source_definitions"]),
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "C++ global operator source definitions",
             "surface": "new-delete-header-cxx-operators",
         },
@@ -743,7 +746,7 @@ def source_symbol_dispositions(header_surfaces: list[dict[str, object]]) -> list
                     if macro["name"] != "MIMALLOC_OVERRIDE_H"
                 ]
             ),
-            "native_x86_64_object_symbol_status": "not-assessed",
+            f"native_{architecture}_object_symbol_status": "not-assessed",
             "source_form": "preprocessor source-rewrite definitions",
             "surface": "override-header-rewrite-macros",
         },
@@ -755,14 +758,16 @@ def source_symbol_dispositions(header_surfaces: list[dict[str, object]]) -> list
                 + len(surface["macro_definitions"])
                 for surface in header_surfaces
             ),
-            "native_x86_64_object_symbol_status": "not-an-object-symbol-inventory",
+            f"native_{architecture}_object_symbol_status": "not-an-object-symbol-inventory",
             "source_form": "C type tags and aliases, runtime option enumerators, and preprocessor definitions",
             "surface": "type-option-and-macro-source-forms",
         },
     ]
 
 
-def expected_contract(archive_path: Path) -> dict[str, object]:
+def expected_contract(archive_path: Path, architecture: str = "x86_64") -> dict[str, object]:
+    if architecture not in {"x86_64", "aarch64"}:
+        raise CoverageError(f"unsupported source coverage architecture: {architecture}")
     pin = load_mimalloc_pin()
     tree = read_pinned_source_tree(archive_path, pin)
     root_cmake = decode_member(tree, ROOT_CMAKE_MEMBER)
@@ -776,13 +781,14 @@ def expected_contract(archive_path: Path) -> dict[str, object]:
         if member not in tree:
             raise CoverageError(f"root CMake installs a header absent from the archive: {member}")
 
-    base_summary = base_function_inventory_summary(tree[BASE_HEADER_MEMBER])
+    base_summary = base_function_inventory_summary(tree[BASE_HEADER_MEMBER], architecture)
     header_surfaces = [
         source_header_surface(
             record["member"],
             tree[record["member"]],
             record["source_line"],
             base_function_summary=base_summary,
+            architecture=architecture,
         )
         for record in installed_headers
     ]
@@ -803,14 +809,14 @@ def expected_contract(archive_path: Path) -> dict[str, object]:
             "resolution_status": "not-assessed",
             "scope": (
                 "Initial MI_* option and CACHE STRING declarations in the pinned root "
-                "CMakeLists.txt; they are not resolved x86_64 build settings."
+                f"CMakeLists.txt; they are not resolved {architecture} build settings."
             ),
         },
         "coverage": {
             "c-or-cxx-compilation": "not-assessed",
-            "native-x86_64-execution": "not-assessed",
-            "native-x86_64-linkability": "not-assessed",
-            "native-x86_64-object-symbol-inventory": "not-assessed",
+            f"native-{architecture}-execution": "not-assessed",
+            f"native-{architecture}-linkability": "not-assessed",
+            f"native-{architecture}-object-symbol-inventory": "not-assessed",
             "overall_status": "incomplete",
             "rust-engine-implementation": "not-assessed",
             "source-inventory": "complete-for-listed-pinned-source-members-only",
@@ -823,17 +829,17 @@ def expected_contract(archive_path: Path) -> dict[str, object]:
             "crabc_mimalloc_implementation": "not-assessed",
             "native_object_export_inventory": "not-assessed",
             "public_c_api_adapter": "not-assessed",
-            "public_x86_64_runtime_support": "not-claimed",
+            f"public_{architecture}_runtime_support": "not-claimed",
             "verification": (
                 "This ledger verifies pinned source inventory only. It does not establish "
-                "a selected x86_64 preprocessor/build mode, compilation, linkability, ELF "
+                f"a selected {architecture} preprocessor/build mode, compilation, linkability, ELF "
                 "exports, Rust implementation coverage, public ABI, behavioral parity, "
                 "test execution, stress coverage, or performance qualification."
             ),
         },
-        "kind": "mimalloc-x86_64-public-api-mode-test-symbol-coverage-ledger",
+        "kind": f"mimalloc-{architecture}-public-api-mode-test-symbol-coverage-ledger",
         "maturity": "source-surface-coverage-foundation",
-        "profile": "linux-x86_64-mimalloc-source-public-surface",
+        "profile": f"linux-{architecture}-mimalloc-source-public-surface",
         "scope": {
             "included": [
                 "Every include/*.h member installed by the pinned root CMake install(FILES ...) declarations.",
@@ -861,10 +867,10 @@ def expected_contract(archive_path: Path) -> dict[str, object]:
             "root_cmake": member_record(ROOT_CMAKE_MEMBER, tree[ROOT_CMAKE_MEMBER]),
             "test_members": [member_record(name, tree[name]) for name in test_members],
         },
-        "symbol_dispositions": source_symbol_dispositions(header_surfaces),
-        "target_context": TARGET_CONTEXT,
+        "symbol_dispositions": source_symbol_dispositions(header_surfaces, architecture),
+        "target_context": {**TARGET_CONTEXT, "architecture": architecture, "rust_target": f"{architecture}-unknown-linux-musl"},
         "test_source_inventory": {
-            "native_x86_64_execution_status": "not-assessed",
+            f"native_{architecture}_execution_status": "not-assessed",
             "root_cmake_test_targets": root_cmake_test_targets(root_cmake),
             "scope": (
                 "Pinned source members and CMake target declarations only; this is not a "
@@ -882,9 +888,10 @@ def expected_contract(archive_path: Path) -> dict[str, object]:
     }
 
 
-def load_contract() -> dict[str, object]:
+def load_contract(architecture: str = "x86_64") -> dict[str, object]:
+    path = CONTRACT_PATH if architecture == "x86_64" else ROOT / f"compat/allocator/{architecture}-api-coverage-v3.5.0.json"
     try:
-        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        contract = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise CoverageError(f"missing checked-in coverage ledger: {CONTRACT_PATH}") from error
     if not isinstance(contract, dict):
@@ -892,9 +899,9 @@ def load_contract() -> dict[str, object]:
     return contract
 
 
-def check_contract(archive_path: Path) -> None:
-    observed = expected_contract(archive_path)
-    checked_in = load_contract()
+def check_contract(archive_path: Path, architecture: str = "x86_64") -> None:
+    observed = expected_contract(archive_path, architecture)
+    checked_in = load_contract(architecture)
     if checked_in != observed:
         raise CoverageError(
             "x86_64 public API/mode/test/symbol source ledger drifted from pinned mimalloc "
@@ -902,7 +909,7 @@ def check_contract(archive_path: Path) -> None:
         )
 
 
-def checked_contract_result(archive_path: Path) -> dict[str, object]:
+def checked_contract_result(archive_path: Path, architecture: str = "x86_64") -> dict[str, object]:
     """Validate the checked-in ledger and return only its source-only result.
 
     A caller may attach this result to a larger x86-64 oracle report, but the
@@ -911,8 +918,9 @@ def checked_contract_result(archive_path: Path) -> dict[str, object]:
     target configuration, compiled artifact, or execution claim.
     """
 
-    check_contract(archive_path)
-    contract = load_contract()
+    check_contract(archive_path, architecture)
+    contract = load_contract(architecture)
+    contract_path = CONTRACT_PATH if architecture == "x86_64" else ROOT / f"compat/allocator/{architecture}-api-coverage-v3.5.0.json"
     target = contract.get("target_context")
     coverage = contract.get("coverage")
     source = contract.get("source")
@@ -920,8 +928,9 @@ def checked_contract_result(archive_path: Path) -> dict[str, object]:
     modes = contract.get("build_mode_declarations")
     dispositions = contract.get("symbol_dispositions")
     base_functions = contract.get("base_c_function_inventory")
-    if not isinstance(target, dict) or target != TARGET_CONTEXT:
-        raise CoverageError("x86_64 API coverage ledger target context changed")
+    expected_target = {**TARGET_CONTEXT, "architecture": architecture, "rust_target": f"{architecture}-unknown-linux-musl"}
+    if not isinstance(target, dict) or target != expected_target:
+        raise CoverageError("native API coverage ledger target context changed")
     if not isinstance(coverage, dict) or coverage.get("overall_status") != "incomplete":
         raise CoverageError("x86_64 API coverage ledger must remain incomplete")
     if not isinstance(source, dict):
@@ -970,13 +979,13 @@ def checked_contract_result(archive_path: Path) -> dict[str, object]:
     return {
         "build_mode_declaration_count": len(declarations),
         "contract": {
-            "path": CONTRACT_PATH.relative_to(ROOT).as_posix(),
-            "sha256": sha256_bytes(CONTRACT_PATH.read_bytes()),
+            "path": contract_path.relative_to(ROOT).as_posix(),
+            "sha256": sha256_bytes(contract_path.read_bytes()),
         },
         "header_surface_count": len(header_surfaces),
         "overall_status": coverage["overall_status"],
         "profile": contract["profile"],
-        "scope": RESULT_SCOPE,
+        "scope": RESULT_SCOPE if architecture == "x86_64" else RESULT_SCOPE.replace("x86_64", architecture),
         "source_declared_function_count": base_count + extension_count,
         "source_member_count": 1 + len(all_headers) + len(test_members),
         "status": "passed",
@@ -994,6 +1003,7 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_ARCHIVE_PATH,
         help="path to the SHA-256-pinned mimalloc v3.5.0 archive",
     )
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument(
         "--print-observed",
         action="store_true",
@@ -1005,10 +1015,10 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = parse_arguments()
     if arguments.print_observed:
-        print(json.dumps(expected_contract(arguments.archive), indent=2))
+        print(json.dumps(expected_contract(arguments.archive, arguments.architecture), indent=2))
         return 0
-    check_contract(arguments.archive)
-    print("allocator x86_64 public API/mode/test/symbol source ledger: PASS")
+    check_contract(arguments.archive, arguments.architecture)
+    print(f"allocator {arguments.architecture} public API/mode/test/symbol source ledger: PASS")
     return 0
 
 
