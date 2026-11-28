@@ -161,7 +161,14 @@ AArch64 C/Rust evidence and recorded as pending for x86. CRAB-7 D2–D3;
 the full arm correctness candidate at one SHA after the product lanes land
 (a baseline run at `db3eb2f5a` with seeded inputs had no preflight blockers).
 
-Blocked here: the CRAB-11 `getset` SCHED_FIFO progress proof. Pinned musl
+Allocator M2 on AArch64 (`fc949c1dd`): the VM component runs natively (63
+checks, no C/Rust mismatch); its conditions narrow as the arenas,
+fault-injection and M7 statistics components land.
+
+Blocked here: allocator conditions that need hugetlbfs pools, physical NUMA
+nodes or 16/64 KiB pages. The OrbStack kernel has no hugetlbfs and no NUMA
+nodes and runs 4 KiB pages, so those need another native arm64 host. The
+CRAB-11 `getset` SCHED_FIFO progress proof. Pinned musl
 stalls in this VM as often as crabc (3 of 6 each), so it needs another native
 arm64 host.
 
