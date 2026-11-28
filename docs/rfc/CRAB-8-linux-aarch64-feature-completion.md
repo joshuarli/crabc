@@ -222,8 +222,10 @@ sparse, 67M inodes), never virtiofs. It replaced the OrbStack machine on
 ```sh
 cd ~/repos/ctrs && cargo xtask all            # see ctrs docs/development.md
 ln -sf ~/repos/ctrs/target/release/ctrs ~/.local/bin/ctrs
-printf '{"cpus":16,"memory_mib":28672}\n' > ~/.local/share/ctrs/vm.json
-ctrs engine start
+printf '{"cpus":12,"memory_mib":20480}\n' > ~/.local/share/ctrs/vm.json
+# 1 GiB of 2 MiB pages, two 1 GiB pages and two emulated NUMA nodes for the
+# allocator's huge-page and NUMA conditions (ctrs CTRS-17 and CTRS-18).
+CTRS_HUGEPAGES_2M=512 CTRS_HUGEPAGES_1G=2 CTRS_NUMA_NODES=2 ctrs engine start
 DEVBOX_NAME=crabc DEVBOX_PACKAGES="bash ca-certificates curl findutils gdb tar util-linux xz" \
     examples/devbox/devbox.sh create -v "$HOME/d/crabc:$HOME/d/crabc:ro"
 DEVBOX_NAME=crabc examples/devbox/devbox.sh exec sh -c \
@@ -251,10 +253,12 @@ package corpus, Lua archive and Rust std/LTO vendors.
 When the work needs a guest capability ctrs lacks, implement it in ctrs (or
 file it in the ctrs backlog with `todo add`, saying what crabc needs, the blocked
 condition and a container-level proof), then record the condition as
-host-limited here or in its fragment until it lands. Requested so far:
-hugetlbfs pools (CTRS-17), NUMA nodes (CTRS-18), a 16 KiB-page kernel
-(CTRS-19; Apple Silicon has no 64 KiB granule) and SCHED_FIFO progress
-(CTRS-20).
+host-limited here or in its fragment until it lands. Landed: hugetlbfs pools
+(CTRS-17), emulated NUMA nodes (CTRS-18), a 16 KiB-page kernel (CTRS-19;
+`cargo xtask kernel --page-size 16k`, then `CTRS_PAGE_SIZE=16k`) and
+`/proc/<pid>/task/<tid>/children`, which the qualification supervisor needs.
+Open: SCHED_FIFO in-place switch progress (CTRS-20, a guest kernel scheduler
+defect that pinned musl hits too). Apple Silicon has no 64 KiB granule.
 
 ### A0 tasks, on `lane/a0-aarch64-image`
 
