@@ -10,9 +10,6 @@
  * external watchdog on another CPU observes the shared counters and kills the
  * process group.
  *
- * Scenarios (which task runs on the process-main thread differs, because a
- * worker's key lookup also takes the selected-worker registry lock and the
- * main thread's does not):
  *   getset    main owner: pthread_setspecific/pthread_getspecific; worker waiter.
  *   delete    worker owner: pthread_key_create/pthread_key_delete; main waiter.
  *   registry  worker owner: pthread_setspecific/pthread_getspecific; worker waiter.
@@ -214,8 +211,11 @@ static pthread_t signal_target;
 
 static void handler(int number)
 {
+    void *value;
     (void)number;
-    if (pthread_getspecific(key) == (void *)(uintptr_t)~(uintptr_t)0) fail("handler observed an impossible value");
+    value = pthread_getspecific(key);
+    if (value == (void *)(uintptr_t)~(uintptr_t)0) fail("handler observed an impossible value");
+    if (pthread_setspecific(key, value) != 0) fail("handler setspecific failed");
     __atomic_add_fetch(&handled, 1, __ATOMIC_RELEASE);
 }
 
@@ -233,6 +233,11 @@ static void *signal_victim(void *argument)
         }
         if ((uintptr_t)pthread_getspecific(key) != 0x0a11e5 + (operations & 1)) {
             fail("victim observed the wrong value");
+        }
+        if ((operations & 7) == 0) {
+            pthread_key_t other;
+            if (pthread_key_create(&other, 0) != 0) fail("victim key create failed");
+            if (pthread_key_delete(other) != 0) fail("victim key delete failed");
         }
         operations++;
         shared->owner_ops = operations;

@@ -2323,9 +2323,25 @@ pub(super) fn withdraw_current_selected_pthread_condition_waiter(barrier: *mut c
 pub(super) fn current_selected_worker_tsd_values(
 ) -> Option<*const pthread_tsd::SelectedTsdValues> {
     let control = current_selected_worker_control()?;
-    // SAFETY: current-worker resolution proves the control mapping is live
-    // until this current task exits; the TSD leaf retains no pointer after its
-    // current get/set/destructor operation completes.
+    // SAFETY: the registry lookup pins the current worker through task exit.
+    Some(unsafe { core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>() })
+}
+
+/// # Safety
+/// The caller must use an owned worker TLS block.
+pub(super) unsafe fn current_owned_worker_tsd_values(
+) -> Option<*const pthread_tsd::SelectedTsdValues> {
+    let cancellation = pthread_identity::current_selected_cancellation_state();
+    if cancellation.is_null() {
+        return None;
+    }
+    // SAFETY: the current owned worker publishes its embedded cancellation
+    // state before callbacks and retains its control until the task exits.
+    let control = unsafe {
+        cancellation.cast::<u8>().sub(core::mem::offset_of!(ThreadControl, cancellation))
+            as *const ThreadControl
+    };
+    // SAFETY: the current worker pins its own control mapping until task exit.
     Some(unsafe { core::ptr::addr_of!((*control).tsd).cast::<pthread_tsd::SelectedTsdValues>() })
 }
 

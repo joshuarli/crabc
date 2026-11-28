@@ -87,19 +87,15 @@ compat/pthread-stress/run_tsd_fifo_progress.sh --sysroot .work/ARCH/NAME [--repe
 The container needs only `--cap-add SYS_NICE` and `--network none`. The runner
 exits 77 when `SCHED_FIFO` is denied.
 
-The default scenarios keep the lock owner on a task that takes only the
-pthread-key lock: `getset` (owner is the main thread, in
-`pthread_setspecific`/`pthread_getspecific`) and `delete` (owner is a worker in
-`pthread_key_create`/`pthread_key_delete`). `--include-registry` adds `registry`,
-two workers calling `pthread_getspecific`/`pthread_setspecific`, whose lookups
-also take the selected-worker registry lock in
-`libc/src/c_abi/x86_64/pthread_create_join.rs`. Both locks sleep on a private
-futex when contended, so a preempted holder on the waiter's CPU can run.
+The default real-time scenarios are `getset` (the main thread owns the loop in
+`pthread_setspecific`/`pthread_getspecific`) and `delete` (a worker loops in
+`pthread_key_create`/`pthread_key_delete`). `--include-registry` adds two
+workers calling `pthread_getspecific`/`pthread_setspecific`. Current-thread
+access uses the caller's table without either lock; key deletion retains the
+futex-backed key and registry locks.
 
-`--include-signal` adds `signal` and `signal-worker`: no real-time policy, a
-second thread sends SIGUSR1 to a thread looping over TSD operations, and the
-handler calls `pthread_getspecific`. The pinned-musl control completes because
-musl reads the thread's own slot without a lock. The installed product does not
-complete: a handler that interrupts its own thread inside a TSD or registry
-critical section waits for a lock that thread can never release. This case is
-reachable and unfixed, so it is not part of the default pass condition.
+The default also includes `signal` and `signal-worker`: without a real-time
+policy, a second thread sends SIGUSR1 while the victim exercises TSD access and
+key creation and deletion. The handler reads and writes its current value.
+Both the installed product and the pinned-musl control must complete these
+trials. `--include-signal` remains accepted for existing invocations.

@@ -13,14 +13,6 @@
 # CPU, with a stall limit, a total deadline, a kernel RLIMIT_RTTIME backstop, and
 # an outer hard kill of the whole container.
 #
-# The default scenarios (getset, delete) keep the lock owner on a task whose key
-# lookup takes only the selected pthread-key lock. --include-registry adds the
-# worker-to-worker scenario, whose lookups also take the selected-worker registry
-# spin lock owned by pthread_create_join.rs.
-#
-# --include-signal adds signal handlers that call pthread_getspecific on a thread
-# interrupted inside its own TSD operations, with no real-time policy.
-#
 # Exit status: 0 every crabc trial made progress; 1 a crabc trial made no
 # progress (or its control did); 77 SCHED_FIFO or CAP_SYS_NICE is unavailable.
 set -euo pipefail
@@ -38,7 +30,7 @@ if [ "${1:-}" != --in-container ]; then
     sysroot=""
     repeat=3
     include_registry=0
-    include_signal=0
+    include_signal=1
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --sysroot) [ "$#" -ge 2 ] || fail "--sysroot needs a path"; sysroot="$2"; shift 2 ;;

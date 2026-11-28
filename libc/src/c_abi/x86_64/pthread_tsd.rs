@@ -24,13 +24,10 @@
 //! `pthread_exit`, or `thrd_exit` worker clear every value before invoking its
 //! non-null destructor. Destructor rearming is admitted for at most four
 //! ascending-key passes. A null destructor still reserves a key, as in musl.
-//! The process-main table admits only the bootstrapped `%fs:0` plus Linux
-//! `gettid` identity, so copying or inheriting the FS base alone cannot make a
-//! raw caller selected.
 //!
 //! This is deliberately not musl's general thread-list/TSD implementation.
 //! Key deletion is selected only through this private main-plus-worker table;
-//! foreign threads receive only that fail-closed admission boundary, while
+//! foreign threads are outside the current-thread access contract, and
 //! their lifecycle, concurrent deletion/destructor interaction, cleanup
 //! ownership beyond the selected deferred-pthread exit ordering, main-thread
 //! process-exit destructors, dynamic or loader TLS/DTV, allocator lifecycle
@@ -38,8 +35,7 @@
 //! static fork transaction does
 //! lock this metadata before it snapshots the calling task's table, but it is
 //! not general all-thread key/TSD or dynamic-fork repair. Invalid/deleted keys
-//! and non-selected callers fail closed instead of relying on musl's unchecked
-//! internal fast paths. This does not provide the rest of the
+//! fail closed. This does not provide the rest of the
 //! pthread/C11 key and TSD surface.
 
 #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little")))]
@@ -126,9 +122,7 @@ type TsdDestructor = unsafe extern "C" fn(*mut c_void);
 ///
 /// The fixed atomics make concurrent key deletion and a selected worker's
 /// ordinary get/set access memory-safe without pretending to supply musl's
-/// full all-thread-list or fork protocol. Values are still accessed only
-/// through the private key lock below, except for the atomic clearing needed
-/// when a worker has become a detached-but-not-yet-reaped registry member.
+/// full all-thread-list or fork protocol.
 #[repr(C)]
 pub(super) struct SelectedTsdValues {
     values: [AtomicUsize; TSD_SLOTS],
@@ -148,11 +142,6 @@ impl SelectedTsdValues {
         }
     }
 
-    /// Clear one key while the private TSD metadata lock excludes a current
-    /// selected set/get operation for that key.
-    ///
-    /// Detached workers can remain registered after kernel exit; atomics keep
-    /// this bounded clearing safe until the external reaper withdraws them.
     pub(super) fn clear_key(&self, key: usize) {
         self.values[key].store(0, Ordering::Release);
     }
@@ -267,7 +256,7 @@ fn key_index(key: c_uint) -> Option<usize> {
 }
 
 #[inline]
-fn key_is_allocated_locked(index: usize) -> bool {
+fn key_is_allocated(index: usize) -> bool {
     SELECTED_TSD_KEYS[index].state.load(Ordering::Acquire) == KEY_ALLOCATED
 }
 
@@ -295,6 +284,18 @@ fn current_selected_values() -> Option<*const SelectedTsdValues> {
         return Some(core::ptr::addr_of!(MAIN_SELECTED_TSD_VALUES));
     }
     pthread_create_join::current_selected_worker_tsd_values()
+}
+
+/// # Safety
+/// The caller must be an owned thread.
+#[inline]
+unsafe fn current_owned_values() -> Option<*const SelectedTsdValues> {
+    let thread_pointer = pthread_identity::current_thread_pointer();
+    if static_tls::is_initial_thread_pointer(thread_pointer) {
+        return Some(core::ptr::addr_of!(MAIN_SELECTED_TSD_VALUES));
+    }
+    // SAFETY: the caller guarantees an owned current thread.
+    unsafe { pthread_create_join::current_owned_worker_tsd_values() }
 }
 
 // Musl's `src/thread/pthread_key_create.c` object.
@@ -337,7 +338,7 @@ static_archive_member! { pthread_key_create_source {
 
         lock_selected_tsd();
         #[cfg(all(crabc_owned_mimalloc_lifecycle, not(feature = "native-mimalloc-shadow")))]
-        if is_allocator_key_storage(key) && !key_is_allocated_locked(ALLOCATOR_KEY) {
+        if is_allocator_key_storage(key) && !key_is_allocated(ALLOCATOR_KEY) {
             SELECTED_TSD_KEYS[ALLOCATOR_KEY]
                 .destructor
                 .store(destructor.map_or(0, |function| function as usize), Ordering::Relaxed);
@@ -352,7 +353,7 @@ static_archive_member! { pthread_key_create_source {
         let start = SELECTED_TSD_NEXT_KEY.load(Ordering::Relaxed);
         let mut index = start;
         loop {
-            if !key_is_allocated_locked(index) {
+            if !key_is_allocated(index) {
                 SELECTED_TSD_KEYS[index]
                     .destructor
                     .store(destructor.map_or(0, |function| function as usize), Ordering::Relaxed);
@@ -398,12 +399,10 @@ static_archive_member! { pthread_key_create_source {
         }
 
         lock_selected_tsd();
-        if !key_is_allocated_locked(index) {
+        if !key_is_allocated(index) {
             unlock_selected_tsd();
             return EINVAL;
         }
-        // Clear the active marker first. A concurrent selected set/get that wins
-        // the lock afterwards fails closed instead of reviving a deleted key.
         SELECTED_TSD_KEYS[index].state.store(KEY_FREE, Ordering::Release);
         SELECTED_TSD_KEYS[index].destructor.store(0, Ordering::Release);
         MAIN_SELECTED_TSD_VALUES.clear_key(index);
@@ -419,13 +418,11 @@ static_archive_member! { pthread_key_create_source {
 
 /// Read one selected current-thread value.
 ///
-/// Invalid/deleted keys and non-selected callers return null. This closed
-/// behavior avoids musl's unchecked-internal-key precondition becoming an
-/// out-of-bounds access in this bounded artifact.
+/// Invalid/deleted keys return null.
 ///
 /// # Safety
 ///
-/// `key` must be the caller's active selected key. Returned values are opaque
+/// The caller must be an owned thread and `key` its active selected key. Returned values are opaque
 /// borrowed C pointers and may not be dereferenced unless the application
 /// still owns the referenced storage.
 #[export_name = "__pthread_getspecific"]
@@ -434,19 +431,18 @@ pub unsafe extern "C" fn pthread_getspecific(key: c_uint) -> *mut c_void {
     let Some(index) = key_index(key) else {
         return core::ptr::null_mut();
     };
-    let Some(values) = current_selected_values() else {
+    // SAFETY: this entry requires an owned current thread.
+    let Some(values) = (unsafe { current_owned_values() }) else {
         return core::ptr::null_mut();
     };
 
-    lock_selected_tsd();
-    let value = if key_is_allocated_locked(index) {
+    let value = if key_is_allocated(index) {
         // SAFETY: current-selected resolution retains this executing worker's
         // mapping, or returned the permanent process-main value table.
         unsafe { (*values).values[index].load(Ordering::Acquire) }
     } else {
         0
     };
-    unlock_selected_tsd();
     value as *mut c_void
 }
 
@@ -465,18 +461,17 @@ static_archive_member! { pthread_setspecific_source {
         let Some(index) = key_index(key) else {
             return EINVAL;
         };
-        let Some(values) = current_selected_values() else {
+        // SAFETY: this entry requires an owned current thread.
+        let Some(values) = (unsafe { current_owned_values() }) else {
             return EINVAL;
         };
 
-        lock_selected_tsd();
-        let result = if key_is_allocated_locked(index) {
+        let result = if key_is_allocated(index) {
             // SAFETY: current-selected resolution retains this executing worker's
             // mapping, or returned the permanent process-main value table.
             unsafe {
-                let previous = (*values).values[index].load(Ordering::Acquire);
+                let previous = (*values).values[index].swap(value as usize, Ordering::AcqRel);
                 if previous != value as usize {
-                    (*values).values[index].store(value as usize, Ordering::Release);
                     (*values).used.store(1, Ordering::Release);
                 }
             }
@@ -484,7 +479,6 @@ static_archive_member! { pthread_setspecific_source {
         } else {
             EINVAL
         };
-        unlock_selected_tsd();
         result
     }
 }}
@@ -546,7 +540,7 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
             // key has no destructor or was deleted during a prior callback.
             // SAFETY: this slot is retained through the callback handoff.
             let value = unsafe { (*slot).swap(0, Ordering::AcqRel) };
-            let destructor = if value != 0 && key_is_allocated_locked(index) {
+            let destructor = if value != 0 && key_is_allocated(index) {
                 destructor_from_word(
                     SELECTED_TSD_KEYS[index]
                         .destructor
