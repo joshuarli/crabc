@@ -3538,6 +3538,13 @@ mod tests {
     /// one fault-free request that must publish and release normally.
     #[test]
     fn emit_os_publication_fault_receiver_trace() {
+        crate::test_process::run_in_fresh_process(
+            "os_page::tests::emit_os_publication_fault_receiver_trace",
+            os_publication_fault_receiver_trace,
+        );
+    }
+
+    fn os_publication_fault_receiver_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
         use crate::page_map::PageMap;
         let fault = fault::install(fault::Plan::disabled());
@@ -3821,6 +3828,14 @@ mod tests {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_os_page_terminal_unmap_fault_c_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "os_page::tests::emit_m2_os_page_terminal_unmap_fault_c_rust_trace",
+            terminal_unmap_fault_c_rust_trace,
+        );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn terminal_unmap_fault_c_rust_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         use crate::page_map::PageMap;
@@ -4045,6 +4060,14 @@ mod tests {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_os_page_escaped_map_fault_c_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "os_page::tests::emit_m2_os_page_escaped_map_fault_c_rust_trace",
+            escaped_map_fault_c_rust_trace,
+        );
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn escaped_map_fault_c_rust_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         use crate::page_map::PageMap;
