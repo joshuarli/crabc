@@ -20750,9 +20750,12 @@ def runtime_ticket_zero_soak_tag_attestation(
     return expected
 
 
-def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
+def x86_64_source_map_contract(archive: Path, architecture: str = "x86_64") -> dict[str, Any]:
     """Run the target-local source-map validator without spawning a child process."""
 
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported source inventory architecture: {architecture}")
+    contract_path = X86_64_SOURCE_MAP_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "aarch64-source-map-v3.5.0.json"
     spec = importlib.util.spec_from_file_location(
         "crabc_allocator_x86_64_source_map_validator",
         X86_64_SOURCE_MAP_RUNNER,
@@ -20769,7 +20772,7 @@ def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
     if not callable(validator):
         raise HarnessError("native x86-64 source-map validator has no checked result callable")
     try:
-        result = validator(archive)
+        result = validator(archive) if architecture == "x86_64" else validator(archive, architecture)
     except Exception as error:
         raise HarnessError(f"native x86-64 source-map validation failed: {error}") from error
     if not isinstance(result, dict) or set(result) != {
@@ -20787,20 +20790,20 @@ def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
         raise HarnessError("native x86-64 source-map validator returned an unsupported result")
 
     expected_contract = {
-        "path": relative(X86_64_SOURCE_MAP_CONTRACT),
-        "sha256": sha256_file(X86_64_SOURCE_MAP_CONTRACT),
+        "path": relative(contract_path),
+        "sha256": sha256_file(contract_path),
     }
     if result["contract"] != expected_contract:
         raise HarnessError("native x86-64 source-map validator returned the wrong contract")
     expected_target = {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "endianness": "little",
-        "rust_target": X86_64_RUST_TARGET,
+        "rust_target": f"{architecture}-unknown-linux-musl",
         "system": "linux",
     }
     if result["target"] != expected_target:
         raise HarnessError("native x86-64 source-map validator returned the wrong target")
-    if result["profile"] != "linux-x86_64-mimalloc-engine-parity":
+    if result["profile"] != f"linux-{architecture}-mimalloc-engine-parity":
         raise HarnessError("native x86-64 source-map validator returned the wrong profile")
     if result["overall_status"] != "incomplete" or result["status"] != "passed":
         raise HarnessError("native x86-64 source-map validator returned an invalid status")
@@ -20833,7 +20836,7 @@ def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
     return result
 
 
-def x86_64_api_coverage_contract(archive: Path) -> dict[str, Any]:
+def x86_64_api_coverage_contract(archive: Path, architecture: str = "x86_64") -> dict[str, Any]:
     """Validate the x86-64 source-only public-surface coverage ledger.
 
     This is intentionally separate from the native C oracle and private
@@ -20842,6 +20845,9 @@ def x86_64_api_coverage_contract(archive: Path) -> dict[str, Any]:
     execution, public ABI, or runtime integration.
     """
 
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported source inventory architecture: {architecture}")
+    contract_path = X86_64_API_COVERAGE_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "aarch64-api-coverage-v3.5.0.json"
     spec = importlib.util.spec_from_file_location(
         "crabc_allocator_x86_64_api_coverage_validator",
         X86_64_API_COVERAGE_RUNNER,
@@ -20862,7 +20868,7 @@ def x86_64_api_coverage_contract(archive: Path) -> dict[str, Any]:
     if not callable(validator):
         raise HarnessError("x86-64 API coverage validator has no checked result callable")
     try:
-        result = validator(archive)
+        result = validator(archive) if architecture == "x86_64" else validator(archive, architecture)
     except Exception as error:
         raise HarnessError(f"x86-64 API coverage validation failed: {error}") from error
     expected_fields = {
@@ -20883,20 +20889,20 @@ def x86_64_api_coverage_contract(archive: Path) -> dict[str, Any]:
         raise HarnessError("x86-64 API coverage validator returned an unsupported result")
 
     expected_contract = {
-        "path": relative(X86_64_API_COVERAGE_CONTRACT),
-        "sha256": sha256_file(X86_64_API_COVERAGE_CONTRACT),
+        "path": relative(contract_path),
+        "sha256": sha256_file(contract_path),
     }
     if result["contract"] != expected_contract:
         raise HarnessError("x86-64 API coverage validator returned the wrong contract")
     expected_target = {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "endianness": "little",
-        "rust_target": X86_64_RUST_TARGET,
+        "rust_target": f"{architecture}-unknown-linux-musl",
         "system": "linux",
     }
     if result["target"] != expected_target:
         raise HarnessError("x86-64 API coverage validator returned the wrong target")
-    if result["profile"] != "linux-x86_64-mimalloc-source-public-surface":
+    if result["profile"] != f"linux-{architecture}-mimalloc-source-public-surface":
         raise HarnessError("x86-64 API coverage validator returned the wrong profile")
     if result["overall_status"] != "incomplete" or result["status"] != "passed":
         raise HarnessError("x86-64 API coverage validator returned an invalid status")
@@ -20921,22 +20927,27 @@ def x86_64_api_coverage_contract(archive: Path) -> dict[str, Any]:
     return result
 
 
-def x86_64_source_api_inventory(archive: Path) -> dict[str, Any]:
+def x86_64_source_api_inventory(archive: Path, architecture: str = "x86_64") -> dict[str, Any]:
     """Check the target-local source declaration inventory against this archive."""
 
+    if architecture not in {"x86_64", "aarch64"}:
+        raise HarnessError(f"unsupported source inventory architecture: {architecture}")
+    contract_path = X86_64_API_CONTRACT if architecture == "x86_64" else ALLOCATOR_ROOT / "aarch64-api-v3.5.0.json"
     command = [
         sys.executable,
         str(X86_64_API_INVENTORY_RUNNER),
         "--archive",
         str(archive),
     ]
+    if architecture != "x86_64":
+        command.extend(("--architecture", architecture))
     record = command_record(command, cwd=ROOT)
     require_success(record, "native x86-64 source C API inventory")
-    contract = read_json(X86_64_API_CONTRACT)
+    contract = read_json(contract_path)
     expected_target = {
-        "architecture": "x86_64",
+        "architecture": architecture,
         "endianness": "little",
-        "rust_target": X86_64_RUST_TARGET,
+        "rust_target": f"{architecture}-unknown-linux-musl",
         "system": "linux",
     }
     if contract.get("target_context") != expected_target:
@@ -20951,7 +20962,7 @@ def x86_64_source_api_inventory(archive: Path) -> dict[str, Any]:
         raise HarnessError("native x86-64 source C API inventory digest is invalid")
     return {
         "command": command,
-        "contract": artifact_record(X86_64_API_CONTRACT),
+        "contract": artifact_record(contract_path),
         "declaration_count": declaration_count,
         "declaration_names_sha256": declaration_names_sha256,
         "status": "passed",
