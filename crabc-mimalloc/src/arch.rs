@@ -33,4 +33,3 @@ impl PageSize {
         self.0.get()
     }
 }
-
