@@ -12,7 +12,8 @@ delegated the open questions, which take every recommendation below.
 3. Option (a): set `FD_CLOEXEC` immediately after creation and name the fork
    race in each affected type's docs.
 4. `users` and `resolver` are absent on Darwin through D3.
-5. macOS 13 or newer, Apple Silicon only.
+5. macOS 27 or newer, Apple Silicon only (owner decision; supersedes the
+   proposed macOS 13).
 6. Ported modules are source-compatible across both targets, enforced by
    building the facade's examples for both.
 

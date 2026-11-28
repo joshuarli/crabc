@@ -42,7 +42,7 @@ aggregate admission cannot block independently testable feature work.
   mount, never emulated), and replaces the older AArch64 composition and its
   August evidence instead of refreshing them.
 - **Active, `crabc-rs` only:** the macOS/AArch64 libSystem backend for
-  `crabc-rs` (`aarch64-apple-darwin`, macOS 13 or newer), admitted by the owner
+  `crabc-rs` (`aarch64-apple-darwin`, macOS 27 or newer), admitted by the owner
   on 2026-11-27 under [CRAB-7](rfc/CRAB-7-macos-libsystem-backend.md). It runs
   natively on Apple Silicon. crabc's libc, loader, CRT, builtins, allocator and
   `crabc-core` stay Linux-only.
