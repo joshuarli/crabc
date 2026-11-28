@@ -183,10 +183,15 @@ mismatch; bitmaps and recursion are complete (`f9d27ec12`). `0dbeffd7e` closed
 the arena unown and unabandon interleavings by page-protection pauses at the
 exact source access on both sides, made both concurrent-reserve tests
 deterministic, and narrowed the VM conditions to source facts. Still open and
-not host-limited: VM trim, hint and THP callers and the subprocess statistics
-owner; the unmapped and OS-list unown retry; installed-product initialization;
-and the remaining fault-injection receivers. Pending for x86: the interleaving
-receiver and the two concurrent-reserve fields.
+not host-limited: the VM reserve/commit/purge/reuse callers, explicit
+reservations beyond the compared trims and the narrowed hint, THP and
+statistics rows; installed-product initialization; and the remaining
+fault-injection receivers. The arena unown retry for unmapped and OS-list pages
+closed with an arm64 hardware-watchpoint pause (`a61a94f93`), and the OS-page
+prefix trim has a receiver (`767bc726b`); arenas now keep only host-limited
+conditions. Pending for x86: the interleaving and prefix-trim receivers, the
+two concurrent-reserve fields, and an x86 route for the unown-retry pause
+(x86 data breakpoints trap after the access).
 
 Blocked here: allocator conditions that need hugetlbfs pools, physical NUMA
 nodes or 16/64 KiB pages. The OrbStack kernel has no hugetlbfs and no NUMA
