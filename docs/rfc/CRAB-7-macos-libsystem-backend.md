@@ -2,9 +2,10 @@
 
 Status: accepted 2026-11-27. The owner admitted it in parallel with Linux/AArch64
 feature completion ([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md)) and
-delegated the open questions, which take every recommendation below. D1 is
-done ([D1 record](#d1-record)); the backend's current boundary and module
-status live in the [`crabc-rs` design](../design/crabc-rs.md#darwin-backend).
+delegated the open questions, which take every recommendation below. D1 and
+D2 are done ([D1 record](#d1-record), [D2 record](#d2-record)); the backend's
+current boundary and module status live in the
+[`crabc-rs` design](../design/crabc-rs.md#darwin-backend).
 
 ## Decisions
 
@@ -151,8 +152,9 @@ the facade does not need. See open question 2.
 2. **D1, compile gate (done):** `cargo check -p crabc-rs --target aarch64-apple-darwin`
    builds with the core port modules and drops `crabc-core` on Darwin.
    Behavior tests for `fd`, `io`, `fs` and `pipe` pass on a Mac.
-3. **D2, process, time and networking:** `process`, `signal`, `time`, `rand`
-   and `net`, with ownership and close-on-exec semantics documented per type.
+3. **D2, process, time and networking (done):** `process`, `signal`, `time`,
+   `rand` and `net`, with ownership and close-on-exec semantics documented
+   per type.
 4. **D3, terminals, memory and decided modules:** `termios`, `pty`, `mm`, and
    whatever open question 4 admits.
 
@@ -189,6 +191,52 @@ cargo check -p crabc-rs --target aarch64-apple-darwin --no-default-features
 cargo test -p crabc-rs --target aarch64-apple-darwin
 .work/bin/vm -- scripts/lanes/rust-check.sh cargo check -q --locked -p crabc-rs --target aarch64-unknown-linux-musl
 .work/bin/vm -- scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl
+```
+
+### D2 record
+
+D2 ports subsets of `process`, `signal`, `time`, `rand` and `net`, the
+`netdb` byte parsers, and the `fs` ownership family that waited for
+`process::Uid` and `Gid`. Each module's documentation lists its Darwin
+differences and absent items. The findings that shape the port:
+
+- The macOS 27 SDK has no `SOCK_CLOEXEC`, `SOCK_NONBLOCK` or `accept4`, so
+  the socket constructors set `FD_CLOEXEC` and `O_NONBLOCK` with `fcntl`
+  after creation and name the fork race (decision 3(a)). XNU copies a
+  listener's `O_NONBLOCK` to accepted sockets; the facade clears it unless
+  `NONBLOCK` is requested, keeping Linux's contract.
+- `PreparedExec::spawn` uses `posix_spawn` with
+  `POSIX_SPAWN_CLOEXEC_DEFAULT`, so a child receives only its open standard
+  descriptors and `Dup2` targets. `posix_spawn` reports setup and exec
+  failures directly; XNU tears down the transient child of a failed spawn
+  without it becoming reapable. The CRAB-2 `Child` ownership contract is
+  unchanged.
+- XNU rejects `SO_ACCEPTCONN` in `getsockopt`, normalizes an overflowing
+  `futimens` nanosecond count, caps interval timers at 100,000,000 seconds,
+  and rejects a `sigaltstack` disable request smaller than `MINSIGSTKSZ`.
+  The last would make a queried disabled stack impossible to restore, so the
+  wrapper passes `MINSIGSTKSZ` for disable requests, whose size POSIX
+  ignores.
+- macOS's stock `/etc/services` lists `ddp` and `divert` entries that the
+  strict `netdb` grammar rejects, and macOS resolves names through Open
+  Directory and mDNSResponder, so the `from_system` loaders are absent.
+
+D2 changes shared `crabc-rs` sources only by compile-time gates, `os`
+aliases for seams both backends provide, and documentation. The rustdoc JSON
+public-API comparison against `70802121a` drops docs, spans, numeric IDs and
+`#[cfg]` traces and finds 0 differing items in each of 16,235, 13,570,
+16,265 and 13,578 items for `aarch64-unknown-linux-musl` and
+`x86_64-unknown-linux-musl` with and without default features. Linux
+`cargo check` warnings are identical to the base. The gate passed with these
+commands:
+
+```sh
+cargo check -q -p crabc-rs --target aarch64-apple-darwin
+cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features
+cargo check -q -p crabc-rs --target aarch64-apple-darwin --no-default-features --features alloc
+cargo test -p crabc-rs --target aarch64-apple-darwin
+cargo check -p crabc-rs --target x86_64-unknown-linux-musl
+scripts/lanes/orb-vm-run.sh scripts/lanes/rust-check.sh cargo test -q --locked -p crabc-rs --target aarch64-unknown-linux-musl --no-fail-fast
 ```
 
 ## Open questions

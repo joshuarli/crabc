@@ -65,7 +65,9 @@ Rust application
   libSystem function, record and constant the backend calls. Every record has
   size, alignment and field-offset assertions from the macOS 27 SDK. `fcntl`,
   `ioctl` and `openat` are declared variadic because Apple's AArch64 ABI
-  passes variadic arguments on the stack.
+  passes variadic arguments on the stack. The `posix_spawn` family,
+  `pthread_sigmask` and `pthread_kill` return an error number instead of
+  setting `errno`.
 - **Errors.** libSystem reports failures only through thread-local `errno`.
   Each Darwin wrapper reads it through `__error()` immediately after the
   failing call, before any other call can overwrite it, and returns it as the
@@ -74,18 +76,36 @@ Rust application
   names; Linux-only names are absent and Darwin-only names are added.
 - **Types.** A public type stays in common code only when its representation
   is the same on both targets, as for `BorrowedFd`, `OwnedFd`, `IoSlice`,
-  `PathArg`, `Mode`, `FileType`, `Timespec` and `NamedTempFile`. A type that
-  holds OS values, such as `Errno`, `OFlags`, the `*AtFlags` types,
-  `PipeFlags`, `DupFlags`, `Stat` and `Dir`, has a Darwin definition built
-  from `darwin/sys.rs` constants. Nothing translates Linux values at run
-  time, and the backend is chosen only at compile time.
+  `PathArg`, `Mode`, `FileType`, both `Timespec` types, `NamedTempFile`,
+  `Pid`, `Uid`, `Gid`, `Rlimit`, `ResourceUsage`, `SigHandler`,
+  `IntervalTimerKind`, `SocketType`, `IpAddress` and `SocketAddress`. A type
+  that holds OS values, such as `Errno`, `OFlags`, the `*AtFlags` types,
+  `PipeFlags`, `DupFlags`, `Stat`, `Dir`, `Signal`, `SignalSet`, `SigAction`,
+  `WaitStatus`, `Resource`, `ClockId`, `AddressFamily` and the socket flag
+  types, has a Darwin definition built from `darwin/sys.rs` constants.
+  Nothing translates Linux values at run time, and the backend is chosen only
+  at compile time.
+- **Shared bodies.** Where a Linux operation is a single call into
+  `crabc-core` that libSystem can provide with the same shape, the facade
+  module imports either `crabc_core::<module>` or `darwin::<module>` as `os`
+  and keeps one body, as `getpid`, `kill_process`, `getcwd`, `listen`,
+  `send` and `recvmsg` do. Operations whose records, values or failure
+  reporting differ, such as `PreparedExec::spawn`, `getrlimit`,
+  `getpriority`, `sigaction`, `clock_gettime` and the socket constructors,
+  have separate Darwin implementations.
 - **Close-on-exec.** macOS 27 provides `O_CLOEXEC`, `F_DUPFD_CLOEXEC`,
-  `pipe2` and `dup3`, so every descriptor the ported modules create gets
-  close-on-exec atomically, and no ported type has a fork race. Darwin still
-  lacks `SOCK_CLOEXEC` and `accept4`. When `net` is ported, its constructors
-  set `FD_CLOEXEC` right after creation and name the race between creation
-  and that call in each affected type's documentation. `Dir` errs the other
-  way: libSystem's `fdopendir` sets `FD_CLOEXEC` on the descriptor it adopts.
+  `pipe2` and `dup3`, so the `fd`, `io`, `fs` and `pipe` constructors set
+  close-on-exec atomically. The macOS 27 SDK still has no `SOCK_CLOEXEC`,
+  `SOCK_NONBLOCK` or `accept4`, so `net::socket`, `socketpair`, `accept_with`
+  and `acceptfrom_with` create the descriptor and then set the requested
+  `SocketFlags` with `fcntl`, as decision 3(a) of CRAB-7 chooses. A `fork` on
+  another thread between creation and that call gives its child a copy
+  without close-on-exec, which survives the child's `exec`; `SocketFlags::CLOEXEC`
+  and each of those constructors name this race. `process::PreparedExec`
+  children are immune to it: `posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT`
+  closes every descriptor that is not a standard stream or a `Dup2` target.
+  `Dir` errs the other way: libSystem's `fdopendir` sets `FD_CLOEXEC` on the
+  descriptor it adopts.
 - **Source compatibility.** A ported module keeps the Linux public names and
   signatures of everything it ports. The examples that use only ported
   modules build for both targets.
@@ -96,14 +116,30 @@ Rust application
 | `fd` | Ported | `AT_FDCWD` is `-2`; closing calls libSystem `close` |
 | `io` | Ported | No `ReadWriteFlags`, `preadv2`, `pwritev2` or `sync_file_range`; a vectored call with no segments fails with `EINVAL` |
 | `pipe` | Ported | `pipe2`; `PIPE_BUF` is 512; no packet mode or splice family |
-| `fs` | Ported subset | The module documentation lists the absent items and behavior differences |
+| `fs` | Ported subset | The module documentation lists the absent items and behavior differences; D2 adds the ownership family (`fchown`, `chownat`, `chown`, `lchown`) |
+| `process` | Ported subset | `posix_spawn` children with the CRAB-2 `Child` contract unchanged; no `fork_raw`, `pidfd_open`, `getrlimit_for`, filesystem IDs, saved-ID triples or `kernel_brk` |
+| `signal` | Ported subset | Darwin numbers and 32-bit `sigset_t`; masks, actions, alternate stacks, `sigsuspend`, `raise`; no realtime signals, `sigwaitinfo`, `sigqueue`, thread-ID delivery or signal descriptors |
+| `time` | Ported subset | Darwin clocks, `nanosleep`, interval timers, UTC calendar; no `clock_nanosleep`, CPU or descriptor clocks, POSIX timers, timer descriptors or `LocalCalendar` |
+| `rand` | Ported subset | `getentropy`, `RandomState`; no `getrandom` |
+| `net` | Ported subset | Sockets, addresses and messages with `sa_len`; flags set after creation; no `accept4`, batched messages, `netdevice` or four Linux socket options |
+| `netdb` | Ported subset | `from_bytes` parsers; no `from_system` loaders |
 | All other modules | Absent | Using one is a compile-time error; `users` and `resolver` stay absent through D3 |
+
+Each module's documentation lists its Darwin behavior differences and
+absent items with the reason for each.
 
 The `crabc-rs/tests/` crates for the ported modules run natively on macOS.
 Linux-only assertions sit behind `cfg(target_os = "linux")`. A Darwin
 counterpart exists only where the behavior differs: APFS UTF-8 names, empty
 vectored calls, a zero-length `readlinkat` buffer, `chmodat` on a link, the
-unused directory buffer, sparse-seek errors and `pipe2` flags.
+unused directory buffer, sparse-seek errors and `pipe2` flags; and, from D2,
+Darwin signal, clock, resource and scheduler values, the BSD directory group
+of new files, `/private/tmp`, privileged `chroot`, `futimens` normalization,
+the interval-timer cap, datagram truncation counts, accepted-socket
+`O_NONBLOCK`, `posix_spawn` descriptor inheritance and failure teardown, and
+signal delivery and waits that Linux observes through `/proc`, `signalfd` or
+`sigqueue`. Tests that need a raw wait, thread-directed signal or identity
+oracle declare the one libSystem function they use or run `/usr/bin/id`.
 `compat/crabc-rs/coverage.toml` has no Darwin column. It is a frozen D25
 input whose SHA-256 `compat/x86_64/aarch64_frozen_baseline.json` pins, so a
 schema change would be rejected.
