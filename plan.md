@@ -175,8 +175,14 @@ baseline). The next run at `6b0f6e5f9` passed 61 steps and found a real
 runtime defect: AArch64 `__divtc3` called compiler_builtins' Rust-ABI
 `__rust_divtc3` as C, crashing complex `long double` division
 (`ae60e0f8b`), plus two stale compiler-helper reader checks (`b24656ac5`,
-`e367a4188`). Candidate 3 runs at `e367a4188` in the VM clone's
-`.work/wt/arm-cand3` (log `.work/wt/arm-cand3-run.log`).
+`e367a4188`). Candidate 3 at `e367a4188` passed 56 steps and stopped at
+`abi-evidence` (step 57): `static_archive.extra` +475/-494, every name an
+`anon.<hash>.<n>` constant and no named export changed. Those hashes change
+with any product-source change, so the arm roster recollected at an earlier
+product can never match a later one. Next: make the arm check compare the
+anonymous roster by count or drop it, as it already ignores `_R` names and
+LLVM suffixes, instead of re-collecting per candidate; then start a fresh
+candidate at main.
 
 Allocator M2 on AArch64: all eight components run natively with no C/Rust
 mismatch; bitmaps and recursion are complete (`f9d27ec12`). `0dbeffd7e` closed
