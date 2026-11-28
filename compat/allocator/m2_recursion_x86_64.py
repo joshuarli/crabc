@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pinned C/Rust recursive diagnostic-output evidence for native x86-64 M2.
+"""Pinned C/Rust recursive diagnostic-output evidence for native M2 on x86-64 and AArch64.
 
 The allocator-recursion component's `recursive-diagnostic-output` row is the
 pinned `src/options.c` `_mi_fputs`/`mi_vfprintf`/`_mi_warning_message` reentry
@@ -35,23 +35,28 @@ def _m7_gate(harness: Any) -> Any:
 
 def run_evidence(
     harness: Any, *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Compare the pinned C options oracle with the prebuilt Rust trace."""
 
-    harness.require_native_x86_64()
+    harness.require_native_evidence(architecture)
+    label = "x86" if architecture == "x86_64" else architecture
     if check.get("id") != CHECK_ID or check.get("target") != TARGET:
-        raise harness.HarnessError("native x86 recursive-output check changed")
+        raise harness.HarnessError(f"native {label} recursive-output check changed")
     gate = _m7_gate(harness)
     if gate.OPTIONS_RUST_TEST != TARGET:
-        raise harness.HarnessError("native x86 recursive-output target no longer names M7's options trace")
+        raise harness.HarnessError(f"native {label} recursive-output target no longer names M7's options trace")
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    with harness.temporary_directory("crabc-mimalloc-x86_64-m2-recursion-") as name:
+    with harness.temporary_directory(f"crabc-mimalloc-{architecture}-m2-recursion-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        c_execution = gate.c_oracle_trace(gate.OPTIONS_ORACLE, "options", source, temporary)
+        c_execution = gate.c_oracle_trace(
+            gate.OPTIONS_ORACLE, "options", source, temporary,
+            **({} if architecture == "x86_64" else {"architecture": architecture}),
+        )
     rust, rust_output = harness._x86_64_run_exact_program_check(
-        test_program, check, nocapture=True, gate_name="native x86 M2 recursive output",
+        test_program, check, nocapture=True, gate_name=f"native {label} M2 recursive output",
     )
     c_trace = gate.parse_options_trace(
         str(c_execution["stdout"]), "pinned C options trace",
@@ -73,7 +78,7 @@ def run_evidence(
         "rust_passed_test_count": rust["passed_test_count"],
         "status": "passed",
     }
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-recursive-output"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-recursive-output"
     artifacts.mkdir(parents=True, exist_ok=True)
     harness.write_json(artifacts / "evidence.json", evidence)
     return evidence

@@ -923,9 +923,13 @@ def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, 
 
 def c_oracle_trace(
     oracle: Path, subject: str, source: Path, temporary: Path, environment: Mapping[str, str] | None = None,
-    compile_defines: Sequence[str] = (), retain_products: bool = False,
+    compile_defines: Sequence[str] = (), retain_products: bool = False, architecture: str = "x86_64",
 ) -> dict[str, Any]:
-    """Build and run one pinned-C probe against the release configuration."""
+    """Build and run one pinned-C probe against the release configuration.
+
+    The M2 recursive-output producer also builds the options probe natively
+    on AArch64; every M7 caller keeps the x86-64 identity.
+    """
 
     binary = temporary / f"m7-{subject}-c"
     build = harness.command_record(
@@ -940,7 +944,7 @@ def c_oracle_trace(
     harness.require_success(build, f"M7 {subject} C build")
     header = harness.command_record((harness.require_tool("readelf"), "-h", str(binary)), cwd=source)
     harness.require_success(header, f"M7 {subject} C ELF identity")
-    harness.parse_elf_identity(str(header["stdout"]), "x86_64")
+    harness.parse_elf_identity(str(header["stdout"]), architecture)
     if retain_products:
         product = ARTIFACTS / "option-profile-products" / binary.name
         product.parent.mkdir(parents=True, exist_ok=True)

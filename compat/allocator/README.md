@@ -74,9 +74,12 @@ python3 scripts/test_python.py --module compat/allocator/tests/test_x86_64_runne
 On native AArch64 Linux, `image`, `allocator-unit`, `allocator-native-integration`,
 `allocator-m1`, `allocator-m1-read`, and `allocator-m2` use `.work/allocator-aarch64` and the
 private arm64 image. The M1 reader replays the retained native witnesses;
-`allocator-m2` runs the [AArch64 VM](#aarch64-vm-component),
+`allocator-m2` runs all eight AArch64 M2 components: the
+[VM](#aarch64-vm-component),
+[metadata, bitmap and allocator-recursion](#aarch64-metadata-bitmap-and-allocator-recursion-components),
 [page-map](#aarch64-page-map-component),
-[arenas](#aarch64-arenas-component) and
+[arenas](#aarch64-arenas-component),
+[initialization](#aarch64-initialization-component) and
 [fault-injection](#aarch64-fault-injection-component) components.
 The arm64 image pins Alpine 3.24.1's arm64 manifest
 `sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18`.
@@ -316,18 +319,18 @@ diagnostics, or an allocator/runtime caller.
 
 ### AArch64 VM component
 
-`m2-memory-substrate-aarch64-v3.5.0.json` names the same eight components.
-`vm-primitives`, [`page-map`](#aarch64-page-map-component),
-[`arenas`](#aarch64-arenas-component) and
-[`fault-injection`](#aarch64-fault-injection-component) execute; the VM fragment,
+`m2-memory-substrate-aarch64-v3.5.0.json` names the same eight components,
+and each one references its own AArch64 fragment; no x86 status is imported.
+The VM fragment,
 `m2-vm-aarch64-v3.5.0.fragment.json`, keeps the x86 fragment's schema, check
 inventory, bounded source definitions and branch matrix, so the same producer
 (`m2_vm_x86_64.py`) and receivers run natively in the arm64 VM. Each receiver
 takes its architecture from the launcher's `CRABC_ALLOCATOR_EVIDENCE_ARCH`, so
 its artifacts land under `target/compat/allocator/aarch64/` and its Rust test
-binary is the `aarch64-unknown-linux-musl` build. The other four components are
-`not-executed` records that import no x86 status, so the report stays partial
-and exits 3. The report is `reports/allocator/aarch64/m2-memory-substrate-latest.json`.
+binary is the `aarch64-unknown-linux-musl` build. Bitmaps and
+allocator-recursion are complete on arm; the other six components keep
+remaining conditions, so the report stays partial and exits 3. The report is
+`reports/allocator/aarch64/m2-memory-substrate-latest.json`.
 
 The AArch64 fragment's text names only evidence this gate executes. Coverage
 that the x86 record takes from its PageMap, arenas and fault-injection
@@ -412,6 +415,63 @@ component stays partial: the x86 conditions on unselected callers,
 diagnostics and detection remain, the VM has no hugetlbfs pool or NUMA nodes,
 and 16 KiB and 64 KiB hosts need their own runs. The x86 fault fragment is
 unchanged.
+
+### AArch64 metadata, bitmap and allocator-recursion components
+
+Each component keeps the x86 record's checks, bounded source definitions and
+failure rows in its own AArch64 fragment; `allocator-m2` runs every check
+against the aggregate's `aarch64-unknown-linux-musl` test binary and refuses
+a receipt from any other product.
+
+- `m2-bitmaps-aarch64-v3.5.0.fragment.json` is complete. The
+  `m2_bitmaps_x86_64.py` producer compares the 138,976 ordered scalar
+  observations with the pinned C fixture; the arm transcript has the x86
+  digest, because the scalar `MI_OPT_SIMD=0` profile is target independent.
+  The `MI_ARCH_ARM64` NEON searches (`src/bitmap.c:675-699`, `943-949`,
+  `968-974`) stay outside that profile, and `mi-opt-simd` refuses AArch64 at
+  compile time.
+- `m2-allocator-recursion-aarch64-v3.5.0.fragment.json` is complete. The
+  `m2_recursion_x86_64.py` producer builds M7's options oracle natively
+  (`c_oracle_trace` takes the target for its ELF check) and compares all 660
+  keys, including the three recursive-callback scenarios.
+- `m2-metadata-aarch64-v3.5.0.fragment.json` records the x86 failure rows as
+  qualified branch rows. The embedded lifecycle trace and
+  `m2_metadata_ownership_x86_64.py` matched pinned C (5 and 65 values). The
+  component stays partial only for 16 KiB and 64 KiB base pages: the
+  ownership trace's committed and reserved deltas are fixed to the VM's
+  4 KiB geometry.
+
+### AArch64 initialization component
+
+`m2-initialization-aarch64-v3.5.0.fragment.json` runs the x86 fragment's
+thirteen checks in the arenas fragment's partial-fragment schema. It keeps the
+fourteen x86 source definitions and adds the process-init once body
+(`src/init.c:537-592`), the pthread-key setup and destructor
+(`src/init.c:442-446`, `src/prim/unix/prim.c:1011-1040`), process done
+(`src/init.c:596-657`) and the exclusive-arena Theap slice
+(`src/theap.c:308-355`), so every check is bound to a source definition and a
+branch row. The fork-repair row names its owners honestly: pinned v3.5.0 has
+no fork transition.
+
+The producers take their target from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a direct
+invocation keeps the x86 paths, messages, probes and schemas byte for byte.
+On arm they read `aarch64-init-recursion-evidence-v3.5.0.json` and the three
+`aarch64-*-pthread-*-evidence-v3.5.0.json` teardown schemas, whose embedded C
+probes differ from x86 only in the native-target guard; the startup-entry
+probe's raw-syscall seam uses the AArch64 `svc #0` convention. The TLD matrix
+(seven rows), explicit worker recovery with startup entry, startup output and
+repeated process initialization, the process-body and loader-tail once
+boundaries, the three pinned-C teardown receipts, the five Rust teardown and
+fork-repair owners, the exclusive-arena Theap slice and the later-TLD fault
+retry all matched natively on AArch64.
+
+The component stays partial: Rust compares later-main post-state, not the C
+fixtures' source order; installed-product startup, thread exit,
+cancellation, `.fini_array` process done and fork through crabc libc are
+runtime-lane evidence; general callback timing is not inferred; and 16 KiB
+and 64 KiB hosts need their own runs. The x86 initialization fragment is
+unchanged. `x86_64_m2_concurrent_init.c` now admits either native target, so
+the x86 concurrent-init receipt must be re-run natively in the x86 phase.
 
 ### AArch64 arenas component
 

@@ -12,8 +12,8 @@
 #include <sched.h>
 #include <time.h>
 
-#if !defined(__linux__) || !defined(__x86_64__)
-#error this fixture requires native Linux x86-64
+#if !defined(__linux__) || !(defined(__x86_64__) || defined(__aarch64__))
+#error this fixture requires native Linux x86-64 or AArch64
 #endif
 #if MI_BUILD_RELEASE != 1 || MI_DEBUG != 0 || MI_STAT != 0 || MI_SECURE != 0 || MI_GUARDED != 0
 #error this fixture requires the fixed release profile

@@ -7,18 +7,16 @@
       "id": "vm-primitives"
     },
     {
-      "id": "metadata",
-      "native_status": "not-executed",
-      "remaining_conditions": [
-        "Native AArch64 metadata allocation, publication and ownership C/Rust evidence has not been produced; the x86-64 component record is not AArch64 evidence."
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-metadata-aarch64-v3.5.0.fragment.json"
+      },
+      "id": "metadata"
     },
     {
-      "id": "bitmaps",
-      "native_status": "not-executed",
-      "remaining_conditions": [
-        "The AArch64 bitmap C/Rust differential has run outside this gate, but no AArch64 bitmap component fragment or aggregate receipt exists yet; the x86-64 fragment is not AArch64 evidence."
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-bitmaps-aarch64-v3.5.0.fragment.json"
+      },
+      "id": "bitmaps"
     },
     {
       "evidence_fragment": {
@@ -33,11 +31,10 @@
       "id": "arenas"
     },
     {
-      "id": "initialization",
-      "native_status": "not-executed",
-      "remaining_conditions": [
-        "Native AArch64 initialization TLD, recursion, teardown and fork-repair evidence has not been produced; the x86-64 fragment is not AArch64 evidence."
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-initialization-aarch64-v3.5.0.fragment.json"
+      },
+      "id": "initialization"
     },
     {
       "evidence_fragment": {
@@ -46,11 +43,10 @@
       "id": "fault-injection"
     },
     {
-      "id": "allocator-recursion",
-      "native_status": "not-executed",
-      "remaining_conditions": [
-        "Native AArch64 recursive diagnostic-output C/Rust evidence has not been produced; the x86-64 component record is not AArch64 evidence."
-      ]
+      "evidence_fragment": {
+        "path": "compat/allocator/m2-allocator-recursion-aarch64-v3.5.0.fragment.json"
+      },
+      "id": "allocator-recursion"
     }
   ],
   "exclusions": [
@@ -84,7 +80,6 @@
     "id": "m2",
     "nonclaims": [
       "No x86-64 report, fragment or component status is native AArch64 evidence.",
-      "Components recorded as not-executed have no AArch64 evidence in this gate.",
       "Executed AArch64 evidence covers the qualifying VM's 4 KiB base-page geometry; 16 KiB and 64 KiB hosts need their own native runs.",
       "No public allocator backend, general allocation path, or complete statistics subsystem is claimed."
     ],

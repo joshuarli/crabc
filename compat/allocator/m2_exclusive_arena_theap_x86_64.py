@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pinned C/Rust native x86-64 exclusive-arena Theap slice differential.
+"""Pinned C/Rust native exclusive-arena Theap slice differential for x86-64 and AArch64.
 
 `m2_metadata_arena_x86_64.c` drives pinned `mi_heap_new_in_arena`: the
 Heap's first allocation makes `_mi_theap_alloc` claim the Theap slice from
@@ -49,14 +49,16 @@ def parse_trace(output: str, *, source: str) -> dict[str, int]:
 
 def run_evidence(
     harness: Any, *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(architecture)
+    label = "x86" if architecture == "x86_64" else architecture
     if check.get("id") != CHECK_ID or check.get("target") != TARGET:
-        raise harness.HarnessError("native x86 exclusive-arena Theap check changed")
+        raise harness.HarnessError(f"native {label} exclusive-arena Theap check changed")
     fixture = harness.ALLOCATOR_ROOT / FIXTURE_NAME
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-exclusive-arena-theap"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-exclusive-arena-theap"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "oracle"
     with harness.temporary_directory(prefix="crabc-mimalloc-m2-exclusive-arena-theap-") as directory:
@@ -79,11 +81,11 @@ def run_evidence(
     try:
         c_trace = parse_trace(str(run["stdout"]), source="pinned C")
         rust, output = harness._x86_64_run_exact_program_check(
-            test_program, check, nocapture=True, gate_name="native x86 M2 exclusive-arena Theap",
+            test_program, check, nocapture=True, gate_name=f"native {label} M2 exclusive-arena Theap",
         )
         _, exhausted_output = harness._x86_64_run_exact_program_check(
             test_program, exhausted_check, nocapture=True,
-            gate_name="native x86 M2 exclusive-arena Theap exhaustion",
+            gate_name=f"native {label} M2 exclusive-arena Theap exhaustion",
         )
         rust_trace = parse_trace(output + "\n" + exhausted_output, source="Rust")
     except ValueError as error:
@@ -91,7 +93,7 @@ def run_evidence(
     if c_trace != rust_trace:
         different = sorted(key for key in KEYS if c_trace[key] != rust_trace[key])
         raise harness.HarnessError(
-            "native x86 exclusive-arena Theap differs from pinned C: "
+            f"native {label} exclusive-arena Theap differs from pinned C: "
             + ", ".join(f"{key} C={c_trace[key]} Rust={rust_trace[key]}" for key in different)
         )
     evidence = {

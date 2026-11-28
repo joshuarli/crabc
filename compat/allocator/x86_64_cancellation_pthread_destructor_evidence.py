@@ -34,8 +34,10 @@ _base = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_base)
 
 
-SCHEMA_PATH = ROOT / "compat/allocator/x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json"
-REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/cancellation-pthread-destructor.json"
+ARCH = _base.ARCH
+ARCH_LABEL = _base.ARCH_LABEL
+SCHEMA_PATH = ROOT / f"compat/allocator/{ARCH}-cancellation-pthread-destructor-evidence-v3.5.0.json"
+REPORT_DEFAULT = ROOT / f"compat/reports/allocator/{ARCH}/cancellation-pthread-destructor.json"
 TRACE_BEGIN = "CRABC_MI_CANCELLATION_PTHREAD_DESTRUCTOR_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_CANCELLATION_PTHREAD_DESTRUCTOR_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
@@ -48,9 +50,9 @@ exactly_matches = _base.exactly_matches
 relative = _base.relative
 
 EXPECTED_TARGET = {
-    "architecture": "x86_64",
+    "architecture": ARCH,
     "endianness": "little",
-    "rust_target": "x86_64-unknown-linux-musl",
+    "rust_target": f"{ARCH}-unknown-linux-musl",
     "system": "linux",
 }
 EXPECTED_UPSTREAM = {
@@ -59,8 +61,8 @@ EXPECTED_UPSTREAM = {
     "version": "3.5.0",
 }
 EXPECTED_ARCHIVE_SHA256 = "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
-EXPECTED_PROFILE = "linux-x86_64-private-c-cancel-testcancel-automatic-pthread-destructor"
-EXPECTED_SCOPE = {
+EXPECTED_PROFILE = f"linux-{ARCH}-private-c-cancel-testcancel-automatic-pthread-destructor"
+EXPECTED_SCOPE = run.target_local_scope({
     "aarch64_status_reused": False,
     "automatic_pthread_destructor_only": True,
     "cancellation_triggered_only": True,
@@ -85,7 +87,7 @@ EXPECTED_SCOPE = {
     "rust_automatic_pthread_destructor_claimed": False,
     "worker_async_cancellation_accepted": False,
     "worker_natural_return_claimed": False,
-}
+}, ARCH)
 EXPECTED_COMPILE_DEFINITIONS = (
     "-DMI_SHARED_LIB",
     "-DMI_SHARED_LIB_EXPORT",
@@ -94,7 +96,7 @@ EXPECTED_COMPILE_DEFINITIONS = (
 EXPECTED_C_ELF = {
     "class": "ELF64",
     "endianness": "little",
-    "machine": "Advanced Micro Devices X86-64",
+    "machine": {"x86_64": "Advanced Micro Devices X86-64", "aarch64": "AArch64"}[ARCH],
 }
 EXPECTED_SOURCE_ANCHORS = (
     ("src/prim/unix/prim.c", 1011, 1040, "eef3c9b9715fec9a271f8a966febe73d3ff3113165c5bc9c930fa46c657aa87a"),
@@ -161,7 +163,7 @@ EXPECTED_TRACE_VALUES = {
 }
 
 
-C_TRACE_PROBE = r'''
+C_TRACE_PROBE = run.target_local_c_probe(r'''
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
 #include "bitmap.h"
@@ -602,7 +604,7 @@ output:
   if (!valid) fprintf(stderr, "cancellation pthread-destructor fixture stopped at stage %d\n", stage);
   return valid ? 0 : 2;
 }
-'''
+''', ARCH)
 
 FORBIDDEN_WORKER_EXIT_CALL = re.compile(r"\b(?:_?mi_thread_done|pthread_exit)\s*\(")
 WORKER_BODY = re.compile(
@@ -685,7 +687,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
     try:
         schema = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise EvidenceError("cannot read x86-64 cancellation pthread-destructor schema") from error
+        raise EvidenceError(f"cannot read {ARCH_LABEL} cancellation pthread-destructor schema") from error
     expected_fields = {
         "c_probe_sha256", "compile_definitions", "format", "profile", "release_flags",
         "release_source_set", "schema", "scope", "source_anchors", "target", "trace", "upstream",
@@ -694,7 +696,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
         raise EvidenceError("cancellation pthread-destructor schema fields drifted")
     if type(schema["format"]) is not int or schema["format"] != 1:
         raise EvidenceError("unsupported cancellation pthread-destructor evidence format")
-    if schema["schema"] != "crabc-mimalloc-x86_64-cancellation-pthread-destructor-evidence":
+    if schema["schema"] != f"crabc-mimalloc-{ARCH}-cancellation-pthread-destructor-evidence":
         raise EvidenceError("unsupported cancellation pthread-destructor evidence schema")
     if schema["profile"] != EXPECTED_PROFILE or not exactly_matches(schema["target"], EXPECTED_TARGET):
         raise EvidenceError("cancellation pthread-destructor target/profile drifted")
@@ -788,7 +790,7 @@ def build_c_trace(
         )
         header = run.command_record((readelf, "-h", str(binary)), cwd=source)
         run.require_success(header, "pinned C cancellation pthread-destructor ELF identity")
-        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        elf = run.parse_elf_identity(str(header["stdout"]), ARCH)
         execution = run.command_record((str(binary),), cwd=source)
         if int(execution["status"]) != 0:
             raise EvidenceError(
@@ -829,7 +831,7 @@ def report_from_results(
     return {
         "c_probe": dict(c_probe),
         "format": 1,
-        "kind": "mimalloc-x86_64-cancellation-pthread-destructor-c-oracle-evidence",
+        "kind": f"mimalloc-{ARCH}-cancellation-pthread-destructor-c-oracle-evidence",
         "profile": schema["profile"],
         "provenance": dict(provenance),
         "scope": schema["scope"],
@@ -852,18 +854,18 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError("cancellation pthread-destructor report schema drifted")
     if type(report["format"]) is not int or report["format"] != 1 or report["status"] != "passed":
         raise EvidenceError("cancellation pthread-destructor report must be a passing format-1 result")
-    if (report["kind"] != "mimalloc-x86_64-cancellation-pthread-destructor-c-oracle-evidence"
+    if (report["kind"] != f"mimalloc-{ARCH}-cancellation-pthread-destructor-c-oracle-evidence"
             or report["profile"] != EXPECTED_PROFILE):
         raise EvidenceError("cancellation pthread-destructor report identity drifted")
     if (not exactly_matches(report["target"], EXPECTED_TARGET)
             or not exactly_matches(report["upstream"], EXPECTED_UPSTREAM)
             or not exactly_matches(report["scope"], EXPECTED_SCOPE)):
         raise EvidenceError("cancellation pthread-destructor report boundary drifted")
-    if not any(exactly_matches(report["provenance"], value) for value in (
-        {"execution_mode": "native", "host_architecture": "x86_64"},
-        {"execution_mode": "native", "host_architecture": "amd64"},
+    if not any(exactly_matches(report["provenance"], value) for value in tuple(
+        {"execution_mode": "native", "host_architecture": host}
+        for host in run.NATIVE_EVIDENCE_HOST_ALIASES[ARCH]
     )):
-        raise EvidenceError("cancellation pthread-destructor report lacks native x86-64 provenance")
+        raise EvidenceError(f"cancellation pthread-destructor report lacks native {ARCH_LABEL} provenance")
     schema = load_schema()
     if not exactly_matches(report["trace"], schema["trace"]):
         raise EvidenceError("cancellation pthread-destructor report trace contract drifted")
@@ -931,10 +933,10 @@ def main() -> int:
     try:
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:
-        print(f"allocator x86-64 cancellation pthread-destructor evidence: FAIL: {error}", file=os.sys.stderr)
+        print(f"allocator {ARCH_LABEL} cancellation pthread-destructor evidence: FAIL: {error}", file=os.sys.stderr)
         return 1
     print(
-        "allocator x86-64 cancellation pthread-destructor evidence: PASS "
+        f"allocator {ARCH_LABEL} cancellation pthread-destructor evidence: PASS "
         f"({len(report['trace']['expected_values'])} logical values; report: {relative(arguments.report)})"
     )
     return 0

@@ -28,8 +28,6 @@ from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
-SCHEMA_PATH = ROOT / "compat/allocator/x86_64-automatic-pthread-destructor-evidence-v3.5.0.json"
-REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/automatic-pthread-destructor.json"
 TRACE_BEGIN = "CRABC_MI_AUTOMATIC_PTHREAD_DESTRUCTOR_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_AUTOMATIC_PTHREAD_DESTRUCTOR_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
@@ -40,15 +38,21 @@ assert spec is not None and spec.loader is not None
 run = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(run)
 
+# The launcher's native evidence architecture; a direct invocation keeps x86-64.
+ARCH = run.native_evidence_architecture()
+ARCH_LABEL = run.NATIVE_EVIDENCE_LABELS[ARCH]
+SCHEMA_PATH = ROOT / f"compat/allocator/{ARCH}-automatic-pthread-destructor-evidence-v3.5.0.json"
+REPORT_DEFAULT = ROOT / f"compat/reports/allocator/{ARCH}/automatic-pthread-destructor.json"
+
 
 class EvidenceError(RuntimeError):
     """The automatic pthread-destructor probe could not prove its boundary."""
 
 
 EXPECTED_TARGET = {
-    "architecture": "x86_64",
+    "architecture": ARCH,
     "endianness": "little",
-    "rust_target": "x86_64-unknown-linux-musl",
+    "rust_target": f"{ARCH}-unknown-linux-musl",
     "system": "linux",
 }
 EXPECTED_UPSTREAM = {
@@ -57,8 +61,8 @@ EXPECTED_UPSTREAM = {
     "version": "3.5.0",
 }
 EXPECTED_ARCHIVE_SHA256 = "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
-EXPECTED_PROFILE = "linux-x86_64-private-c-automatic-pthread-destructor"
-EXPECTED_SCOPE = {
+EXPECTED_PROFILE = f"linux-{ARCH}-private-c-automatic-pthread-destructor"
+EXPECTED_SCOPE = run.target_local_scope({
     "aarch64_status_reused": False,
     "automatic_pthread_destructor_only": True,
     "emulation_accepted": False,
@@ -76,7 +80,7 @@ EXPECTED_SCOPE = {
     "real_pinned_c_automatic_pthread_destructor": True,
     "rust_automatic_pthread_destructor_claimed": False,
     "worker_natural_return_only": True,
-}
+}, ARCH)
 EXPECTED_COMPILE_DEFINITIONS = (
     "-DMI_SHARED_LIB",
     "-DMI_SHARED_LIB_EXPORT",
@@ -85,7 +89,7 @@ EXPECTED_COMPILE_DEFINITIONS = (
 EXPECTED_C_ELF = {
     "class": "ELF64",
     "endianness": "little",
-    "machine": "Advanced Micro Devices X86-64",
+    "machine": {"x86_64": "Advanced Micro Devices X86-64", "aarch64": "AArch64"}[ARCH],
 }
 EXPECTED_SOURCE_ANCHORS = (
     ("src/prim/unix/prim.c", 1011, 1040, "eef3c9b9715fec9a271f8a966febe73d3ff3113165c5bc9c930fa46c657aa87a"),
@@ -143,7 +147,7 @@ EXPECTED_TRACE_VALUES = {
 }
 
 
-C_TRACE_PROBE = r'''
+C_TRACE_PROBE = run.target_local_c_probe(r'''
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
 #include "bitmap.h"
@@ -502,7 +506,7 @@ output:
   if (!valid) fprintf(stderr, "automatic pthread-destructor fixture stopped at stage %d\n", stage);
   return valid ? 0 : 2;
 }
-'''
+''', ARCH)
 
 FORBIDDEN_WORKER_EXIT_CALL = re.compile(r"\b(?:_?mi_thread_done|pthread_exit)\s*\(")
 WORKER_BODY = re.compile(
@@ -568,7 +572,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
     try:
         schema = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise EvidenceError("cannot read x86-64 automatic pthread-destructor schema") from error
+        raise EvidenceError(f"cannot read {ARCH_LABEL} automatic pthread-destructor schema") from error
     expected_fields = {
         "c_probe_sha256", "compile_definitions", "format", "profile", "release_flags",
         "release_source_set", "schema", "scope", "source_anchors", "target", "trace", "upstream",
@@ -577,7 +581,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
         raise EvidenceError("automatic pthread-destructor schema fields drifted")
     if type(schema["format"]) is not int or schema["format"] != 1:
         raise EvidenceError("unsupported automatic pthread-destructor evidence format")
-    if schema["schema"] != "crabc-mimalloc-x86_64-automatic-pthread-destructor-evidence":
+    if schema["schema"] != f"crabc-mimalloc-{ARCH}-automatic-pthread-destructor-evidence":
         raise EvidenceError("unsupported automatic pthread-destructor evidence schema")
     if schema["profile"] != EXPECTED_PROFILE or not exactly_matches(schema["target"], EXPECTED_TARGET):
         raise EvidenceError("automatic pthread-destructor target/profile drifted")
@@ -714,7 +718,7 @@ def build_c_trace(
         run.require_success(run.command_record(command, cwd=source), "pinned C automatic pthread-destructor fixture build")
         header = run.command_record((readelf, "-h", str(binary)), cwd=source)
         run.require_success(header, "pinned C automatic pthread-destructor ELF identity")
-        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        elf = run.parse_elf_identity(str(header["stdout"]), ARCH)
         execution = run.command_record((str(binary),), cwd=source)
         if int(execution["status"]) != 0:
             raise EvidenceError(
@@ -747,7 +751,7 @@ def report_from_results(
     return {
         "c_probe": dict(c_probe),
         "format": 1,
-        "kind": "mimalloc-x86_64-automatic-pthread-destructor-c-oracle-evidence",
+        "kind": f"mimalloc-{ARCH}-automatic-pthread-destructor-c-oracle-evidence",
         "profile": schema["profile"],
         "provenance": dict(provenance),
         "scope": schema["scope"],
@@ -770,17 +774,17 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError("automatic pthread-destructor report schema drifted")
     if type(report["format"]) is not int or report["format"] != 1 or report["status"] != "passed":
         raise EvidenceError("automatic pthread-destructor report must be a passing format-1 result")
-    if report["kind"] != "mimalloc-x86_64-automatic-pthread-destructor-c-oracle-evidence" or report["profile"] != EXPECTED_PROFILE:
+    if report["kind"] != f"mimalloc-{ARCH}-automatic-pthread-destructor-c-oracle-evidence" or report["profile"] != EXPECTED_PROFILE:
         raise EvidenceError("automatic pthread-destructor report identity drifted")
     if (not exactly_matches(report["target"], EXPECTED_TARGET)
             or not exactly_matches(report["upstream"], EXPECTED_UPSTREAM)
             or not exactly_matches(report["scope"], EXPECTED_SCOPE)):
         raise EvidenceError("automatic pthread-destructor report boundary drifted")
-    if not any(exactly_matches(report["provenance"], value) for value in (
-        {"execution_mode": "native", "host_architecture": "x86_64"},
-        {"execution_mode": "native", "host_architecture": "amd64"},
+    if not any(exactly_matches(report["provenance"], value) for value in tuple(
+        {"execution_mode": "native", "host_architecture": host}
+        for host in run.NATIVE_EVIDENCE_HOST_ALIASES[ARCH]
     )):
-        raise EvidenceError("automatic pthread-destructor report lacks native x86-64 provenance")
+        raise EvidenceError(f"automatic pthread-destructor report lacks native {ARCH_LABEL} provenance")
     schema = load_schema()
     if not exactly_matches(report["trace"], schema["trace"]):
         raise EvidenceError("automatic pthread-destructor report trace contract drifted")
@@ -804,10 +808,17 @@ def validate_report(report: Mapping[str, Any]) -> None:
 
 
 def require_native_x86_64() -> dict[str, str]:
+    """Require the launcher's native host for this module's architecture.
+
+    The returned provenance names only the execution mode and host; the
+    aggregate gate attests the image identity separately.
+    """
+
     try:
-        return run.require_native_x86_64()
+        provenance = run.require_native_evidence(ARCH)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
+    return {"execution_mode": provenance["execution_mode"], "host_architecture": provenance["host_architecture"]}
 
 
 def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
@@ -818,7 +829,7 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
         archive = run.fetch_archive(pin, offline)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-x86_64-automatic-pthread-destructor-") as temporary_name:
+    with tempfile.TemporaryDirectory(prefix=f"crabc-mimalloc-{ARCH}-automatic-pthread-destructor-") as temporary_name:
         temporary = Path(temporary_name)
         try:
             source = run.safe_extract(archive, temporary / "source", pin["archive_root"])
@@ -842,10 +853,10 @@ def main() -> int:
     try:
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:
-        print(f"allocator x86-64 automatic pthread-destructor evidence: FAIL: {error}", file=os.sys.stderr)
+        print(f"allocator {ARCH_LABEL} automatic pthread-destructor evidence: FAIL: {error}", file=os.sys.stderr)
         return 1
     print(
-        "allocator x86-64 automatic pthread-destructor evidence: PASS "
+        f"allocator {ARCH_LABEL} automatic pthread-destructor evidence: PASS "
         f"({len(report['trace']['expected_values'])} logical values; report: {relative(arguments.report)})"
     )
     return 0

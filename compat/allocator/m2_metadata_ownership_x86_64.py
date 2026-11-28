@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pinned C/Rust native x86-64 metadata ownership differential.
+"""Pinned C/Rust native metadata ownership differential for x86-64 and AArch64.
 
 `m2_metadata_ownership_x86_64.c` drives the unchanged pinned `src/subproc.c`
 metadata routines through `static.c`;
@@ -52,7 +52,7 @@ def parse_trace(output: str, *, source: str) -> list[int]:
     return values
 
 
-def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
+def compare(c_trace: list[int], rust_trace: list[int], label: str = "x86") -> dict[str, Any]:
     """Require field-for-field equality and name the first divergences."""
 
     if c_trace == rust_trace:
@@ -64,15 +64,15 @@ def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
     ][:16]
     if len(c_trace) != len(rust_trace):
         mismatches.append(f"field count: C={len(c_trace)}, Rust={len(rust_trace)}")
-    raise ValueError("native x86 metadata ownership differs from pinned C: " + "; ".join(mismatches))
+    raise ValueError(f"native {label} metadata ownership differs from pinned C: " + "; ".join(mismatches))
 
 
-def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int]]:
+def run_oracle(harness: Any, *, offline: bool, architecture: str = "x86_64") -> tuple[list[str], list[int]]:
     """Build the fixture against the pinned archive and return its trace."""
 
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-metadata-ownership"
+    artifacts = harness.ARTIFACT_ROOT / architecture / "m2-metadata-ownership"
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "oracle"
     with harness.temporary_directory(prefix="crabc-mimalloc-m2-metadata-ownership-") as directory:
@@ -87,27 +87,30 @@ def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int]]:
             str(FIXTURE), "-Wl,--wrap=pthread_mutex_lock", "-pthread", "-o", str(binary),
         ]
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
-        harness.require_success(build, "pinned C native x86 metadata ownership oracle build")
+        label = "x86" if architecture == "x86_64" else architecture
+        harness.require_success(build, f"pinned C native {label} metadata ownership oracle build")
         run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
-        harness.require_success(run, "pinned C native x86 metadata ownership oracle")
+        harness.require_success(run, f"pinned C native {label} metadata ownership oracle")
     (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
     return command, parse_trace(str(run["stdout"]), source="pinned C")
 
 
 def run_evidence(
     harness: Any, *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the differential against the aggregate gate's prebuilt test binary."""
 
-    harness.require_native_x86_64()
+    harness.require_native_evidence(architecture)
+    label = "x86" if architecture == "x86_64" else architecture
     if check.get("id") != CHECK_ID or check.get("target") != TARGET:
-        raise harness.HarnessError("native x86 metadata ownership check changed")
+        raise harness.HarnessError(f"native {label} metadata ownership check changed")
     try:
-        c_command, c_trace = run_oracle(harness, offline=offline)
+        c_command, c_trace = run_oracle(harness, offline=offline, architecture=architecture)
         rust, rust_output = harness._x86_64_run_exact_program_check(
-            test_program, check, nocapture=True, gate_name="native x86 M2 metadata ownership",
+            test_program, check, nocapture=True, gate_name=f"native {label} M2 metadata ownership",
         )
-        comparison = compare(c_trace, parse_trace(rust_output, source="Rust"))
+        comparison = compare(c_trace, parse_trace(rust_output, source="Rust"), label)
     except ValueError as error:
         raise harness.HarnessError(str(error)) from error
     evidence = {
@@ -121,24 +124,26 @@ def run_evidence(
             json.dumps(c_trace, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
     }
-    harness.write_json(harness.ARTIFACT_ROOT / "x86_64/m2-metadata-ownership/evidence.json", evidence)
+    harness.write_json(harness.ARTIFACT_ROOT / architecture / "m2-metadata-ownership/evidence.json", evidence)
     return evidence
 
 
 def main() -> int:
     import run as harness  # this script's directory is first on sys.path
 
-    harness.require_native_x86_64()
+    architecture = harness.native_evidence_architecture()
+    harness.require_native_evidence(architecture)
     try:
-        _, c_trace = run_oracle(harness, offline=True)
+        _, c_trace = run_oracle(harness, offline=True, architecture=architecture)
         rust = harness.command_record(
             ["python3", "compat/allocator/run_unit_x86_64.py", TARGET],
             cwd=harness.ROOT, timeout_seconds=1800,
         )
         harness.require_success(rust, "Rust metadata ownership trace")
-        artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-metadata-ownership"
+        artifacts = harness.ARTIFACT_ROOT / architecture / "m2-metadata-ownership"
         (artifacts / "rust.log").write_text(str(rust["stdout"]), encoding="utf-8")
-        comparison = compare(c_trace, parse_trace(str(rust["stdout"]), source="Rust"))
+        comparison = compare(c_trace, parse_trace(str(rust["stdout"]), source="Rust"),
+                             "x86" if architecture == "x86_64" else architecture)
     except (ValueError, harness.HarnessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

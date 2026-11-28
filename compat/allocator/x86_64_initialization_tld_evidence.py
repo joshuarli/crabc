@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native x86-64 evidence for seven fixed mimalloc initialization arms.
+"""Native x86-64 or AArch64 evidence for seven fixed mimalloc initialization arms.
 
 This private producer compiles the pinned C direct fixtures for the detached
 static preimage, direct normal TLD initialization, and first-main static TLD
@@ -32,14 +32,23 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
 RECURSION_PATH = ROOT / "compat/allocator/x86_64_init_recursion_evidence.py"
 ONCE_BOUNDARIES_PATH = ROOT / "compat/allocator/x86_64_m2_concurrent_init.py"
-FRAGMENT_PATH = ROOT / "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json"
-REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/initialization-tld-matrix.json"
-TARGET = "x86_64-unknown-linux-musl"
+
+spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
+assert spec is not None and spec.loader is not None
+run = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(run)
+
+# The launcher's native evidence architecture; a direct invocation keeps x86-64.
+ARCH = run.native_evidence_architecture()
+ARCH_LABEL = run.NATIVE_EVIDENCE_LABELS[ARCH]
+FRAGMENT_PATH = ROOT / f"compat/allocator/m2-initialization-{ARCH}-v3.5.0.fragment.json"
+REPORT_DEFAULT = ROOT / f"compat/reports/allocator/{ARCH}/initialization-tld-matrix.json"
+TARGET = f"{ARCH}-unknown-linux-musl"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
-EVIDENCE_KIND = "mimalloc-x86_64-initialization-seven-fixed-tld-and-ordinary-later-main-arms-and-explicit-worker-recovery-evidence"
+EVIDENCE_KIND = f"mimalloc-{ARCH}-initialization-seven-fixed-tld-and-ordinary-later-main-arms-and-explicit-worker-recovery-evidence"
 EVIDENCE_PROFILE = "release-initial-exec-direct-tld-static-normal-first-main-later-tld-and-ordinary-later-main-success-failure-and-explicit-worker-recovery"
-TEMPORARY_PREFIX = "crabc-mimalloc-x86-initialization-tld-"
+TEMPORARY_PREFIX = f"crabc-mimalloc-{'x86' if ARCH == 'x86_64' else ARCH}-initialization-tld-"
 
 INITIALIZATION_TLD_BRANCH_IDS = (
     "detached-static-preimage",
@@ -212,7 +221,7 @@ EXPECTED_REQUIRED_DEFINITIONS = (
     ('void _mi_auto_process_init(void)', 'mi_process_init();', '_mi_options_post_init();'),
     ('bool _mi_atomic_once_enter(mi_atomic_once_t* once)', 'void _mi_atomic_once_release(mi_atomic_once_t* once)', 'mi_atomic_store_release(&once->tid,1)'),
 )
-EXPECTED_SCOPE = {
+EXPECTED_SCOPE = run.target_local_scope({
     "aarch64_status_reused": False,
     "allocator_recursion_completion_claimed": False,
     "automatic_pthread_destructor_claimed": False,
@@ -228,12 +237,8 @@ EXPECTED_SCOPE = {
     "private_engine_evidence_only": True,
     "public_crabc_support": False,
     "rust_failure_rows_c_fault_equivalence_claimed": False,
-}
+}, ARCH)
 
-spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
-assert spec is not None and spec.loader is not None
-run = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(run)
 recursion_spec = importlib.util.spec_from_file_location("crabc_init_recursion", RECURSION_PATH)
 assert recursion_spec is not None and recursion_spec.loader is not None
 recursion = importlib.util.module_from_spec(recursion_spec)
@@ -640,14 +645,14 @@ def source_input_records() -> list[dict[str, str]]:
     paths = {
         "Cargo.lock",
         "compat/allocator/run.py",
-        "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json",
+        relative(FRAGMENT_PATH),
         "compat/allocator/m2_later_main_theap_metadata_failure_x86_64.c",
         "compat/allocator/m2_later_main_theap_publication_success_x86_64.c",
         "compat/allocator/x86_64_initialization_tld_evidence.py",
         "compat/allocator/x86_64_init_recursion_evidence.py",
         "compat/allocator/x86_64_m2_concurrent_init.py",
         "compat/allocator/x86_64_m2_concurrent_init.c",
-        "compat/allocator/x86_64-init-recursion-evidence-v3.5.0.json",
+        relative(recursion.SCHEMA_PATH),
         "compat/upstreams.toml",
         *BRANCH_RUST_SOURCES,
         relative(recursion.RUST_TRACE_SOURCE),
@@ -724,7 +729,24 @@ AUTOMATIC_TEARDOWN_CHECKS = (
 )
 
 
+_EXPECTED_CHECKS = (
+    ("initialization-later-tld-metadata-fault-retry-c-rust-differential", "c-rust-initialization-tld-fault-retry-differential", "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace", 1),
+    ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
+    ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
+    ("initialization-process-once-body-and-loader-tail", "c-rust-process-init-once-boundaries", "x86_64_m2_concurrent_init::process_body_and_loader_tail", 2),
+    *((check_id, kind, target, 1) for check_id, kind, target in AUTOMATIC_TEARDOWN_CHECKS),
+    (
+        "initialization-exclusive-arena-theap-slice-c-rust-differential",
+        "c-rust-exclusive-arena-theap-differential",
+        "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
+        1,
+    ),
+)
+
+
 def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
+    if ARCH != "x86_64":
+        return _load_target_fragment(path)
     try:
         fragment = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -768,19 +790,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         {"required_status": "partial", "unit_id": "thread-local-heap-lifecycle"},
     ]:
         raise EvidenceError("initialization M2 source-map roster changed")
-    expected_checks = (
-        ("initialization-later-tld-metadata-fault-retry-c-rust-differential", "c-rust-initialization-tld-fault-retry-differential", "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace", 1),
-        ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
-        ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
-        ("initialization-process-once-body-and-loader-tail", "c-rust-process-init-once-boundaries", "x86_64_m2_concurrent_init::process_body_and_loader_tail", 2),
-        *((check_id, kind, target, 1) for check_id, kind, target in AUTOMATIC_TEARDOWN_CHECKS),
-        (
-            "initialization-exclusive-arena-theap-slice-c-rust-differential",
-            "c-rust-exclusive-arena-theap-differential",
-            "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
-            1,
-        ),
-    )
+    expected_checks = _EXPECTED_CHECKS
     checks = component.get("checks")
     if not isinstance(checks, list) or [
         (item.get("id"), item.get("kind"), item.get("target"), item.get("expected_passed_test_count"))
@@ -834,6 +844,28 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     return fragment
 
 
+def _load_target_fragment(path: Path) -> dict[str, Any]:
+    """Validate a non-x86 fragment through the aggregate's target-local schema.
+
+    The AArch64 fragment records every check in its own partial-fragment
+    branch matrix; its check roster must equal the x86 inventory this
+    producer executes, so neither target can run a different matrix.
+    """
+
+    try:
+        pin = run.load_pin()
+        run._m2_aarch64_initialization_component(
+            {"id": "initialization", "evidence_fragment": {"path": relative(path)}}, pin,
+        )
+        fragment = json.loads(path.read_text(encoding="utf-8"))
+    except (run.HarnessError, OSError, json.JSONDecodeError) as error:
+        raise EvidenceError(f"{ARCH_LABEL} initialization M2 fragment is invalid: {error}") from error
+    checks = fragment["component"]["checks"]
+    if [check["id"] for check in checks] != [check_id for check_id, _, _, _ in _EXPECTED_CHECKS]:
+        raise EvidenceError(f"{ARCH_LABEL} initialization M2 fixed check roster changed")
+    return fragment
+
+
 def report_from_results(
     *, provenance: Mapping[str, str], before: Mapping[str, Any], after: Mapping[str, Any],
     anchors: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]],
@@ -868,7 +900,7 @@ def report_from_results(
         "source_state_after": dict(after),
         "source_state_before": dict(before),
         "status": "passed",
-        "target": {"architecture": "x86_64", "endianness": "little", "os": "linux", "rust_target": TARGET},
+        "target": {"architecture": ARCH, "endianness": "little", "os": "linux", "rust_target": TARGET},
         "upstream": {"archive_sha256": pin["sha256"], "revision": pin["revision"], "version": pin["version"]},
     }
     validate_report(report)
@@ -886,13 +918,13 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError("initialization evidence identity changed")
     if report.get("scope") != EXPECTED_SCOPE:
         raise EvidenceError("initialization evidence scope changed")
-    if report.get("target") != {"architecture": "x86_64", "endianness": "little", "os": "linux", "rust_target": TARGET}:
+    if report.get("target") != {"architecture": ARCH, "endianness": "little", "os": "linux", "rust_target": TARGET}:
         raise EvidenceError("initialization evidence target changed")
-    if report.get("provenance") not in (
-        {"execution_mode": "native", "host_architecture": "x86_64"},
-        {"execution_mode": "native", "host_architecture": "amd64"},
+    if report.get("provenance") not in tuple(
+        {"execution_mode": "native", "host_architecture": host}
+        for host in run.NATIVE_EVIDENCE_HOST_ALIASES[ARCH]
     ):
-        raise EvidenceError("initialization evidence lacks native x86-64 provenance")
+        raise EvidenceError(f"initialization evidence lacks native {ARCH_LABEL} provenance")
     pin = run.load_pin()
     if report.get("upstream") != {"archive_sha256": pin["sha256"], "revision": pin["revision"], "version": pin["version"]}:
         raise EvidenceError("initialization evidence upstream changed")
@@ -963,7 +995,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
             for language in ("C", "RUST"):
                 raw = boundaries["raw"][f"{prefix}-{language.lower()}"]
                 path = ROOT / raw["path"]
-                if path.resolve().parent != (ROOT / "compat/reports/allocator/x86_64/concurrent-process-init").resolve():
+                if path.resolve().parent != (ROOT / f"compat/reports/allocator/{ARCH}/concurrent-process-init").resolve():
                     raise ValueError("once-boundary raw output escaped its report location")
                 if sha256_file(path) != raw["sha256"]:
                     raise ValueError("once-boundary raw output digest changed")
@@ -996,16 +1028,23 @@ def validate_report(report: Mapping[str, Any]) -> None:
 
 
 def bounded_temporary_directory() -> tempfile.TemporaryDirectory[str]:
-    root = Path(os.environ.get("TMPDIR", ROOT / ".work/allocator-x86_64/tmp"))
+    root = Path(os.environ.get("TMPDIR", ROOT / f".work/allocator-{ARCH}/tmp"))
     root.mkdir(parents=True, exist_ok=True)
     return tempfile.TemporaryDirectory(prefix=TEMPORARY_PREFIX, dir=root)
 
 
 def require_native_x86_64() -> dict[str, str]:
+    """Require the launcher's native host for this module's architecture.
+
+    The returned provenance names only the execution mode and host; the
+    aggregate gate attests the image identity separately.
+    """
+
     try:
-        return run.require_native_x86_64()
+        provenance = run.require_native_evidence(ARCH)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
+    return {"execution_mode": provenance["execution_mode"], "host_architecture": provenance["host_architecture"]}
 
 
 def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
@@ -1034,7 +1073,7 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
         rust_target = temporary / "rust-target"
         try:
             run.build_crabc_mimalloc_lib_tests(
-                cargo, rust_target, description="Rust initialization TLD test build"
+                cargo, rust_target, description="Rust initialization TLD test build", rust_target=TARGET,
             )
         except run.HarnessError as error:
             raise EvidenceError(str(error)) from error
@@ -1081,11 +1120,11 @@ def main() -> int:
     try:
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:
-        print(f"allocator x86-64 initialization TLD evidence: FAIL: {error}", file=os.sys.stderr)
+        print(f"allocator {ARCH_LABEL} initialization TLD evidence: FAIL: {error}", file=os.sys.stderr)
         return 1
     compared = sum(row["comparison"]["compared_value_count"] for row in report["branch_rows"])
     print(
-        "allocator x86-64 initialization TLD evidence: PASS "
+        f"allocator {ARCH_LABEL} initialization TLD evidence: PASS "
         f"({len(report['branch_rows'])} direct C/Rust rows; {compared} values; "
         f"{len(report['init_recursion']['lifecycle_checks'])} retained lifecycle checks; "
         f"{report['init_recursion']['startup_callback']['comparison']['compared_value_count']} "

@@ -47,7 +47,8 @@ counts; every scalar is compared. The lifecycle batch adds the Rust-only
 first-allocation, concurrent-entry, missing-fact, PageMap-failure, and
 startup-output recursion rows for the same boundary.
 
-This is private native Linux/x86-64 evidence for the named source paths. It
+This is private native Linux/x86-64 or Linux/AArch64 evidence for the named
+source paths; `CRABC_ALLOCATOR_EVIDENCE_ARCH` selects the target. It
 does not claim a public allocator API, general callback integration, automatic
 pthread cleanup, process-shutdown parity, or completion of the metadata and
 runtime-owner work outside this source-owner slice.
@@ -68,10 +69,19 @@ from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
-SCHEMA_PATH = ROOT / "compat/allocator/x86_64-init-recursion-evidence-v3.5.0.json"
-REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/init-recursion.json"
+
+spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
+assert spec is not None and spec.loader is not None
+run = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(run)
+
+# The launcher's native evidence architecture; a direct invocation keeps x86-64.
+ARCH = run.native_evidence_architecture()
+ARCH_LABEL = run.NATIVE_EVIDENCE_LABELS[ARCH]
+SCHEMA_PATH = ROOT / f"compat/allocator/{ARCH}-init-recursion-evidence-v3.5.0.json"
+REPORT_DEFAULT = ROOT / f"compat/reports/allocator/{ARCH}/init-recursion.json"
 LOCKFILE = ROOT / "Cargo.lock"
-TARGET = "x86_64-unknown-linux-musl"
+TARGET = f"{ARCH}-unknown-linux-musl"
 RUST_TRACE_SOURCE = ROOT / "crabc-mimalloc/src/main_heap_thread.rs"
 TRACE_FILTER = "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace"
 TRACE_BEGIN = "CRABC_MI_INIT_RECURSION_TRACE_BEGIN"
@@ -99,21 +109,15 @@ STARTUP_ENTRY_RUST_END = "CRABC_MI_STARTUP_ENTRY_RUST_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
 EVIDENCE_LABEL = "init-recursion"
-EVIDENCE_KIND = "mimalloc-x86_64-explicit-init-recursion-and-startup-output-differential-evidence"
-TEMPORARY_PREFIX = "crabc-mimalloc-x86-init-recursion-"
-
-spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
-assert spec is not None and spec.loader is not None
-run = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(run)
-
+EVIDENCE_KIND = f"mimalloc-{ARCH}-explicit-init-recursion-and-startup-output-differential-evidence"
+TEMPORARY_PREFIX = f"crabc-mimalloc-{'x86' if ARCH == 'x86_64' else ARCH}-init-recursion-"
 
 class EvidenceError(RuntimeError):
     """The bounded initialization/recursion differential cannot establish its claim."""
 
 
 EXPECTED_TARGET = {
-    "architecture": "x86_64",
+    "architecture": ARCH,
     "endianness": "little",
     "rust_target": TARGET,
     "system": "linux",
@@ -124,8 +128,8 @@ EXPECTED_UPSTREAM = {
     "version": "3.5.0",
 }
 EXPECTED_ARCHIVE_SHA256 = "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
-EXPECTED_PROFILE = "linux-x86_64-private-explicit-init-recursion-and-startup-output"
-EXPECTED_SCOPE = {
+EXPECTED_PROFILE = f"linux-{ARCH}-private-explicit-init-recursion-and-startup-output"
+EXPECTED_SCOPE = run.target_local_scope({
     "aarch64_status_reused": False,
     "automatic_pthread_destructor_claimed": False,
     "emulation_accepted": False,
@@ -150,7 +154,7 @@ EXPECTED_SCOPE = {
     "startup_output_callback_timing_equivalence_claimed": False,
     "startup_output_callback_general_completion_claimed": False,
     "thread_recovery_after_explicit_teardown_only": True,
-}
+}, ARCH)
 EXPECTED_COMPILE_DEFINITIONS = (
     "-DMI_SHARED_LIB",
     "-DMI_SHARED_LIB_EXPORT",
@@ -160,7 +164,7 @@ EXPECTED_COMPILE_DEFINITIONS = (
 EXPECTED_C_ELF = {
     "class": "ELF64",
     "endianness": "little",
-    "machine": "Advanced Micro Devices X86-64",
+    "machine": {"x86_64": "Advanced Micro Devices X86-64", "aarch64": "AArch64"}[ARCH],
 }
 # Hashes are of the exact upstream line intervals, not of local ports.
 EXPECTED_SOURCE_ANCHORS = (
@@ -293,7 +297,7 @@ EXPECTED_LIFECYCLE_CHECKS = (
 )
 
 
-C_TRACE_PROBE = r'''
+C_TRACE_PROBE = run.target_local_c_probe(r'''
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
 
@@ -383,10 +387,10 @@ done:
   printf("CRABC_MI_INIT_RECURSION_TRACE_END\n");
   return valid ? 0 : 2;
 }
-'''
+''', ARCH)
 
 
-PROCESS_IDEMPOTENCE_C_PROBE = r'''
+PROCESS_IDEMPOTENCE_C_PROBE = run.target_local_c_probe(r'''
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
 
@@ -426,10 +430,10 @@ int main(void) {
   printf("CRABC_MI_PROCESS_INIT_IDEMPOTENCE_C_TRACE_END\n");
   return valid ? 0 : 2;
 }
-'''
+''', ARCH)
 
 
-STARTUP_CALLBACK_C_PROBE = r'''
+STARTUP_CALLBACK_C_PROBE = run.target_local_c_probe(r'''
 #include "mimalloc.h"
 #include "mimalloc/internal.h"
 #include "mimalloc/prim-tls.h"
@@ -526,10 +530,10 @@ int main(void) {
   printf("CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END\n");
   return valid ? 0 : 2;
 }
-'''
+''', ARCH)
 
 
-STARTUP_ENTRY_C_PROBE = r'''
+_X86_64_STARTUP_ENTRY_C_PROBE = r'''
 #define _POSIX_C_SOURCE 200809L
 #include "mimalloc.h"
 #include "mimalloc/internal.h"
@@ -669,6 +673,32 @@ int main(void) {
   return valid ? 0 : 2;
 }
 '''
+# The startup-entry seam forwards every non-getrandom call to the raw kernel
+# entry. Only that entry's register convention is target-specific: AArch64
+# passes the number in x8 and the six arguments in x0-x5 to `svc #0`.
+_AARCH64_RAW_SYSCALL6 = r'''static long raw_syscall6(long number, long a, long b, long c, long d, long e, long f) {
+  register long x8 __asm__("x8") = number;
+  register long x0 __asm__("x0") = a;
+  register long x1 __asm__("x1") = b;
+  register long x2 __asm__("x2") = c;
+  register long x3 __asm__("x3") = d;
+  register long x4 __asm__("x4") = e;
+  register long x5 __asm__("x5") = f;
+  __asm__ volatile ("svc #0"
+                    : "+r"(x0)
+                    : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
+                    : "memory");
+  return x0;
+}'''
+_X86_64_RAW_SYSCALL6 = _X86_64_STARTUP_ENTRY_C_PROBE[
+    _X86_64_STARTUP_ENTRY_C_PROBE.index("static long raw_syscall6("):
+    _X86_64_STARTUP_ENTRY_C_PROBE.index("\n\nlong syscall(long number, ...)")
+]
+STARTUP_ENTRY_C_PROBE = run.target_local_c_probe(
+    _X86_64_STARTUP_ENTRY_C_PROBE if ARCH == "x86_64"
+    else _X86_64_STARTUP_ENTRY_C_PROBE.replace(_X86_64_RAW_SYSCALL6, _AARCH64_RAW_SYSCALL6),
+    ARCH,
+)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -754,7 +784,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
     try:
         schema = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise EvidenceError("cannot read x86-64 init-recursion schema") from error
+        raise EvidenceError(f"cannot read {ARCH_LABEL} init-recursion schema") from error
     expected_fields = {
         "compile_definitions", "format", "profile", "release_flags",
         "release_source_set", "schema", "scope", "source_anchors", "startup_callback", "target",
@@ -764,7 +794,7 @@ def load_schema(path: Path | None = None) -> dict[str, Any]:
         raise EvidenceError("init-recursion schema fields drifted")
     if type(schema["format"]) is not int or schema["format"] != 2:
         raise EvidenceError("unsupported init-recursion evidence format")
-    if schema["schema"] != "crabc-mimalloc-x86_64-init-recursion-evidence":
+    if schema["schema"] != f"crabc-mimalloc-{ARCH}-init-recursion-evidence":
         raise EvidenceError("unsupported init-recursion evidence schema")
     if schema["profile"] != EXPECTED_PROFILE or not exactly_matches(schema["target"], EXPECTED_TARGET):
         raise EvidenceError("init-recursion target/profile drifted")
@@ -1009,7 +1039,7 @@ def build_c_trace(
         run.require_success(run.command_record(command, cwd=source), "pinned C init-recursion fixture build")
         header = run.command_record((readelf, "-h", str(binary)), cwd=source)
         run.require_success(header, "pinned C init-recursion ELF identity")
-        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        elf = run.parse_elf_identity(str(header["stdout"]), ARCH)
         execution = run.command_record((str(binary),), cwd=source)
         if int(execution["status"]) != 0:
             raise EvidenceError(
@@ -1041,7 +1071,7 @@ def build_process_idempotence_c_trace(
         run.require_success(run.command_record(command, cwd=source), "pinned C process-init idempotence fixture build")
         header = run.command_record((readelf, "-h", str(binary)), cwd=source)
         run.require_success(header, "pinned C process-init idempotence ELF identity")
-        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        elf = run.parse_elf_identity(str(header["stdout"]), ARCH)
         execution = run.command_record((str(binary),), cwd=source)
         run.require_success(execution, "pinned C process-init idempotence fixture")
     except run.HarnessError as error:
@@ -1077,7 +1107,7 @@ def build_startup_callback_c_trace(
         )
         header = run.command_record((readelf, "-h", str(binary)), cwd=source)
         run.require_success(header, "pinned C startup-output callback ELF identity")
-        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        elf = run.parse_elf_identity(str(header["stdout"]), ARCH)
         execution = run.command_record((str(binary),), cwd=source)
         if int(execution["status"]) != 0:
             raise EvidenceError(
@@ -1116,7 +1146,7 @@ def build_startup_entry_c_trace(
         )
         header = run.command_record((readelf, "-h", str(binary)), cwd=source)
         run.require_success(header, "pinned C startup-entry ELF identity")
-        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        elf = run.parse_elf_identity(str(header["stdout"]), ARCH)
         execution = run.command_record((str(binary),), cwd=source)
         if int(execution["status"]) != 0:
             raise EvidenceError(
@@ -1155,7 +1185,7 @@ def prebuild_rust_tests(cargo: str, target_dir: Path) -> None:
 
     try:
         run.build_crabc_mimalloc_lib_tests(
-            cargo, target_dir, description="Rust init-recursion test build"
+            cargo, target_dir, description="Rust init-recursion test build", rust_target=TARGET,
         )
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
@@ -1490,11 +1520,9 @@ def validate_report(report: Mapping[str, Any]) -> None:
             or not exactly_matches(report["upstream"], EXPECTED_UPSTREAM)
             or not exactly_matches(report["scope"], EXPECTED_SCOPE)):
         raise EvidenceError("init-recursion report boundary drifted")
-    if not any(exactly_matches(report["provenance"], candidate) for candidate in (
-        {"execution_mode": "native", "host_architecture": "x86_64"},
-        {"execution_mode": "native", "host_architecture": "amd64"},
-    )):
-        raise EvidenceError("init-recursion report lacks native x86-64 provenance")
+    if not any(exactly_matches(report["provenance"], {"execution_mode": "native", "host_architecture": host})
+               for host in run.NATIVE_EVIDENCE_HOST_ALIASES[ARCH]):
+        raise EvidenceError(f"init-recursion report lacks native {ARCH_LABEL} provenance")
     schema = load_schema()
     if not exactly_matches(report["trace"], schema["trace"]):
         raise EvidenceError("init-recursion report trace contract drifted")
@@ -1559,16 +1587,23 @@ def validate_report(report: Mapping[str, Any]) -> None:
 
 def bounded_temporary_directory() -> tempfile.TemporaryDirectory[str]:
     configured = os.environ.get("TMPDIR")
-    temporary_root = Path(configured) if configured else ROOT / ".work/allocator-x86_64/tmp"
+    temporary_root = Path(configured) if configured else ROOT / f".work/allocator-{ARCH}/tmp"
     temporary_root.mkdir(parents=True, exist_ok=True)
     return tempfile.TemporaryDirectory(prefix=TEMPORARY_PREFIX, dir=temporary_root)
 
 
 def require_native_x86_64() -> dict[str, str]:
+    """Require the launcher's native host for this module's architecture.
+
+    The returned provenance names only the execution mode and host; the
+    aggregate gate attests the image identity separately.
+    """
+
     try:
-        return run.require_native_x86_64()
+        provenance = run.require_native_evidence(ARCH)
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
+    return {"execution_mode": provenance["execution_mode"], "host_architecture": provenance["host_architecture"]}
 
 
 def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
@@ -1627,10 +1662,10 @@ def main() -> int:
     try:
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:
-        print(f"allocator x86-64 {EVIDENCE_LABEL} evidence: FAIL: {error}", file=os.sys.stderr)
+        print(f"allocator {ARCH_LABEL} {EVIDENCE_LABEL} evidence: FAIL: {error}", file=os.sys.stderr)
         return 1
     print(
-        f"allocator x86-64 {EVIDENCE_LABEL} evidence: PASS "
+        f"allocator {ARCH_LABEL} {EVIDENCE_LABEL} evidence: PASS "
         f"({report['comparison']['compared_value_count']} worker values; "
         f"{report['startup_callback']['comparison']['compared_value_count']} startup callback values; "
         f"{report['startup_entry']['comparison']['compared_value_count']} startup-entry values; "

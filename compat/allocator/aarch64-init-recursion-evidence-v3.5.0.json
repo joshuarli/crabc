@@ -1,0 +1,202 @@
+{
+  "format": 2,
+  "schema": "crabc-mimalloc-aarch64-init-recursion-evidence",
+  "profile": "linux-aarch64-private-explicit-init-recursion-and-startup-output",
+  "target": {
+    "architecture": "aarch64",
+    "endianness": "little",
+    "rust_target": "aarch64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "x86_64_status_reused": false,
+    "automatic_pthread_destructor_claimed": false,
+    "emulation_accepted": false,
+    "explicit_worker_recovery_route_recorded": true,
+    "failure_and_ownership_matrix_recorded": true,
+    "general_allocator_or_api_claimed": false,
+    "general_constructor_or_callback_integration_claimed": false,
+    "general_process_shutdown_claimed": false,
+    "initial_thread_auto_init_claimed": true,
+    "metadata_completion_claimed": false,
+    "native_linux_aarch64_required": true,
+    "one_current_owner_on_recursive_entry": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_aarch64_libc_or_ldso_support": false,
+    "runtime_lifecycle_callback_parity_claimed": false,
+    "rust_direct_second_mutable_owner_refused": true,
+    "rust_failure_matrix_c_equivalence_claimed": false,
+    "source_startup_output_callback_common_scalars_recorded": true,
+    "startup_entropy_fault_c_equivalence_recorded": true,
+    "startup_entry_first_allocation_and_runtime_tail_recorded": true,
+    "startup_output_callback_general_completion_claimed": false,
+    "startup_output_callback_timing_equivalence_claimed": false,
+    "thread_recovery_after_explicit_teardown_only": true
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1",
+    "-DMI_PRIM_HAS_PROCESS_ATTACH=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "src/prim/prim.c",
+      "start_line": 29,
+      "end_line": 46,
+      "sha256": "6d2be652e1c17c43fc281807cde2f15d8b9ffee28bd294639d8628eceefe3712"
+    },
+    {
+      "member": "src/prim/prim-tls.c",
+      "start_line": 25,
+      "end_line": 34,
+      "sha256": "221a9d4e332edeb6e8f8dfe315d596577f971ff93aba4388249b6a0555ec300a"
+    },
+    {
+      "member": "src/prim/prim-tls.c",
+      "start_line": 211,
+      "end_line": 252,
+      "sha256": "7ae305733f0b7937fd36255b3440b04ff22a29e0a3ebff40ed3a898ae5b99b62"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 305,
+      "end_line": 360,
+      "sha256": "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 377,
+      "end_line": 422,
+      "sha256": "eaa34dbcd2df052853490df70c9f8ed19b481bb9d1363a0bf61331758f2fb165"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 448,
+      "end_line": 481,
+      "sha256": "478b40823b940f620731b48121f6da86b4c288c97b9ddddcd03e915e92b11a25"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 536,
+      "end_line": 592,
+      "sha256": "1f3a0d2b3751b4d3270abe60c46aeef48ef78de91fe1dcfb6d5cc802a5d1480e"
+    },
+    {
+      "member": "src/options.c",
+      "start_line": 302,
+      "end_line": 316,
+      "sha256": "76a7223e1d448ddaba2746d524324c7362a1d179454f0e11b77e8bfa490b6efd"
+    },
+    {
+      "member": "src/options.c",
+      "start_line": 413,
+      "end_line": 428,
+      "sha256": "73511a81539e1030a24f2c89b5a2cb3c94c1d285a6901650699f03947a599d21"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1885,
+      "end_line": 1906,
+      "sha256": "270a2796108460298cddeab922edf4f1ed49b124b5304acd5dbd8af2b937da0d"
+    },
+    {
+      "member": "src/alloc.c",
+      "start_line": 250,
+      "end_line": 258,
+      "sha256": "a76faaec588e332f8d244c9d9ecce34f28ddf7cfb79866831770f1aae962e324"
+    },
+    {
+      "member": "include/mimalloc/internal.h",
+      "start_line": 640,
+      "end_line": 642,
+      "sha256": "f047486d1fc4de3acbc9a77344f42cf419119a3bed8c8e65a9b26a4960e4aefa"
+    }
+  ],
+  "trace": {
+    "begin": "CRABC_MI_INIT_RECURSION_TRACE_BEGIN",
+    "end": "CRABC_MI_INIT_RECURSION_TRACE_END",
+    "expected_values": {
+      "trace.init_recursion.first_default_initialized": 1,
+      "trace.init_recursion.reentrant_entry_preserves_one_owner": 1,
+      "trace.init_recursion.first_teardown_clears_default": 1,
+      "trace.init_recursion.repeated_teardown_keeps_default_empty": 1,
+      "trace.init_recursion.recovery_default_initialized": 1,
+      "trace.init_recursion.final_teardown_clears_default": 1,
+      "trace.init_recursion.valid": 1
+    }
+  },
+  "startup_callback": {
+    "c_trace": {
+      "begin": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_BEGIN",
+      "end": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_TRACE_END",
+      "expected_values": {
+        "trace.startup_output.pre_default_delivery_ignored": 1,
+        "trace.startup_output.default_initialized_on_allocation": 1,
+        "trace.startup_output.oversized_request_refused": 1,
+        "trace.startup_output.valid_client_pattern_survived": 1,
+        "trace.startup_output.startup_reservation_failure_ignored": 1,
+        "trace.startup_output.callback_reentry_suppressed": 1,
+        "trace.startup_output.valid": 1
+      }
+    },
+    "common_trace_keys": [
+      "trace.startup_output.default_initialized_on_allocation",
+      "trace.startup_output.oversized_request_refused",
+      "trace.startup_output.valid_client_pattern_survived",
+      "trace.startup_output.startup_reservation_failure_ignored"
+    ],
+    "rust_trace": {
+      "begin": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_BEGIN",
+      "end": "CRABC_MI_STARTUP_OUTPUT_CALLBACK_RUST_TRACE_END",
+      "expected_values": {
+        "trace.startup_output.default_initialized_on_allocation": 1,
+        "trace.startup_output.oversized_request_refused": 1,
+        "trace.startup_output.valid_client_pattern_survived": 1,
+        "trace.startup_output.startup_reservation_failure_ignored": 1,
+        "trace.startup_output.reserve_zero_outcome_absent": 1,
+        "trace.startup_output.reserve_one_kib_outcome_error": 1,
+        "trace.startup_output.nested_borrow_refused": 1,
+        "trace.startup_output.post_init_callback": 1,
+        "trace.startup_output.later_owner_71_byte_client_released": 1,
+        "trace.startup_output.valid": 1
+      }
+    }
+  }
+}

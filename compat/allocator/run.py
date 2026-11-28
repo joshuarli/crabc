@@ -228,6 +228,10 @@ M2_X86_64_PAGE_MAP_TRACE_ARTIFACT_ROOT = (
 M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "x86_64/m2-memory-substrate/metadata-trace"
 )
+M2_METADATA_TRACE_ARTIFACT_ROOTS = {
+    "x86_64": M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT,
+    "aarch64": ARTIFACT_ROOT / "aarch64/m2-memory-substrate/metadata-trace",
+}
 M2_DETACHED_TLD_STATIC_PREIMAGE_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m2-memory-substrate/detached-tld-static-preimage-trace"
 )
@@ -320,12 +324,17 @@ M2_MEMORY_SUBSTRATE_EXCLUSION_DISPOSITIONS = frozenset(
 M2_X86_64_MEMORY_SUBSTRATE_COMPONENT_STATUSES = frozenset({"partial", "complete"})
 M2_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
 M2_X86_64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-x86_64-v3.5.0.fragment.json"
+M2_AARCH64_BITMAP_FRAGMENT = ALLOCATOR_ROOT / "m2-bitmaps-aarch64-v3.5.0.fragment.json"
+M2_BITMAP_FRAGMENTS = {"x86_64": M2_X86_64_BITMAP_FRAGMENT, "aarch64": M2_AARCH64_BITMAP_FRAGMENT}
 M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 M2_AARCH64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-aarch64-v3.5.0.fragment.json"
 M2_VM_FRAGMENTS = {"x86_64": M2_X86_64_VM_FRAGMENT, "aarch64": M2_AARCH64_VM_FRAGMENT}
 M2_AARCH64_ARENAS_FRAGMENT = ALLOCATOR_ROOT / "m2-arenas-aarch64-v3.5.0.fragment.json"
 M2_AARCH64_PAGE_MAP_FRAGMENT = ALLOCATOR_ROOT / "m2-page-map-aarch64-v3.5.0.fragment.json"
 M2_X86_64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-x86_64-v3.5.0.fragment.json"
+M2_AARCH64_INITIALIZATION_FRAGMENT = ALLOCATOR_ROOT / "m2-initialization-aarch64-v3.5.0.fragment.json"
+M2_AARCH64_METADATA_FRAGMENT = ALLOCATOR_ROOT / "m2-metadata-aarch64-v3.5.0.fragment.json"
+M2_AARCH64_RECURSION_FRAGMENT = ALLOCATOR_ROOT / "m2-allocator-recursion-aarch64-v3.5.0.fragment.json"
 M2_X86_64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
 M2_AARCH64_FAULT_FRAGMENT = ALLOCATOR_ROOT / "m2-fault-seam-inventory-aarch64-v3.5.0.fragment.json"
 M2_FAULT_FRAGMENTS = {"x86_64": M2_X86_64_FAULT_FRAGMENT, "aarch64": M2_AARCH64_FAULT_FRAGMENT}
@@ -413,6 +422,17 @@ M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
         {"unit_id": "process-and-thread-initialization", "required_status": "partial"},
         {"unit_id": "thread-local-heap-lifecycle", "required_status": "partial"},
     ),
+}
+M2_SOURCE_MAP_REFERENCES: Mapping[str, Mapping[str, tuple[dict[str, str], ...]]] = {
+    "x86_64": M2_X86_64_SOURCE_MAP_REFERENCES,
+    "aarch64": {
+        **M2_X86_64_SOURCE_MAP_REFERENCES,
+        "bitmaps": (
+            {"unit_id": "bitmap-algorithms", "required_status": "implemented"},
+            {"unit_id": "bitmap-layout", "required_status": "implemented"},
+            {"unit_id": "aarch64-width-and-bit-operations", "required_status": "implemented"},
+        ),
+    },
 }
 M2_X86_64_PAGE_MAP_BOUNDED_SOURCE_DEFINITION_IDS = (
     "page-map-geometry-and-safe-lookup",
@@ -10382,10 +10402,11 @@ def run_m2_x86_64_metadata_lifecycle_differential(
     artifact_root: Path,
     test_program: Mapping[str, Any],
     check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Compare source allocation/publication/replacement/free with Rust."""
 
-    require_native_x86_64()
+    require_native_evidence(architecture)
     if (
         check not in M2_X86_64_METADATA_CHECKS
         or check["kind"] != "c-rust-metadata-lifecycle-differential"
@@ -10408,7 +10429,7 @@ def run_m2_x86_64_metadata_lifecycle_differential(
         test_program,
         check,
         nocapture=True,
-        gate_name="native x86 M2 metadata lifecycle",
+        gate_name=f"native {'x86' if architecture == 'x86_64' else architecture} M2 metadata lifecycle",
     )
     rust_trace = parse_m2_metadata_lifecycle_trace(rust_output, source="Rust")
     validate_m2_metadata_lifecycle_trace(rust_trace, source="Rust")
@@ -12245,7 +12266,7 @@ def _x86_64_unit_test_program(
 
 
 def build_crabc_mimalloc_lib_tests(
-    cargo: str, target_dir: Path, *, description: str
+    cargo: str, target_dir: Path, *, description: str, rust_target: str = X86_64_RUST_TARGET,
 ) -> dict[str, Any]:
     """Compile the no-default-feature library test binary before timed runs.
 
@@ -12259,7 +12280,7 @@ def build_crabc_mimalloc_lib_tests(
     environment["CARGO_INCREMENTAL"] = "0"
     record = command_record(
         [
-            cargo, "test", "--locked", "--target", X86_64_RUST_TARGET,
+            cargo, "test", "--locked", "--target", rust_target,
             "--target-dir", str(target_dir), "-p", "crabc-mimalloc", "--lib",
             "--no-default-features", "--no-run",
         ],
@@ -13770,26 +13791,32 @@ def _m2_x86_64_partial_failure_matrix(raw_matrix: object, component_id: str) -> 
     return rows
 
 
-def _m2_x86_64_bitmap_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+def _m2_x86_64_bitmap_component(
+    raw_component: Mapping[str, Any], pin: Mapping[str, str], architecture: str = "x86_64",
+) -> dict[str, Any]:
     """Resolve one immutable, target-local component fragment without status inheritance."""
 
-    reference = {"path": relative(M2_X86_64_BITMAP_FRAGMENT)}
+    label = "x86" if architecture == "x86_64" else architecture
+    fragment_path = M2_BITMAP_FRAGMENTS[architecture]
+    reference = {"path": relative(fragment_path)}
     if dict(raw_component) != {"id": "bitmaps", "evidence_fragment": reference}:
-        raise HarnessError("native x86 M2 bitmap fragment reference changed")
-    fragment = read_json(M2_X86_64_BITMAP_FRAGMENT)
+        raise HarnessError(f"native {label} M2 bitmap fragment reference changed")
+    fragment = read_json(fragment_path)
     if (
-        fragment.get("schema") != "crabc-mimalloc-x86_64-m2-component-evidence"
+        fragment.get("schema") != f"crabc-mimalloc-{architecture}-m2-component-evidence"
         or fragment.get("format") != 1
         or fragment.get("upstream") != {
             "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"]
         }
-        or fragment.get("target", {}).get("rust_target") != X86_64_RUST_TARGET
+        or fragment.get("target", {}).get("architecture") != architecture
+        or fragment.get("target", {}).get("rust_target") != f"{architecture}-unknown-linux-musl"
     ):
-        raise HarnessError("native x86 M2 bitmap fragment schema or provenance changed")
+        raise HarnessError(f"native {label} M2 bitmap fragment schema or provenance changed")
     component = dict(fragment["component"])
     component["native_status"] = component.pop("completion_status")
+    width_unit = "x86-64-width-and-bit-operations" if architecture == "x86_64" else f"{architecture}-width-and-bit-operations"
     component["source_map_records"] = [*component["source_map_records"],
-        {"unit_id": "x86-64-width-and-bit-operations", "required_status": "implemented"}]
+        {"unit_id": width_unit, "required_status": "implemented"}]
     component["source_units"] = list(dict.fromkeys(
         definition["source_anchor"]["member"] for definition in component["bounded_source_definitions"]
     ))
@@ -14734,11 +14761,13 @@ def _m2_x86_64_recursion_producer() -> Any:
 
 def _run_m2_x86_64_recursion_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the recursive-output producer against the aggregate's native binary."""
 
     return _m2_x86_64_recursion_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -14957,6 +14986,98 @@ def _m2_x86_64_vm_component(
 
 M2_AARCH64_ARENAS_SOURCE_UNITS = ("src/arena.c", "src/heap.c")
 M2_AARCH64_PAGE_MAP_SOURCE_UNITS = ("include/mimalloc/internal.h", "src/page-map.c")
+M2_AARCH64_INITIALIZATION_SOURCE_UNITS = (
+    "src/init.c", "src/libc.c", "src/heap.c", "src/theap.c", "src/threadlocal.c",
+    "src/prim/prim.c", "src/prim/prim-tls.c",
+)
+M2_AARCH64_METADATA_SOURCE_UNITS = (
+    "src/subproc.c", "src/theap.c", "src/alloc.c", "src/alloc-aligned.c", "src/page.c", "src/arena.c",
+    "src/page-map.c", "src/os.c", "src/init.c", "include/mimalloc/internal.h", "include/mimalloc/atomic.h",
+    "include/mimalloc/types.h",
+)
+M2_AARCH64_RECURSION_SOURCE_UNITS = ("src/init.c", "src/prim/prim.c", "src/options.c")
+# The AArch64 initialization fragment executes the x86 inventory's thirteen
+# checks in the same order; its branch matrix binds each one.
+M2_AARCH64_INITIALIZATION_CHECKS = (
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-later-tld-metadata-fault-retry-c-rust-differential",
+        "kind": "c-rust-initialization-tld-fault-retry-differential",
+        "target": "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 7,
+        "id": "initialization-tld-direct-source-matrix",
+        "kind": "c-rust-initialization-tld-source-matrix",
+        "target": "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-explicit-worker-recovery-lifecycle",
+        "kind": "c-rust-init-recursion-lifecycle",
+        "target": "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 2,
+        "id": "initialization-process-once-body-and-loader-tail",
+        "kind": "c-rust-process-init-once-boundaries",
+        "target": "x86_64_m2_concurrent_init::process_body_and_loader_tail",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-automatic-pthread-destructor-c-oracle",
+        "kind": "c-oracle-teardown-receipt",
+        "target": "x86_64_automatic_pthread_destructor_evidence",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-cancellation-pthread-destructor-c-oracle",
+        "kind": "c-oracle-teardown-receipt",
+        "target": "x86_64_cancellation_pthread_destructor_evidence",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-process-done-pthread-key-c-oracle",
+        "kind": "c-oracle-teardown-receipt",
+        "target": "x86_64_process_done_pthread_key_evidence",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-owner-exit-phases-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::tests::native_later_thread_statistics_follow_source_attach_and_normal_a_b_c_exit",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-process-destroy-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-fork-repair-worker-origin-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::fork_repair_tests::worker_origin_child_repairs_initial_owner_and_preserves_live_clients",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-fork-repair-initial-origin-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::fork_repair_tests::initial_origin_child_repairs_worker_owner_and_preserves_live_clients",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-fork-repair-joined-worker-rust",
+        "kind": "rust-teardown-owner",
+        "target": "runtime_lifecycle::fork_repair_tests::joined_worker_clients_survive_prepared_fork_in_parent_and_child",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "initialization-exclusive-arena-theap-slice-c-rust-differential",
+        "kind": "c-rust-exclusive-arena-theap-differential",
+        "target": "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
+    },
+)
 M2_AARCH64_PARTIAL_BRANCH_DISPOSITIONS = frozenset(
     {"qualified-fixed-profile", "partial-fixed-profile", "unqualified"}
 )
@@ -15083,6 +15204,84 @@ def _m2_aarch64_page_map_component(raw_component: Mapping[str, Any], pin: Mappin
     )
 
 
+def _m2_aarch64_initialization_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Materialize the AArch64 initialization fragment without importing x86 status."""
+
+    return _m2_aarch64_partial_fragment_component(
+        raw_component, pin, component_id="initialization", fragment_path=M2_AARCH64_INITIALIZATION_FRAGMENT,
+        source_units=M2_AARCH64_INITIALIZATION_SOURCE_UNITS, checks=M2_AARCH64_INITIALIZATION_CHECKS,
+        label="initialization",
+    )
+
+
+def _m2_aarch64_metadata_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Materialize the AArch64 metadata fragment without importing x86 status."""
+
+    return _m2_aarch64_partial_fragment_component(
+        raw_component, pin, component_id="metadata", fragment_path=M2_AARCH64_METADATA_FRAGMENT,
+        source_units=M2_AARCH64_METADATA_SOURCE_UNITS, checks=M2_X86_64_METADATA_CHECKS,
+        label="metadata",
+    )
+
+
+def _m2_aarch64_complete_fragment_component(
+    raw_component: Mapping[str, Any], pin: Mapping[str, str], *, component_id: str,
+    fragment_path: Path, source_units: Sequence[str], checks: Sequence[Mapping[str, Any]], label: str,
+) -> dict[str, Any]:
+    """Materialize one complete AArch64 component fragment without importing x86 status.
+
+    The aggregate's complete-component path then requires every check to be
+    named by a bounded source definition and covered by the failure matrix.
+    """
+
+    reference = {"path": relative(fragment_path)}
+    if dict(raw_component) != {"id": component_id, "evidence_fragment": reference}:
+        raise HarnessError(f"native aarch64 M2 {label} fragment reference changed")
+    fragment = read_json(fragment_path)
+    if (
+        set(fragment) != {"component", "format", "schema", "target", "upstream"}
+        or fragment.get("schema") != "crabc-mimalloc-aarch64-m2-component-evidence"
+        or fragment.get("format") != 1
+        or fragment.get("upstream") != {
+            "version": pin["version"], "revision": pin["revision"], "archive_sha256": pin["sha256"],
+        }
+        or fragment.get("target") != {
+            "architecture": "aarch64", "endianness": "little", "kernel_baseline": "5.10",
+            "os": "linux", "rust_target": "aarch64-unknown-linux-musl",
+        }
+    ):
+        raise HarnessError(f"native aarch64 M2 {label} fragment schema or provenance changed")
+    component = fragment.get("component")
+    if not isinstance(component, Mapping) or set(component) != {
+        "bounded_source_definitions", "checks", "completion_status", "failure_matrix", "id",
+        "remaining_conditions", "source_map_records", "source_units",
+    }:
+        raise HarnessError(f"native aarch64 M2 {label} fragment fields changed")
+    if (
+        component.get("id") != component_id
+        or component.get("completion_status") != "complete"
+        or component.get("remaining_conditions") != []
+    ):
+        raise HarnessError(f"native aarch64 M2 {label} fragment must remain the complete {component_id} component")
+    if component.get("source_units") != list(source_units):
+        raise HarnessError(f"native aarch64 M2 {label} fragment source units changed")
+    if component.get("checks") != [dict(check) for check in checks]:
+        raise HarnessError(f"native aarch64 M2 {label} check inventory changed")
+    materialized = dict(component)
+    materialized["native_status"] = materialized.pop("completion_status")
+    return materialized
+
+
+def _m2_aarch64_recursion_component(raw_component: Mapping[str, Any], pin: Mapping[str, str]) -> dict[str, Any]:
+    """Materialize the complete AArch64 allocator-recursion fragment."""
+
+    return _m2_aarch64_complete_fragment_component(
+        raw_component, pin, component_id="allocator-recursion", fragment_path=M2_AARCH64_RECURSION_FRAGMENT,
+        source_units=M2_AARCH64_RECURSION_SOURCE_UNITS, checks=M2_X86_64_RECURSION_CHECKS,
+        label="recursive-output",
+    )
+
+
 def _m2_x86_64_validated_component(
     raw_component: object,
     *,
@@ -15104,10 +15303,19 @@ def _m2_x86_64_validated_component(
         raw_component = _m2_x86_64_vm_component(raw_component, pin, architecture)
     elif component_id == "bitmaps":
         fragment_reference = raw_component.get("evidence_fragment")
-        raw_component = _m2_x86_64_bitmap_component(raw_component, pin)
+        raw_component = _m2_x86_64_bitmap_component(raw_component, pin, architecture)
+    elif component_id == "initialization" and architecture == "aarch64":
+        fragment_reference = raw_component.get("evidence_fragment")
+        raw_component = _m2_aarch64_initialization_component(raw_component, pin)
     elif component_id == "initialization":
         fragment_reference = raw_component.get("evidence_fragment")
         raw_component = _m2_x86_64_initialization_component(raw_component, pin)
+    elif component_id == "metadata" and architecture == "aarch64":
+        fragment_reference = raw_component.get("evidence_fragment")
+        raw_component = _m2_aarch64_metadata_component(raw_component, pin)
+    elif component_id == "allocator-recursion" and architecture == "aarch64":
+        fragment_reference = raw_component.get("evidence_fragment")
+        raw_component = _m2_aarch64_recursion_component(raw_component, pin)
     elif component_id == "fault-injection":
         fragment_reference = raw_component.get("evidence_fragment")
         raw_component = _m2_x86_64_fault_component(raw_component, pin, architecture)
@@ -15163,7 +15371,7 @@ def _m2_x86_64_validated_component(
         or len(set(source_units)) != len(source_units)
     ):
         raise HarnessError(f"native x86 M2 component {component_id} has invalid source units")
-    expected_source_map_records = list(M2_X86_64_SOURCE_MAP_REFERENCES[component_id])
+    expected_source_map_records = list(M2_SOURCE_MAP_REFERENCES[architecture][component_id])
     if raw_component.get("source_map_records") != expected_source_map_records:
         raise HarnessError(
             f"native x86 M2 component {component_id} source-map record inventory changed"
@@ -15873,7 +16081,9 @@ def _m2_x86_64_differential_check_record(
     }
 
 
-def _run_m2_x86_64_bitmap_evidence(*, offline: bool, test_program: Mapping[str, Any]) -> dict[str, Any]:
+def _run_m2_x86_64_bitmap_evidence(
+    *, offline: bool, test_program: Mapping[str, Any], architecture: str = "x86_64",
+) -> dict[str, Any]:
     """Use the aggregate's one build for the complete bitmap producer."""
 
     path = ALLOCATOR_ROOT / "m2_bitmaps_x86_64.py"
@@ -15884,6 +16094,7 @@ def _run_m2_x86_64_bitmap_evidence(*, offline: bool, test_program: Mapping[str, 
     spec.loader.exec_module(producer)
     return producer.run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -15908,11 +16119,13 @@ def _run_m2_x86_64_vm_evidence(
 
 def _run_m2_x86_64_metadata_ownership_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the metadata ownership producer against the aggregate's native binary."""
 
     return _m2_x86_64_metadata_ownership_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -15998,13 +16211,19 @@ def _run_m2_vm_direct_receiver_evidence(
     return results
 
 
-def _run_m2_x86_64_initialization_evidence(*, offline: bool) -> dict[str, Any]:
-    """Run the retained x86 direct-TLD matrix and embedded worker receipt once."""
+def _run_m2_x86_64_initialization_evidence(*, offline: bool, architecture: str = "x86_64") -> dict[str, Any]:
+    """Run the retained direct-TLD matrix and embedded worker receipt once.
+
+    The producer takes its target from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; it
+    must agree with this aggregate's architecture.
+    """
 
     producer = _m2_x86_64_initialization_producer()
+    if producer.ARCH != architecture:
+        raise HarnessError(f"native {architecture} M2 initialization producer targets {producer.ARCH}")
     return producer.run_evidence(
         offline=offline,
-        report_path=ARTIFACT_ROOT / "x86_64/initialization-tld-matrix.json",
+        report_path=ARTIFACT_ROOT / f"{architecture}/initialization-tld-matrix.json",
     )
 
 
@@ -16022,7 +16241,7 @@ def _m2_x86_64_teardown_oracle(module_name: str) -> Any:
 
 
 def _run_m2_x86_64_initialization_teardown_evidence(
-    *, offline: bool, test_program: Mapping[str, Any]
+    *, offline: bool, test_program: Mapping[str, Any], architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the pinned-C teardown receipts and the Rust teardown owners once."""
 
@@ -16032,10 +16251,12 @@ def _run_m2_x86_64_initialization_teardown_evidence(
     for check_id, kind, target in checks:
         if kind == "c-oracle-teardown-receipt":
             producer = _m2_x86_64_teardown_oracle(target)
+            if producer.ARCH != architecture:
+                raise HarnessError(f"native {architecture} M2 teardown producer {target} targets {producer.ARCH}")
             try:
                 c_oracles[check_id] = producer.run_evidence(
                     offline=offline,
-                    report_path=ARTIFACT_ROOT / f"x86_64/m2-memory-substrate/{check_id}.json",
+                    report_path=ARTIFACT_ROOT / f"{architecture}/m2-memory-substrate/{check_id}.json",
                 )
             except producer.EvidenceError as error:
                 raise HarnessError(f"native x86 M2 {check_id} failed: {error}") from error
@@ -17274,9 +17495,14 @@ def _m2_x86_64_arena_direct_check_records(
 
 
 def _m2_x86_64_metadata_check_records(
-    summary: Mapping[str, Any], evidence: object, ownership_evidence: Mapping[str, Any]
+    summary: Mapping[str, Any], evidence: object, ownership_evidence: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> list[dict[str, Any]]:
-    """Bind the lifecycle and ownership differentials to the metadata row."""
+    """Bind the lifecycle and ownership differentials to the metadata row.
+
+    On AArch64 both Rust halves must have run the aggregate's
+    `aarch64-unknown-linux-musl` test product.
+    """
 
     component = next(item for item in summary["components"] if item["id"] == "metadata")
     if component["checks"] != list(M2_X86_64_METADATA_CHECKS):
@@ -17320,7 +17546,7 @@ def _m2_x86_64_metadata_check_records(
         or "-pthread" not in c_command
         or not isinstance(c_artifact, Mapping)
         or c_artifact.get("path")
-        != relative(M2_X86_64_METADATA_TRACE_ARTIFACT_ROOT / "m2-metadata-lifecycle-probe")
+        != relative(M2_METADATA_TRACE_ARTIFACT_ROOTS[architecture] / "m2-metadata-lifecycle-probe")
         or type(c_artifact.get("bytes")) is not int
         or c_artifact.get("bytes", 0) <= 0
         or not isinstance(c_artifact.get("sha256"), str)
@@ -17350,8 +17576,16 @@ def _m2_x86_64_metadata_check_records(
         or not isinstance(rust_command, list)
         or not all(isinstance(argument, str) and argument for argument in rust_command)
         or rust.get("record") != c_oracle.get("record")
+        or (architecture != "x86_64" and not _m2_x86_64_vm_rust_binary_path_is_bound(rust_command[0], architecture))
     ):
         raise HarnessError("native x86 M2 metadata lifecycle evidence is invalid")
+    ownership_command = ownership_evidence.get("rust_command")
+    if architecture != "x86_64" and (
+        not isinstance(ownership_command, list)
+        or not ownership_command
+        or not _m2_x86_64_vm_rust_binary_path_is_bound(ownership_command[0], architecture)
+    ):
+        raise HarnessError(f"native {architecture} M2 metadata ownership receipt did not run the {architecture} test product")
     return [
         {
             "comparison_status": "matched",
@@ -17486,6 +17720,7 @@ def _m2_x86_64_exclusive_arena_theap_producer() -> Any:
 
 def _run_m2_x86_64_exclusive_arena_theap_evidence(
     *, offline: bool, test_program: Mapping[str, Any], summary: Mapping[str, Any],
+    architecture: str = "x86_64",
 ) -> dict[str, Any]:
     """Run the exclusive-arena Theap producer against the aggregate's binary."""
 
@@ -17494,6 +17729,7 @@ def _run_m2_x86_64_exclusive_arena_theap_evidence(
     )
     return _m2_x86_64_exclusive_arena_theap_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
+        **({} if architecture == "x86_64" else {"architecture": architecture}),
     )
 
 
@@ -17633,18 +17869,28 @@ def _m2_x86_64_fault_check_records(
     return results
 
 
-def _m2_x86_64_bitmap_check_records(
-    summary: Mapping[str, Any], evidence: object
-) -> list[dict[str, Any]]:
-    """Validate one actual producer execution before sharing its two evidence rows."""
+# The scalar profile's ordered observations are target independent, so each
+# target's pinned C transcript must be this same sequence.
+M2_BITMAP_TRANSCRIPT_SHA256 = "d0603054a031be77a9b5c047642ec28f111d28a4efa900be7bb7d192fb4a1f49"
 
+
+def _m2_x86_64_bitmap_check_records(
+    summary: Mapping[str, Any], evidence: object, architecture: str = "x86_64",
+) -> list[dict[str, Any]]:
+    """Validate one actual producer execution before sharing its two evidence rows.
+
+    On AArch64 the shared bitmap module run must be the aggregate's
+    `aarch64-unknown-linux-musl` test product.
+    """
+
+    label = "x86" if architecture == "x86_64" else architecture
     component = next(item for item in summary["components"] if item["id"] == "bitmaps")
     pin = load_pin()
     if not isinstance(evidence, Mapping) or (
-        evidence.get("schema") != "crabc-mimalloc-x86_64-m2-bitmaps-evidence"
+        evidence.get("schema") != f"crabc-mimalloc-{architecture}-m2-bitmaps-evidence"
         or type(evidence.get("format")) is not int or evidence.get("format") != 1
         or evidence.get("status") != "passed"
-        or evidence.get("architecture") != "x86_64"
+        or evidence.get("architecture") != architecture
         or evidence.get("profile") != "scalar-release-stat0"
         or evidence.get("upstream") != {
             "revision": pin["revision"], "archive_sha256": pin["sha256"]
@@ -17654,9 +17900,9 @@ def _m2_x86_64_bitmap_check_records(
         or evidence.get("rust_build_reused") is not True
         or type(evidence.get("compared_value_count")) is not int
         or evidence.get("compared_value_count") != 138976
-        or evidence.get("transcript_sha256") != "d0603054a031be77a9b5c047642ec28f111d28a4efa900be7bb7d192fb4a1f49"
+        or evidence.get("transcript_sha256") != M2_BITMAP_TRANSCRIPT_SHA256
     ):
-        raise HarnessError("native x86 M2 bitmap producer result is missing or invalid")
+        raise HarnessError(f"native {label} M2 bitmap producer result is missing or invalid")
     names = evidence.get("rust_tests")
     command = evidence.get("rust_command")
     if (
@@ -17665,8 +17911,9 @@ def _m2_x86_64_bitmap_check_records(
         or len(set(names)) != len(names)
         or not isinstance(command, list) or not all(isinstance(arg, str) and arg for arg in command)
         or len(command) != 4 or command[1:] != ["bitmap::", "--test-threads=1", "--nocapture"]
+        or (architecture != "x86_64" and not _m2_x86_64_vm_rust_binary_path_is_bound(command[0], architecture))
     ):
-        raise HarnessError("native x86 M2 bitmap executed test inventory changed")
+        raise HarnessError(f"native {label} M2 bitmap executed test inventory changed")
     return [
         {
             "component": "bitmaps", "command": list(command),
@@ -18205,11 +18452,11 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 
 M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-aarch64-v3.5.0.json"
 M2_AARCH64_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "aarch64/m2-memory-substrate-latest.json"
-M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "page-map", "arenas", "fault-injection")
 M2_AARCH64_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "aarch64/m2-page-map-trace"
 M2_AARCH64_PAGE_MAP_EVIDENCE_KEYS = frozenset({
     "cold", "first_map_fallback", "init_cleanup", "lazy", "process", "startup_statistics", "success",
 })
+M2_AARCH64_INITIALIZATION_EVIDENCE_KEYS = frozenset({"exclusive_arena_theap", "matrix", "teardown", "tld_retry"})
 M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset({
     "added_direct", "destruction", "direct", "huge_progress", "lifecycle", "reclaim_on_free",
     "reservation_warnings",
@@ -18230,10 +18477,9 @@ def validate_aarch64_m2_memory_substrate_contract(
 ) -> dict[str, Any]:
     """Validate the native AArch64 memory substrate boundary.
 
-    Only the components named in `M2_AARCH64_EXECUTED_COMPONENT_IDS` carry
-    executed AArch64 evidence. Every other component is an explicit
-    `not-executed` record with its open condition; x86-64 component state is
-    never imported, so the milestone cannot be complete.
+    Every component names its own AArch64 evidence fragment; x86-64
+    component state is never imported. The milestone stays partial while any
+    component keeps a remaining condition.
     """
 
     if (
@@ -18299,31 +18545,10 @@ def validate_aarch64_m2_memory_substrate_contract(
     )
     components: list[dict[str, Any]] = []
     for index, raw_component in enumerate(raw_components):
-        component_id = M2_MEMORY_SUBSTRATE_COMPONENT_IDS[index]
-        if component_id in M2_AARCH64_EXECUTED_COMPONENT_IDS:
-            components.append(_m2_x86_64_validated_component(
-                raw_component, index=index, pin=pin,
-                source_map_statuses=source_map_statuses, architecture="aarch64",
-            ))
-            continue
-        remaining = raw_component.get("remaining_conditions") if isinstance(raw_component, Mapping) else None
-        if (
-            not isinstance(raw_component, Mapping)
-            or set(raw_component) != {"id", "native_status", "remaining_conditions"}
-            or raw_component.get("id") != component_id
-            or raw_component.get("native_status") != "not-executed"
-            or not isinstance(remaining, list)
-            or not remaining
-            or not all(isinstance(condition, str) and condition for condition in remaining)
-            or len(set(remaining)) != len(remaining)
-        ):
-            raise HarnessError(f"native aarch64 M2 unexecuted component {component_id} record changed")
-        components.append({
-            "checks": [],
-            "id": component_id,
-            "native_status": "not-executed",
-            "remaining_conditions": list(remaining),
-        })
+        components.append(_m2_x86_64_validated_component(
+            raw_component, index=index, pin=pin,
+            source_map_statuses=source_map_statuses, architecture="aarch64",
+        ))
     raw_exclusions = contract.get("exclusions")
     x86_exclusions = read_json(M2_X86_64_MEMORY_SUBSTRATE_CONTRACT).get("exclusions")
     if raw_exclusions != x86_exclusions:
@@ -18739,6 +18964,67 @@ def _m2_aarch64_arena_check_records(
     return [by_id[check_id] for check_id in order]
 
 
+def _m2_aarch64_initialization_check_records(
+    summary: Mapping[str, Any], evidence: object,
+) -> list[dict[str, Any]]:
+    """Bind the AArch64 initialization receipts in the fragment's check order.
+
+    Every producer must have targeted AArch64; the exclusive-arena, TLD
+    retry and Rust teardown-owner runs must be the aggregate's
+    `aarch64-unknown-linux-musl` test product.
+    """
+
+    if not isinstance(evidence, Mapping) or set(evidence) != M2_AARCH64_INITIALIZATION_EVIDENCE_KEYS:
+        raise HarnessError("native aarch64 M2 initialization receipt inventory is invalid")
+    if _m2_x86_64_initialization_producer().ARCH != "aarch64":
+        raise HarnessError("native aarch64 M2 initialization producer does not target aarch64")
+    records = _m2_x86_64_initialization_check_records(
+        summary, evidence["matrix"], evidence["teardown"], evidence["exclusive_arena_theap"],
+        evidence["tld_retry"],
+    )
+    aggregate_binary_ids = {
+        "initialization-exclusive-arena-theap-slice-c-rust-differential",
+        "initialization-later-tld-metadata-fault-retry-c-rust-differential",
+        *(check_id for check_id, kind, _ in _m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS
+          if kind == "rust-teardown-owner"),
+    }
+    for record in records:
+        command = record["command"]
+        if record["id"] in aggregate_binary_ids and (
+            not command or not _m2_x86_64_vm_rust_binary_path_is_bound(command[0], "aarch64")
+        ):
+            raise HarnessError(f"native aarch64 M2 initialization receipt {record['id']} did not run the aarch64 test product")
+        if record["id"] in {
+            "initialization-tld-direct-source-matrix", "initialization-explicit-worker-recovery-lifecycle",
+        } and "aarch64-unknown-linux-musl" not in command:
+            raise HarnessError(f"native aarch64 M2 initialization receipt {record['id']} did not build the aarch64 test product")
+    by_id = {record["id"]: record for record in records}
+    order = [check["id"] for check in M2_AARCH64_INITIALIZATION_CHECKS]
+    if len(by_id) != len(records) or set(by_id) != set(order):
+        raise HarnessError("native aarch64 M2 initialization executed receipt inventory changed")
+    return [by_id[check_id] for check_id in order]
+
+
+def _m2_aarch64_recursion_check_records(summary: Mapping[str, Any], evidence: object) -> list[dict[str, Any]]:
+    """Bind the recursive-output receipt to the aggregate's AArch64 test product."""
+
+    _, check = _m2_x86_64_check_by_id(summary, "recursive-diagnostic-output-c-rust-differential")
+    if not isinstance(evidence, Mapping):
+        raise HarnessError("native aarch64 M2 recursive-output receipt is absent")
+    record = _m2_x86_64_recursion_check_record(check, evidence)
+    if not record["command"] or not _m2_x86_64_vm_rust_binary_path_is_bound(record["command"][0], "aarch64"):
+        raise HarnessError("native aarch64 M2 recursive-output receipt did not run the aarch64 test product")
+    return [record]
+
+
+def _m2_aarch64_metadata_check_records(summary: Mapping[str, Any], evidence: object) -> list[dict[str, Any]]:
+    """Bind the metadata lifecycle and ownership receipts on AArch64."""
+
+    if not isinstance(evidence, Mapping) or set(evidence) != {"lifecycle", "ownership"}:
+        raise HarnessError("native aarch64 M2 metadata receipt inventory is invalid")
+    return _m2_x86_64_metadata_check_records(summary, evidence["lifecycle"], evidence["ownership"], "aarch64")
+
+
 def m2_aarch64_memory_substrate_report(
     *,
     contract: Mapping[str, Any],
@@ -18756,8 +19042,12 @@ def m2_aarch64_memory_substrate_report(
     arena_evidence: Mapping[str, Any],
     page_map_evidence: Mapping[str, Any],
     fault_evidence: Mapping[str, Any],
+    bitmap_evidence: Mapping[str, Any],
+    metadata_evidence: Mapping[str, Any],
+    initialization_evidence: Mapping[str, Any],
+    recursion_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Render the executed AArch64 components and keep every other component open."""
+    """Render every executed AArch64 component; a partial component keeps M2 open."""
 
     if (
         source_contract_evidence.get("status") != "passed"
@@ -18771,8 +19061,12 @@ def m2_aarch64_memory_substrate_report(
     expected_arena_records = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
     expected_component_records = {
         "vm-primitives": expected_vm_records,
+        "metadata": _m2_aarch64_metadata_check_records(summary, metadata_evidence),
+        "bitmaps": _m2_x86_64_bitmap_check_records(summary, bitmap_evidence, "aarch64"),
         "page-map": _m2_aarch64_page_map_check_records(summary, page_map_evidence),
+        "initialization": _m2_aarch64_initialization_check_records(summary, initialization_evidence),
         "fault-injection": _m2_x86_64_fault_check_records(summary, fault_evidence, "aarch64"),
+        "allocator-recursion": _m2_aarch64_recursion_check_records(summary, recursion_evidence),
     }
     expected_anchors = {
         (component["id"], definition["id"]): definition["source_anchor"]
@@ -18795,36 +19089,36 @@ def m2_aarch64_memory_substrate_report(
         component["id"]: [] for component in summary["components"]
     }
     for check in focused_checks:
-        if check.get("component") not in M2_AARCH64_EXECUTED_COMPONENT_IDS:
-            raise HarnessError("native aarch64 M2 focused check names an unexecuted component")
+        if check.get("component") not in checks_by_component:
+            raise HarnessError("native aarch64 M2 focused check names an unknown component")
         checks_by_component[check["component"]].append(dict(check))
     components: list[dict[str, Any]] = []
     unmet: list[str] = []
     for component in summary["components"]:
         component_id = component["id"]
-        if component["native_status"] == "not-executed":
-            unmet.append(component_id)
-            components.append({
-                "executed_checks": [],
-                "id": component_id,
-                "native_status": "not-executed",
-                "remaining_conditions": list(component["remaining_conditions"]),
-                "status": "not-executed",
-            })
-            continue
         checks = checks_by_component[component_id]
         declared = {check["id"]: check for check in component["checks"]}
         if len(checks) != len(declared) or {check["id"] for check in checks} != set(declared):
             raise HarnessError(f"native aarch64 M2 component {component_id} has an invalid executed-check set")
+        bitmap_counts = {
+            record["id"]: record["passed_test_count"] for record in expected_component_records["bitmaps"]
+        }
         for check in checks:
             expected = declared[check["id"]]
+            expected_count = (
+                bitmap_counts[check["id"]] if component_id == "bitmaps"
+                else expected["expected_passed_test_count"]
+            )
             if (type(check.get("passed_test_count")) is not int
-                    or check.get("passed_test_count") != expected["expected_passed_test_count"]
+                    or check.get("passed_test_count") != expected_count
                     or check.get("target") != expected["target"]):
                 raise HarnessError(f"native aarch64 M2 component {component_id} executed check count or target changed")
         if component_id == "arenas":
             if checks != expected_arena_records:
                 raise HarnessError("native aarch64 M2 arena executed receipt inventory changed")
+        elif component_id in {"metadata", "bitmaps", "initialization", "allocator-recursion"}:
+            if checks != expected_component_records[component_id]:
+                raise HarnessError(f"native aarch64 M2 {component_id} executed receipt inventory changed")
         else:
             expected_records = expected_component_records[component_id]
             expected_ids = {check["id"] for check in expected_records}
@@ -18848,9 +19142,8 @@ def m2_aarch64_memory_substrate_report(
         complete = component["native_status"] == "complete" and not component["remaining_conditions"]
         if not complete:
             unmet.append(component_id)
-        components.append({
+        report_component = {
             "bounded_source_definitions": list(component["bounded_source_definitions"]),
-            "branch_matrix": list(component.get("branch_matrix", [])),
             "evidence_fragment": dict(component["evidence_fragment"]),
             "executed_checks": checks,
             "id": component_id,
@@ -18859,10 +19152,15 @@ def m2_aarch64_memory_substrate_report(
             "source_map_records": list(component["source_map_records"]),
             "source_units": list(component["source_units"]),
             "status": "complete" if complete else "partial",
-            "unqualified_failure_matrix": list(component.get("unqualified_failure_matrix", [])),
-        })
+        }
+        if complete:
+            report_component["failure_matrix"] = list(component["failure_matrix"])
+        else:
+            report_component["branch_matrix"] = list(component.get("branch_matrix", []))
+            report_component["unqualified_failure_matrix"] = list(component.get("unqualified_failure_matrix", []))
+        components.append(report_component)
     if not unmet:
-        raise HarnessError("native aarch64 M2 cannot complete while components are unexecuted")
+        raise HarnessError("native aarch64 M2 contract records a partial milestone while every component is complete")
     return {
         "components": components,
         "contract": {
@@ -18892,7 +19190,11 @@ def m2_aarch64_memory_substrate_report(
         },
         "producer_evidence": {
             "arena_evidence": dict(arena_evidence),
+            "bitmap_evidence": dict(bitmap_evidence),
             "fault_evidence": dict(fault_evidence),
+            "initialization_evidence": dict(initialization_evidence),
+            "metadata_evidence": dict(metadata_evidence),
+            "recursion_evidence": dict(recursion_evidence),
             "page_map_evidence": dict(page_map_evidence),
             "vm_direct_evidence": dict(vm_direct_evidence),
             "process_vm_evidence": dict(process_vm_evidence),
@@ -18904,7 +19206,7 @@ def m2_aarch64_memory_substrate_report(
 
 
 def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
-    """Run the executed AArch64 M2 components natively; the rest stay open."""
+    """Run all eight AArch64 M2 components natively in one clean-source pass."""
 
     execution_before = require_native_aarch64_evidence()
     source_before = m2_memory_substrate_source_state()
@@ -18949,6 +19251,43 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     fault_evidence = _run_m2_x86_64_fault_evidence(
         offline=offline, test_program=test_program, vm_evidence=vm_evidence, architecture="aarch64",
     )
+    bitmap_evidence = _run_m2_x86_64_bitmap_evidence(
+        offline=offline, test_program=test_program, architecture="aarch64",
+    )
+    metadata_evidence = {
+        "lifecycle": run_m2_x86_64_metadata_lifecycle_differential(
+            pin, offline=offline, artifact_root=M2_METADATA_TRACE_ARTIFACT_ROOTS["aarch64"],
+            test_program=test_program,
+            check=_m2_x86_64_check_by_id(summary, "metadata-cross-thread-publication-lifecycle")[1],
+            architecture="aarch64",
+        ),
+        "ownership": _run_m2_x86_64_metadata_ownership_evidence(
+            offline=offline, test_program=test_program,
+            check=_m2_x86_64_check_by_id(summary, "metadata-ownership-c-rust-differential")[1],
+            architecture="aarch64",
+        ),
+    }
+    initialization_evidence = {
+        "matrix": _run_m2_x86_64_initialization_evidence(offline=offline, architecture="aarch64"),
+        "teardown": _run_m2_x86_64_initialization_teardown_evidence(
+            offline=offline, test_program=test_program, architecture="aarch64",
+        ),
+        "exclusive_arena_theap": _run_m2_x86_64_exclusive_arena_theap_evidence(
+            offline=offline, test_program=test_program, summary=summary, architecture="aarch64",
+        ),
+        "tld_retry": _m2_x86_64_init_tld_retry_producer().run_evidence(
+            sys.modules[__name__], offline=offline, test_program=test_program,
+            check=_m2_x86_64_check_by_id(
+                summary, "initialization-later-tld-metadata-fault-retry-c-rust-differential"
+            )[1],
+            architecture="aarch64",
+        ),
+    }
+    recursion_evidence = _run_m2_x86_64_recursion_evidence(
+        offline=offline, test_program=test_program,
+        check=_m2_x86_64_check_by_id(summary, "recursive-diagnostic-output-c-rust-differential")[1],
+        architecture="aarch64",
+    )
     vm_checks = _m2_x86_64_vm_check_records(
         summary, vm_evidence, runtime_thp_evidence, thp_process_evidence, process_vm_evidence,
         architecture="aarch64", vm_direct_evidence=vm_direct_evidence,
@@ -18956,17 +19295,20 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     arena_checks = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
     page_map_checks = _m2_aarch64_page_map_check_records(summary, page_map_evidence)
     fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence, "aarch64")
+    bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence, "aarch64")
+    metadata_checks = _m2_aarch64_metadata_check_records(summary, metadata_evidence)
+    initialization_checks = _m2_aarch64_initialization_check_records(summary, initialization_evidence)
+    recursion_checks = _m2_aarch64_recursion_check_records(summary, recursion_evidence)
+    executed_checks = (
+        *vm_checks, *metadata_checks, *bitmap_checks, *page_map_checks, *arena_checks,
+        *initialization_checks, *fault_checks, *recursion_checks,
+    )
     focused_checks = [
-        *vm_checks,
-        *page_map_checks,
-        *arena_checks,
-        *fault_checks,
+        *executed_checks,
         *_run_x86_64_focused_source_checks(
             summary,
             test_program,
-            already_executed_check_ids=frozenset(
-                check["id"] for check in (*vm_checks, *page_map_checks, *arena_checks, *fault_checks)
-            ),
+            already_executed_check_ids=frozenset(check["id"] for check in executed_checks),
             gate_name="native aarch64 M2 focused source evidence",
         ),
     ]
@@ -18987,6 +19329,10 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         arena_evidence=arena_evidence,
         page_map_evidence=page_map_evidence,
         fault_evidence=fault_evidence,
+        bitmap_evidence=bitmap_evidence,
+        metadata_evidence=metadata_evidence,
+        initialization_evidence=initialization_evidence,
+        recursion_evidence=recursion_evidence,
     )
     report["native_execution_provenance"] = native_execution_attestation(
         execution_before, require_native_aarch64_evidence(), architecture="aarch64"
@@ -22204,6 +22550,54 @@ def native_evidence_architecture() -> str:
     if architecture not in NATIVE_EVIDENCE_ARCHITECTURES:
         raise HarnessError(f"unsupported native evidence architecture: {architecture}")
     return architecture
+
+
+NATIVE_EVIDENCE_LABELS = {"x86_64": "x86-64", "aarch64": "AArch64"}
+NATIVE_EVIDENCE_HOST_ALIASES = {"x86_64": ("x86_64", "amd64"), "aarch64": ("aarch64", "arm64")}
+_TARGET_SCOPE_KEYS = {
+    "aarch64": {
+        "aarch64_status_reused": "x86_64_status_reused",
+        "native_linux_x86_64_required": "native_linux_aarch64_required",
+        "public_x86_libc_or_ldso_support": "public_aarch64_libc_or_ldso_support",
+    },
+}
+_TARGET_C_GUARDS = {
+    "aarch64": (
+        ("!defined(__x86_64__)", "!defined(__aarch64__)"),
+        ("requires native Linux/x86_64", "requires native Linux/aarch64"),
+    ),
+}
+
+
+def target_local_scope(scope: Mapping[str, Any], architecture: str) -> dict[str, Any]:
+    """Rename a producer scope's target-identity keys for one architecture.
+
+    The x86-64 scope is returned unchanged. On AArch64 the native-host
+    requirement, the cross-target status-reuse refusal and the public
+    libc/loader nonclaim name AArch64 and x86-64 respectively.
+    """
+
+    if architecture not in NATIVE_EVIDENCE_ARCHITECTURES:
+        raise HarnessError(f"unsupported native evidence architecture: {architecture}")
+    names = _TARGET_SCOPE_KEYS.get(architecture, {})
+    return {names.get(key, key): value for key, value in scope.items()}
+
+
+def target_local_c_probe(text: str, architecture: str) -> str:
+    """Select one embedded C probe's native-target guard.
+
+    The x86-64 text is returned byte for byte. On AArch64 only the
+    `__x86_64__` guard and its diagnostic change; every other probe byte is
+    preserved, so the probe keeps one source route on both targets.
+    """
+
+    if architecture not in NATIVE_EVIDENCE_ARCHITECTURES:
+        raise HarnessError(f"unsupported native evidence architecture: {architecture}")
+    for old, new in _TARGET_C_GUARDS.get(architecture, ()):
+        if old not in text:
+            raise HarnessError("embedded C probe lost its native-target guard")
+        text = text.replace(old, new)
+    return text
 
 
 def require_native_evidence(architecture: str) -> dict[str, str]:

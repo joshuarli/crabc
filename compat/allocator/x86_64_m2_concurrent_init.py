@@ -16,8 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/x86_64_m2_concurrent_init.c"
-REPORT = ROOT / "compat/reports/allocator/x86_64/concurrent-process-init.json"
-SCHEMA = ROOT / "compat/allocator/x86_64-init-recursion-evidence-v3.5.0.json"
 RUST_TEST = "process_init::tests::emit_m2_concurrent_process_init_callback_c_rust_trace"
 TAIL_RUST_TEST = "process_init::tests::emit_m2_loader_tail_once_release_c_rust_trace"
 TAIL_FIELDS = (
@@ -43,6 +41,11 @@ spec = importlib.util.spec_from_file_location("crabc_allocator_runner", ROOT / "
 assert spec is not None and spec.loader is not None
 run = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(run)
+
+# The launcher's native evidence architecture; a direct invocation keeps x86-64.
+ARCH = run.native_evidence_architecture()
+REPORT = ROOT / f"compat/reports/allocator/{ARCH}/concurrent-process-init.json"
+SCHEMA = ROOT / f"compat/allocator/{ARCH}-init-recursion-evidence-v3.5.0.json"
 
 
 def parse_trace(output: str, language: str, *, tail: bool = False) -> dict[str, int]:
@@ -86,13 +89,13 @@ def execute(command: list[str], *, cwd: Path, timeout: int = 180) -> str:
 
 
 def collect() -> dict[str, object]:
-    native = run.require_native_x86_64()
+    native = run.require_native_evidence(ARCH)
     source_inputs = (FIXTURE, Path(__file__).resolve(), ROOT / "crabc-mimalloc/src/process_init.rs")
     before = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_inputs}
     pin = run.load_pin()
     archive = run.fetch_archive(pin, True)
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    scratch = ROOT / ".work/allocator-x86_64/tmp"
+    scratch = ROOT / f".work/allocator-{ARCH}/tmp"
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="concurrent-init-", dir=scratch) as directory:
         work = Path(directory)
@@ -109,8 +112,8 @@ def collect() -> dict[str, object]:
         c_output = execute([str(c_binary)], cwd=source, timeout=30)
         c_record = parse_trace(c_output, "C")
         rust_command = [
-            run.require_tool("cargo"), "test", "--locked", "--target", "x86_64-unknown-linux-musl",
-            "--target-dir", str(ROOT / ".work/allocator-x86_64/target"), "-p", "crabc-mimalloc", "--lib",
+            run.require_tool("cargo"), "test", "--locked", "--target", f"{ARCH}-unknown-linux-musl",
+            "--target-dir", str(ROOT / f".work/allocator-{ARCH}/target"), "-p", "crabc-mimalloc", "--lib",
             "--no-default-features", RUST_TEST, "--", "--exact", "--nocapture", "--test-threads=1",
         ]
         rust_output = execute(rust_command, cwd=ROOT, timeout=600)

@@ -859,16 +859,27 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(fault["evidence_fragment"], {"path": RUNNER.relative(RUNNER.M2_AARCH64_FAULT_FRAGMENT)})
         self.assertEqual(fault["native_status"], "partial")
         self.assertTrue(any("16 KiB and 64 KiB" in condition for condition in fault["remaining_conditions"]))
-        self.assertEqual(
-            [(component["id"], component["native_status"], component["checks"])
-             for component in summary["components"]
-             if component["id"] not in RUNNER.M2_AARCH64_EXECUTED_COMPONENT_IDS],
-            [(component_id, "not-executed", [])
-             for component_id in RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS
-             if component_id not in ("vm-primitives", "page-map", "arenas", "fault-injection")],
-        )
+        self.assertEqual([component["id"] for component in summary["components"]],
+                         list(RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS))
+        fragments = {
+            "metadata": (RUNNER.M2_AARCH64_METADATA_FRAGMENT, "partial"),
+            "bitmaps": (RUNNER.M2_AARCH64_BITMAP_FRAGMENT, "complete"),
+            "initialization": (RUNNER.M2_AARCH64_INITIALIZATION_FRAGMENT, "partial"),
+            "allocator-recursion": (RUNNER.M2_AARCH64_RECURSION_FRAGMENT, "complete"),
+        }
+        for component in summary["components"]:
+            self.assertIn("evidence_fragment", component)
+            if component["id"] in fragments:
+                path, status = fragments[component["id"]]
+                self.assertEqual(component["evidence_fragment"], {"path": RUNNER.relative(path)})
+                self.assertEqual(component["native_status"], status)
+                self.assertEqual(bool(component["remaining_conditions"]), status == "partial")
+        self.assertEqual(summary["components"][2]["source_map_records"][-1],
+                         {"unit_id": "aarch64-width-and-bit-operations", "required_status": "implemented"})
+        self.assertEqual(summary["components"][5]["checks"],
+                         [dict(check) for check in RUNNER.M2_AARCH64_INITIALIZATION_CHECKS])
         self.assertEqual(summary["milestone"]["status"], "partial")
-        for index in (3, 4, 6):
+        for index in range(len(RUNNER.M2_MEMORY_SUBSTRATE_COMPONENT_IDS)):
             contract = RUNNER.read_json(RUNNER.M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT)
             contract["components"][index] = RUNNER.read_json(
                 RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)["components"][index]
@@ -966,6 +977,58 @@ class NativeVmAssemblyTests(unittest.TestCase):
                         changed if path == RUNNER.M2_AARCH64_PAGE_MAP_FRAGMENT else read_json(path))):
                     with self.assertRaises(RUNNER.HarnessError):
                         RUNNER._m2_aarch64_page_map_component(reference, pin)
+
+    def test_arm_metadata_bitmap_initialization_and_recursion_fragments_fail_closed(self):
+        pin = RUNNER.load_pin()
+        read_json = RUNNER.read_json
+        cases = (
+            ("metadata", RUNNER.M2_AARCH64_METADATA_FRAGMENT, RUNNER._m2_aarch64_metadata_component, "partial"),
+            ("initialization", RUNNER.M2_AARCH64_INITIALIZATION_FRAGMENT,
+             RUNNER._m2_aarch64_initialization_component, "partial"),
+            ("allocator-recursion", RUNNER.M2_AARCH64_RECURSION_FRAGMENT,
+             RUNNER._m2_aarch64_recursion_component, "complete"),
+            ("bitmaps", RUNNER.M2_AARCH64_BITMAP_FRAGMENT,
+             lambda reference, pin: RUNNER._m2_x86_64_validated_component(
+                 reference, index=2, pin=pin, architecture="aarch64",
+                 source_map_statuses=RUNNER._x86_64_source_map_unit_statuses(
+                     gate_name="native aarch64 M2", contract_path=RUNNER.M2_AARCH64_SOURCE_CONTRACTS[2])),
+             "complete"),
+        )
+        for component_id, path, materialize, status in cases:
+            reference = {"id": component_id, "evidence_fragment": {"path": RUNNER.relative(path)}}
+            component = materialize(reference, pin)
+            self.assertEqual(component["native_status"], status)
+            original = RUNNER.read_json(path)
+            mutations = {
+                "x86-schema": lambda f: f.__setitem__("schema", "crabc-mimalloc-x86_64-m2-component-evidence"),
+                "x86-target": lambda f: f["target"].__setitem__("rust_target", "x86_64-unknown-linux-musl"),
+                "status": lambda f: f["component"].__setitem__(
+                    "completion_status", "complete" if status == "partial" else "partial"),
+            }
+            if component_id != "bitmaps":
+                mutations["dropped-check"] = lambda f: f["component"]["checks"].pop()
+                mutations["source-units"] = lambda f: f["component"]["source_units"].pop()
+            for name, mutate in mutations.items():
+                with self.subTest(component=component_id, mutation=name):
+                    changed = copy.deepcopy(original)
+                    mutate(changed)
+                    with mock.patch.object(RUNNER, "read_json", side_effect=lambda candidate, changed=changed, path=path: (
+                            changed if candidate == path else read_json(candidate))):
+                        with self.assertRaises(RUNNER.HarnessError):
+                            materialize(reference, pin)
+            with self.subTest(component=component_id, mutation="x86-fragment"):
+                x86_reference = {"id": component_id, "evidence_fragment": {"path": RUNNER.relative(
+                    RUNNER.M2_X86_64_BITMAP_FRAGMENT if component_id == "bitmaps"
+                    else RUNNER.M2_X86_64_INITIALIZATION_FRAGMENT)}}
+                with self.assertRaises(RUNNER.HarnessError):
+                    materialize(x86_reference, pin)
+        initialization = RUNNER._m2_aarch64_initialization_component(
+            {"id": "initialization", "evidence_fragment": {
+                "path": RUNNER.relative(RUNNER.M2_AARCH64_INITIALIZATION_FRAGMENT)}}, pin)
+        bound = {check for branch in initialization["branch_matrix"] for check in branch["evidence_check_ids"]}
+        self.assertEqual(bound, {check["id"] for check in RUNNER.M2_AARCH64_INITIALIZATION_CHECKS})
+        self.assertTrue(any("16 KiB and 64 KiB" in condition
+                            for condition in initialization["remaining_conditions"]))
 
     def test_arm_fault_fragment_is_target_local(self):
         producer = RUNNER._m2_x86_64_fault_producer()
