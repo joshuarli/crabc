@@ -1359,6 +1359,9 @@ pub(crate) enum SourceErrorReport {
     ThreadLocalDataAllocation,
     /// `_mi_theap_alloc`, `src/theap.c:327-329` (ENOMEM).
     TheapAllocation,
+    /// `mi_thread_local_set_expand`, `src/threadlocal.c:135-138` (EFAULT):
+    /// the regular slot table could not grow for a non-null value.
+    ThreadLocalSlotGrowth,
     /// `mi_page_map_init_once`, `src/page-map.c:302-305` (ENOMEM): the page
     /// map's reservation, in KiB, could not be mapped.
     PageMapReservation { kib: usize },
@@ -1388,6 +1391,7 @@ impl SourceErrorReport {
             | Self::ThreadLocalDataAllocation
             | Self::TheapAllocation
             | Self::PageMapReservation { .. } => Errno::NOMEM,
+            Self::ThreadLocalSlotGrowth => Errno::FAULT,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. }
             | Self::SecureGuardFailure { .. } => Errno::INVAL,
             #[cfg(any(feature = "mi-debug-1", all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "mi-secure-3")))]
@@ -1473,6 +1477,9 @@ impl SourceErrorReport {
             }
             Self::TheapAllocation => {
                 message.append(b"unable to allocate theap meta-data\n");
+            }
+            Self::ThreadLocalSlotGrowth => {
+                message.append(b"unable to allocate thread local variables\n");
             }
             Self::PageMapReservation { kib } => {
                 message.append(b"unable to reserve virtual memory for the page map (");

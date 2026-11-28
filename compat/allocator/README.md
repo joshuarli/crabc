@@ -429,9 +429,8 @@ x86 run admits it into the x86 fragment:
   table (`src/threadlocal.c:104-173`). The linked Theap still serves the
   allocation (`src/heap.c:60-100`); its first page's arena-pages record goes
   through the main Heap (`src/arena.c:1661-1674`) and moves the cache, so the
-  next lookup creates a second Theap whose slot growth succeeds. Rust omits
-  the source `EFAULT` report of `src/threadlocal.c:136`; the receipt records
-  C's one report and Rust's none.
+  next lookup creates a second Theap whose slot growth succeeds. Both report
+  the one source `EFAULT` of `src/threadlocal.c:136`.
 - `thread-local-key-bitmap-refusal-c-rust-differential` runs M6's
   `heap_lifecycle.c` key-bitmap refusal (first publication and first
   1024-key growth, `src/threadlocal.c:251-303`) against its Rust test, which
@@ -456,8 +455,8 @@ the raw syscalls on x86-64; Rust keeps its raw `openat`/`read`/`close` route
 on both. The Rust trace roster names the converged
 `crabc-core/src/syscall/<architecture>.rs`.
 
-What stays open is named exactly in the fragment: the Rust slot-table
-`EFAULT` omission and the uncompared report of `src/heap.c:138`; the
+What stays open is named exactly in the fragment: the uncompared report of
+`src/heap.c:138`; the
 delayed-output bound beyond the startup flushes; FILE-stream parity, which
 crabc's runtime stderr callback makes installed-product evidence;
 allocator-site error reports and statistics outside the compared receivers,

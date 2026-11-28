@@ -579,7 +579,16 @@ fn thread_local_set(key: ThreadLocalKey, value: *mut ()) -> bool {
             Err(_) => return false,
         }
     }
-    with_published_slots(state, |owner| owner.set(key, value).is_ok()).unwrap_or(false)
+    let result = with_published_slots(state, |owner| owner.set(key, value));
+    if let Some(Err(crate::thread_local::ThreadLocalBackingError::SlotCountLimit
+        | crate::thread_local::ThreadLocalBackingError::AllocationSizeOverflow
+        | crate::thread_local::ThreadLocalBackingError::Metadata(_))) = result
+    {
+        let _ = crate::process_init::process_error_message(
+            crate::diagnostic_output::SourceErrorReport::ThreadLocalSlotGrowth,
+        );
+    }
+    matches!(result, Some(Ok(())))
 }
 
 /// The number of slots in this thread's array (`mi_thread_locals->count`).
@@ -4029,23 +4038,32 @@ pub(crate) mod tests {
     }
 
     /// `_mi_heap_theap_set` can fail while growing regular thread-local
-    /// storage. The source still returns and caches the new Theap, allowing
-    /// this allocation to proceed; a later call may create another Theap.
+    /// storage. The source reports one EFAULT and still returns and caches
+    /// the new Theap, allowing this allocation to proceed; a later call may
+    /// create another Theap.
     #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
     fn heap_theap_survives_first_regular_slot_allocation_failure() {
         crate::test_process::run_in_fresh_process(
             "subproc::main_heaps::tests::heap_theap_survives_first_regular_slot_allocation_failure",
             || {
+                use core::sync::atomic::{AtomicUsize, Ordering};
+                static EFAULT_REPORTS: AtomicUsize = AtomicUsize::new(0);
+                unsafe extern "C" fn count_error(error: core::ffi::c_int, _: *mut core::ffi::c_void) {
+                    if error == crabc_core::Errno::FAULT.raw() { EFAULT_REPORTS.fetch_add(1, Ordering::Relaxed); }
+                }
                 assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
                 }));
+                // SAFETY: the static handler counts only and never unwinds.
+                unsafe { crate::source_options_api::register_error(Some(count_error), core::ptr::null_mut()) };
                 let heap = native_heap_new().expect("a Heap");
                 let count = crate::thread_local::expanded_slot_count(0, heap_key(heap).unwrap().index().get()).unwrap();
                 let size = DynamicThreadLocalBacking::allocation_size(count).unwrap();
                 MetaAllocator::global().test_fail_next_direct_zeroed_size(size);
                 let thread = current_main_thread().expect("the main thread has its default Theap");
                 let theap = heap_theap(thread, heap).expect("the newly linked Theap remains usable");
+                assert_eq!(EFAULT_REPORTS.load(Ordering::Relaxed), 1);
                 assert_eq!(cached_theap(), theap);
                 assert_eq!(unsafe { Theap::heap_at(theap) }, heap.as_ptr());
                 let block = unsafe { native_heap_allocate(heap, 64, None, false) }

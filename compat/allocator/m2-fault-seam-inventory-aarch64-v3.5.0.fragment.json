@@ -1140,7 +1140,7 @@
           "thread-local-slot-failure-c-rust-differential"
         ],
         "missing_conditions": [
-          "Rust's thread_local_set drops the refused growth without the source `_mi_error_message(EFAULT, \"unable to allocate thread local variables\\n\")` (src/threadlocal.c:136); the receipt records C's one EFAULT report and Rust's none."
+          "The named source relation, including the one EFAULT report of src/threadlocal.c:136, is bounded; it does not promote an unselected receiver."
         ]
       },
       {
