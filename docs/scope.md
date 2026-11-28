@@ -15,9 +15,10 @@ expansion is not.
 
 Use the pinned C mimalloc v3.5.0 backend. Its crabc integration is open for
 functional work and focused correctness fixes without waiting for an aggregate
-gate failure. Do not develop, tune, qualify or promote the Rust allocator port,
-change upstream C source or merge parked allocator branches. The exact boundary
-is in [plan.md](../plan.md#allocator-freeze).
+gate failure. The owner reopened the Rust allocator port on 2026-11-27 for
+development and correctness qualification on Linux/AArch64. Do not change
+upstream C source, add alternate allocators or promote the port without its
+promotion evidence. The exact boundary is in [plan.md](../plan.md#allocator-work).
 
 Complete every selected runtime, ABI, facade, product and consumer obligation
 with current behavioral evidence and a fresh seven-gate correctness run. Keep
@@ -40,10 +41,13 @@ aggregate admission cannot block independently testable feature work.
   arm64 host (an Apple Silicon Linux VM with its own disk; never a macOS bind
   mount, never emulated), and replaces the older AArch64 composition and its
   August evidence instead of refreshing them.
+- **Active, `crabc-rs` only:** the macOS/AArch64 libSystem backend for
+  `crabc-rs` (`aarch64-apple-darwin`, macOS 13 or newer), admitted by the owner
+  on 2026-11-27 under [CRAB-7](rfc/CRAB-7-macos-libsystem-backend.md). It runs
+  natively on Apple Silicon. crabc's libc, loader, CRT, builtins, allocator and
+  `crabc-core` stay Linux-only.
 - No new architectures, 32-bit or big-endian targets, non-Linux libc, or
-  speculative portability layers. The macOS/AArch64 libSystem backend for
-  `crabc-rs` ([CRAB-7](rfc/CRAB-7-macos-libsystem-backend.md)) is deferred
-  until Linux/AArch64 feature completion.
+  speculative portability layers.
 - **Future, out of scope:** crabc as the C runtime substrate of an LLVM/Clang
   toolchain. crabc would supply public C/POSIX headers, libc, dynamic loader,
   startup objects and a sealed sysroot; LLVM would supply Clang, lld,
@@ -62,7 +66,7 @@ contradictions: neither stale prose nor an assertion in a report waives a
 requirement. The owner's November 12 D23/D24 decisions waive cost gates and
 require parallel feature work; they supersede older simplification/serial and
 performance-first instructions, including shared skill scheduling defaults.
-The separate Rust allocator freeze remains in force; CRAB-8 governs AArch64.
+The owner's 2026-11-27 direction reopens the Rust allocator port; CRAB-8 governs AArch64 and CRAB-7 governs the macOS facade backend.
 
 Oracles:
 
@@ -117,10 +121,9 @@ upstream C source or change backend selection. Preserve the faithful Rust semant
 [`crabc-mimalloc/UPSTREAM.md`](../crabc-mimalloc/UPSTREAM.md), without advancing
 it. Preserve source algorithms, data structures, ownership, memory ordering,
 lifecycle, valid-program behavior, existing differences and known failures.
-The Rust port and its harness remain frozen; ordinary runtime builds use the
-selected C backend.
-A later, separately authorized restart must reassess scope before any port work;
-the old plan's eventual native-default switch is not assumed. Existing fidelity
+Ordinary runtime builds use the selected C backend. The owner's 2026-11-27
+direction restarts port work; reassess its scope before the first port change.
+The old plan's eventual native-default switch is not assumed. Existing fidelity
 and promotion contracts are not waived: algorithmic divergence still needs
 rationale, differential evidence and performance evidence, not just idiomatic
 appearance. Design: [allocator](design/allocator.md); intentional differences:
@@ -175,9 +178,8 @@ allocation and global state, `no_std`, and LTO implications where the
 dependency is owned. Broad or difficult-to-audit dependencies need stronger
 justification, not a scope expansion. Moving code into a dependency is not
 proof of less complexity: account for the selected transitive implementation.
-The frozen allocator dependency direction remains `crabc-mimalloc → crabc-core`
+The allocator dependency direction remains `crabc-mimalloc → crabc-core`
 plus the focused pure-Rust primitives its manifest names, never the reverse.
-Do not change that graph during the freeze.
 
 ## Safety
 
@@ -251,4 +253,4 @@ independent authorized work. Do not rephrase or reroute a denied action.
 
 User direction governs, then [docs/scope.md](scope.md) and
 [COMPATIBILITY-PROFILE.md](../COMPATIBILITY-PROFILE.md), then `plan.md` and its
-machine-readable contracts. Historical documents do not override the freeze.
+machine-readable contracts. Historical documents do not override them.

@@ -13,8 +13,8 @@ Nothing is emulated. The recommendation is to **converge** AArch64 onto the x86
 runtime tree rather than extend the older AArch64 composition. Shared Linux
 behavior then keeps one owner, and AArch64 adds only an architecture layer.
 
-This campaign comes before the macOS facade backend
-([CRAB-7](CRAB-7-macos-libsystem-backend.md)), which remains deferred.
+The macOS facade backend ([CRAB-7](CRAB-7-macos-libsystem-backend.md)) runs
+in parallel by owner direction of 2026-11-27.
 
 ## Current state
 
@@ -396,5 +396,4 @@ cargo check --locked -Zbuild-std=core,alloc --target x86_64-unknown-linux-musl`.
   source for facts A2 moves.
 - Do not refresh `COMPATIBILITY.md` or the old AArch64 manifests.
 - Do not change `rust-toolchain.toml` or `compat/upstreams.toml` pins.
-- Do not do any performance work, and do not start the macOS facade backend
-  (CRAB-7).
+- Do not do any performance work.

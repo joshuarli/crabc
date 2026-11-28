@@ -103,7 +103,32 @@ on earlier `lane/a2-*`–`a5-*` branches were never integrated. Deleting any nee
 Debt outside D25: CRAB-9 and CRAB-10 apply only as local repair rules (M7).
 CRAB-6 stays open. Earlier F2 holds (permission-held fixtures, access refusals,
 CRAB-5/CRAB-6 observations) are recorded at `8fb1553b6`; preserve them and never
-retry denied actions. Performance stays deferred; do not start F3 or Rust allocator work.
+retry denied actions. Performance stays deferred; do not start F3.
+
+## Owner direction 2026-11-27
+
+The owner reopened all work that can run on the Apple Silicon Mac, in parallel:
+
+- **Allocator:** Rust port development and correctness qualification under
+  [Allocator work](#allocator-work).
+- **Linux/AArch64 feature completion:** every remaining
+  [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md) and D25 AArch64
+  obligation.
+- **macOS backend:** [CRAB-7](docs/rfc/CRAB-7-macos-libsystem-backend.md),
+  D0 through D3, with the owner's decisions recorded there.
+
+Linux work runs in the OrbStack arm64 Linux VM with Docker Engine inside the VM
+([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack)). The macOS backend builds and tests natively on macOS.
+Never use the Mac's own Docker engine, a macOS bind mount or emulation. Work in
+fresh worktrees from main, never in the M6 candidate checkouts.
+
+The end state of this phase is all Mac and arm64 work complete on main. The
+owner then finishes the remaining roadmap on a native x86-64 Linux host: the
+x86 side of D25 and the dual-native candidate at one SHA, M7, and any x86
+allocator qualification or promotion. Until then, x86-only proofs are recorded
+as pending, not run or substituted. The owner holds the open decisions in this
+phase's scope and has delegated them to the coordinator: settle them, record
+each in its owning document and continue.
 
 ## D25 dual-native milestone
 
@@ -128,8 +153,8 @@ Local repair rules during D25: when a lane touches a test family, replace its
 redundant source-text mirrors with behavioral checks (CRAB-9); when repairing a
 blocked producer, move duplicated architecture facts into `native_arch.py`
 (CRAB-10). Keep useful ABI and dispatch checks. No whole-repository test
-rewrite, rename campaign, provenance framework, new architecture, macOS backend
-or Rust allocator work. CRAB-6: on recurrence use its existing diagnostics; never
+rewrite, rename campaign, provenance framework or new architecture. Allocator
+and macOS backend work follow [owner direction 2026-11-27](#owner-direction-2026-11-27). CRAB-6: on recurrence use its existing diagnostics; never
 widen the wait or call it fixed after unrelated green reruns.
 
 ## Goal and completion boundary
@@ -139,8 +164,10 @@ Finish the entire selected native Linux/x86-64 runtime in
 [docs/completion-requirements.md](docs/completion-requirements.md): C/POSIX
 behavior, headers/ABI, direct Rust facade, loader/TLS, CRT/builtins/sysroot,
 hardening and real consumers. Use the pinned C mimalloc backend. New work that
-closes this already-selected surface is authorized; new platforms, unrelated
-APIs and the frozen Rust allocator port are outside this campaign.
+closes this already-selected surface is authorized; new platforms and unrelated
+APIs are outside this campaign. The Rust allocator port and the macOS `crabc-rs`
+backend proceed in parallel under
+[owner direction 2026-11-27](#owner-direction-2026-11-27).
 
 Feature-complete means all selected obligations have current behavioral proof
 on both native x86-64 and AArch64 (D25),
@@ -307,20 +334,28 @@ Use one owner to repair a shared blocker while other lanes progress. If review o
 builds saturate, move capacity to those stages instead of starting conflicting
 writers. Track landed behavior and closed obligations, not agent counts or docs.
 
-## Allocator freeze
+## Allocator work
 
-The selected backend is pinned upstream C mimalloc v3.5.0 (`[mimalloc]` in
-`compat/upstreams.toml`); upstream C source remains unedited. Its crabc integration
-in `libc/` is open for selected feature work and correctness fixes: initialization,
-options, lifecycle, wrappers, errno, fork/threads and failure handling. A focused
+Owner direction 2026-11-27 reopens allocator work. The selected backend stays
+pinned upstream C mimalloc v3.5.0 (`[mimalloc]` in `compat/upstreams.toml`);
+upstream C source remains unedited. Its crabc integration in `libc/` stays open
+for selected feature work and correctness fixes: initialization, options,
+lifecycle, wrappers, errno, fork/threads and failure handling. A focused
 reproducer is sufficient; do not wait for an R1–R4 cost gate to authorize a fix.
 
-The Rust port (`crabc-mimalloc/`), `compat/allocator/` harness/receipts/milestones,
-allocator tuning, alternate allocators, native-shadow products, default promotion
-and parked allocator branches remain frozen. Ordinary products and regressions
-may build/use the C backend. Any optional cost observation retains the
-`allocator-attributed` label. Old G2, A0–A5, M1–M10, T4, allocator P0, O3/O4 and
-allocator C0/C1 work remains parked and does not block F2.
+The Rust port (`crabc-mimalloc/`) and the `compat/allocator/` harness, receipts
+and milestones are open for development and correctness qualification on
+Linux/AArch64 in the native arm64 VM ([host setup](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md#host-setup-orbstack)). Before the first
+port change, reassess its scope against the
+[allocator obligations](docs/completion-requirements.md#native-allocator-obligations)
+and record the result there. The port stays a faithful semantic port of v3.5.0
+with the provenance in [`crabc-mimalloc/UPSTREAM.md`](crabc-mimalloc/UPSTREAM.md);
+do not advance the pin. Alternate allocators stay out of scope. Native-default
+promotion and backend selection keep their differential and performance evidence
+requirements, so they wait for the x86 phase. Any optional cost observation
+retains the `allocator-attributed` label. Old G2, A0–A5, M1–M10, T4, allocator
+P0, O3/O4 and allocator C0/C1 branches stay parked; reuse their material only
+through reviewed changes on current main.
 
 ## Runtime hardening
 
@@ -385,7 +420,7 @@ parallel framework. Do not turn the feature campaign back into a reduction tour.
 Diagnose the exact failure. After two materially different unsuccessful attempts,
 hand the bounded problem and raw evidence to an expert/reviewer or park it with a
 retry condition, then refill the slot. A shared blocker gets one owner. Permission,
-profile expansion, frozen allocator or unbatched pin work remains out of F2 scope;
+profile expansion or unbatched pin work remains out of F2 scope;
 park only the dependent slice. A denied tool action is stopped with its exact
 reason preserved; do not reroute it. No destructive cleanup on stop.
 

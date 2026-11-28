@@ -4,9 +4,9 @@ A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
 owned CRT and compiler builtins, and an idiomatic `crabc-rs` facade. Narrow
 scope must not weaken ordinary Unix semantics.
 
-## Current direction — 2026-11-23
+## Current direction — 2026-11-27
 
-Read [roadmap Status](docs/roadmap.md#status) before dispatch. The retained [active campaign plan](plan.md) contains D25 and F2 closeout until its validation dependencies are removed. The goal is one dual-native (x86-64 and AArch64) correctness milestone at one SHA; the active step governs.
+Read [roadmap Status](docs/roadmap.md#status) before dispatch. The retained [active campaign plan](plan.md) contains D25 and F2 closeout until its validation dependencies are removed. The [2026-11-27 owner direction](plan.md#owner-direction-2026-11-27) runs all Mac work first, in parallel: the Rust allocator port, Linux/AArch64 feature completion in the arm64 VM, and the CRAB-7 macOS `crabc-rs` backend. The x86 side of the dual-native milestone follows on a native x86-64 host.
 Feature completeness comes first; performance and memory budgets are waived until then. See [campaign rules](docs/lanes.md#campaign-operating-rules).
 User direction governs, then [docs/scope.md](docs/scope.md) and [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then the roadmap and retained campaign plan.
 This is a local, undeployed greenfield libc: crash reproduction, fault injection, fuzzing and differential tests on repository-owned code are defensive correctness work ([local correctness work](docs/scope.md#local-correctness-work)).
@@ -37,7 +37,7 @@ python3 compat/x86_64/validate_parity_ledger.py
 - Document concrete caller obligations for every public unsafe API; never create references with unsupported aliasing or lifetime promises.
 - Preserve selected hardening, exact upstream revisions, source mappings, licenses, raw failures and behavioral coverage. D23 waives cost gates, not correctness checks; never rewrite upstream workloads to hide a defect.
 - Tests exercise behavior; validators check shared structure and actual evidence. No per-artifact validators, source-literal/prose-count tests, duplicate status files or report/receipt frameworks.
-- AArch64 runs only natively in its arm64 Linux VM, never emulated or on a macOS bind mount.
+- AArch64 Linux runs only natively in its arm64 Linux VM, never emulated or on a macOS bind mount. The macOS `crabc-rs` backend runs natively on macOS.
 - Do not run `./scripts/dev-x86_64.sh image` unless a plan step says so; a rebuild must be followed by a re-pin of `compat/x86_64/core_image.py`.
 - Never hand-edit generated `COMPATIBILITY.md`; old AArch64 manifests and their digested inputs are superseded by CRAB-8 evidence and never refreshed to absorb drift.
 
@@ -50,15 +50,15 @@ python3 compat/x86_64/validate_parity_ledger.py
 | Roadmap and resume status | [docs/roadmap.md](docs/roadmap.md); retained active campaign: [plan.md](plan.md) |
 | Scope, oracles, dependencies and safety | [docs/scope.md](docs/scope.md) |
 | Selected behavior and hardening | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |
-| Active feature completion and separately frozen allocator obligations | [docs/completion-requirements.md](docs/completion-requirements.md) |
+| Active feature completion and allocator obligations | [docs/completion-requirements.md](docs/completion-requirements.md) |
 | Parallel workstreams, ownership and integration | [docs/lanes.md](docs/lanes.md) |
 | Runtime ownership and current wire boundary | [docs/design/architecture.md](docs/design/architecture.md), [dynamic allocator placement](docs/design/x86-dynamic-native-allocator.md) |
-| AArch64 convergence; deferred macOS backend | [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md), [CRAB-7](docs/rfc/CRAB-7-macos-libsystem-backend.md) |
+| AArch64 convergence; macOS backend | [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md), [CRAB-7](docs/rfc/CRAB-7-macos-libsystem-backend.md) |
 | Rust facade | [docs/design/crabc-rs.md](docs/design/crabc-rs.md) |
 | Review backlog and open child-wait decision | [TODO.md](TODO.md), [child-wait RFC](docs/rfc/CRAB-2-child-wait-ownership.md) |
 | CRT, installed sysroot and target-input purity | [docs/design/crt-and-sysroot.md](docs/design/crt-and-sysroot.md) |
-| Frozen allocator design and differences | [docs/design/allocator.md](docs/design/allocator.md), [compat/allocator/known-differences.md](compat/allocator/known-differences.md) |
-| Frozen allocator provenance | [crabc-mimalloc/UPSTREAM.md](crabc-mimalloc/UPSTREAM.md) |
+| Allocator design and differences | [docs/design/allocator.md](docs/design/allocator.md), [compat/allocator/known-differences.md](compat/allocator/known-differences.md) |
+| Allocator provenance | [crabc-mimalloc/UPSTREAM.md](crabc-mimalloc/UPSTREAM.md) |
 | Unwinder | [docs/design/unwinder.md](docs/design/unwinder.md), [unwinder/README.md](unwinder/README.md) |
 | Cost contract and existing harness | [docs/design/performance.md](docs/design/performance.md), [compat/perf/README.md](compat/perf/README.md) |
 | Lua source-build consumer | [docs/design/source-build.md](docs/design/source-build.md), [compat/lua/README.md](compat/lua/README.md) |

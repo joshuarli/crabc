@@ -18,10 +18,10 @@ on branches under [CRAB-8](../rfc/CRAB-8-linux-aarch64-feature-completion.md).
 5. The selected allocator is pinned C mimalloc v3.5.0 on active x86-64;
    `libc` owns its C ABI adaptation and lifecycle integration. The separate
    errno-free Rust port, `crabc-mimalloc`, consumes `crabc-core` but never
-   libc. Its development, shadow products and promotion are frozen. Paused
+   libc. The owner reopened its development on Linux/AArch64 on 2026-11-27; promotion still needs its own evidence. Paused
    AArch64 retains its private Rust-only no-page lifecycle dependency beside
    the C backend; that boundary does not route allocations. See
-   [`allocator.md`](allocator.md) and the [freeze](../../plan.md#allocator-freeze).
+   [`allocator.md`](allocator.md) and [allocator work](../../plan.md#allocator-work).
 6. `crabc-rs` is the idiomatic Rust facade. It consumes `crabc-core` directly
    for typed native operations and never treats the C ABI as its syscall API.
 7. `compat`, `tests`, and `libc-test-harness` are executable evidence. They

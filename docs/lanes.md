@@ -13,10 +13,11 @@ and use only the demonstrated blocker, review and acceptance work in
 [F2 closeout](../plan.md#f2-closeout).
 The implementation pool below is not a queue to restart at every resume.
 
-The Rust allocator port and its private harness remain frozen; the pinned C
-backend's crabc integration is open for functional fixes. AArch64 convergence runs on branches and natively in its own Linux VM; never
-emulate it. The exact boundaries remain in
-[scope.md](scope.md) and [plan.md](../plan.md#allocator-freeze).
+The Rust allocator port and its harness are open on Linux/AArch64, and the
+pinned C backend's crabc integration is open for functional fixes. AArch64 runs
+natively in its own Linux VM; never emulate it. The macOS `crabc-rs` backend
+runs natively on macOS. The exact boundaries are in [scope.md](scope.md) and
+[plan.md](../plan.md#owner-direction-2026-11-27).
 
 ## Roles and width
 
@@ -153,8 +154,7 @@ no bulk cleanup, branch deletion or unrelated process termination on stop.
 ## Continuous integration and completion
 
 Follow [plan.md](../plan.md#standard-procedures) and use the pinned native
-environment for the target architecture. Never run `scripts/dev.sh`, emulate AArch64 or invoke the frozen
-allocator runner. Examples for scoped work:
+environment for the target architecture. Never run `scripts/dev.sh` or emulate AArch64. Examples for scoped work:
 
 ```sh
 scripts/lanes/rust-check.sh cargo check -q --locked -p <non-allocator-crate>
@@ -167,7 +167,7 @@ python3 compat/x86_64/validate_parity_ledger.py
 
 Replace placeholders with actual touched crates/tests and a dedicated work
 directory. The first command is deliberately scoped: the helper's no-argument
-legacy sweep includes frozen allocator profiles. Qualification is a coordinator
+legacy sweep includes allocator profiles. Qualification is a coordinator
 checkpoint, not a full run after every leaf edit.
 
 Reproduce a bug with a failing behavior test, implement it, run focused behavior
@@ -231,9 +231,8 @@ syscall/vDSO paths; implement the simplest complete behavior before tuning it.
 The pinned C mimalloc v3.5.0 backend remains selected. Its crabc glue is open
 for feature integration and correctness fixes backed by focused behavior tests;
 an R1–R4 failure is no longer required to start that work. Upstream C source
-stays unedited. The Rust allocator port, its harness/receipts, shadow products,
-alternate allocators and promotion remain frozen under
-[Allocator freeze](../plan.md#allocator-freeze).
+stays unedited. The Rust allocator port and its harness are open under
+[Allocator work](../plan.md#allocator-work).
 
 During feature implementation, fill useful available slots within the actual
 harness limits. During closeout, assign only demonstrated remaining blockers,
@@ -249,7 +248,9 @@ Under D25 the milestone covers native Linux/x86-64 and Linux/AArch64 at one SHA
 ([D25](../plan.md#d25-dual-native-milestone)). AArch64 follows
 [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md) host rules: it runs only
 natively in an arm64 Linux VM with its own ext4 disk, never emulated and never
-on a macOS bind mount. The macOS facade backend (CRAB-7) is deferred.
+on a macOS bind mount. The macOS facade backend (CRAB-7) runs natively on
+macOS. The owner's 2026-11-27 direction runs all Mac and arm64 work first and
+leaves the x86 side for a later native x86-64 phase.
 
 
 ## Check environments

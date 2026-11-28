@@ -11,9 +11,9 @@ gate until this milestone is complete. Instruction/syscall ratios, CPU time,
 RSS, allocation counts, retained-memory and footprint comparisons cannot block
 implementation, integration or feature acceptance. Memory safety, ownership,
 required cleanup, ABI, liveness and hardening remain correctness requirements.
-The Rust allocator port requirements below are preserved for a separately
-authorized restart; that frozen port is neither counted as complete nor a
-prerequisite for the active runtime milestone. AArch64 convergence proceeds on
+The owner restarted the Rust allocator port on 2026-11-27. Its requirements
+below are not counted as complete and are not a prerequisite for the runtime
+milestone. AArch64 convergence proceeds on
 branches under [CRAB-8](rfc/CRAB-8-linux-aarch64-feature-completion.md).
 
 ## Feature-completion exit criteria
@@ -109,12 +109,11 @@ Historical receipts cannot prove a newly selected contract.
   for each entry path and new threads, plus environment/command-line attempts
   to weaken the selected profile. Require Linux 5.10-compatible core behavior.
 
-## Native allocator — retained, frozen obligations
+## Native allocator obligations
 
-This section does not authorize work on `crabc-mimalloc/`,
-`compat/allocator/`, native-shadow integration or allocator promotion. Those
-remain outside the active feature-completion milestone under
-[plan.md](../plan.md#allocator-freeze). The selected C backend's crabc glue must
+These obligations govern the reopened `crabc-mimalloc/` port and its
+`compat/allocator/` harness under [plan.md](../plan.md#allocator-work).
+Promotion still needs its own evidence. The selected C backend's crabc glue must
 still satisfy the runtime's allocation, lifecycle, fork and memory-safety
 contracts and may be fixed in the relevant runtime lane.
 

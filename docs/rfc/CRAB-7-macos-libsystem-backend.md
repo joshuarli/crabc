@@ -1,6 +1,20 @@
 # CRAB-7: macOS/AArch64 libSystem backend for `crabc-rs`
 
-Status: deferred by the owner until Linux/AArch64 feature completion ([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md))
+Status: accepted 2026-11-27. The owner admitted it in parallel with Linux/AArch64
+feature completion ([CRAB-8](CRAB-8-linux-aarch64-feature-completion.md)) and
+delegated the open questions, which take every recommendation below.
+
+## Decisions
+
+1. Admit now, in parallel with CRAB-8 and the allocator restart, before F3.
+2. Hand-written libSystem declarations in `crabc-rs/src/darwin/sys.rs` with
+   SDK size and alignment assertions; no `libc` crate.
+3. Option (a): set `FD_CLOEXEC` immediately after creation and name the fork
+   race in each affected type's docs.
+4. `users` and `resolver` are absent on Darwin through D3.
+5. macOS 13 or newer, Apple Silicon only.
+6. Ported modules are source-compatible across both targets, enforced by
+   building the facade's examples for both.
 
 ## Summary
 

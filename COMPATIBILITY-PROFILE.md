@@ -14,7 +14,8 @@ AArch64 is converging onto the x86 runtime under
 [CRAB-8](docs/rfc/CRAB-8-linux-aarch64-feature-completion.md), with the same
 selected behavior and correctness qualification. Other architectures, 32-bit,
 big-endian and non-Linux libc remain inactive. The macOS/AArch64 libSystem
-backend for `crabc-rs` is deferred until Linux/AArch64 feature completion.
+backend for `crabc-rs` is active under
+[CRAB-7](docs/rfc/CRAB-7-macos-libsystem-backend.md); it covers only the facade.
 
 Core Unix behavior is not approximate: filesystems, descriptors/pipes,
 signals, fork/exec, pthread/TLS, sockets, mappings, time, stdio, the bounded
