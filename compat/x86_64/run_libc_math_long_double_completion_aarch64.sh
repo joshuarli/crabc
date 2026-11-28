@@ -107,19 +107,21 @@ readelf -lW "$work/freestanding" > "$work/freestanding.program"
 readelf -dW "$work/freestanding" > "$work/freestanding.dynamic"
 readelf -rW "$work/freestanding" > "$work/freestanding.relocations"
 objdump -d "$work/freestanding" > "$work/freestanding.disassembly"
-awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") { print $8 }' "$work/freestanding.symbols" |
+awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") && $8 !~ /^_R/ { print $8 }' "$work/freestanding.symbols" |
     LC_ALL=C sort -u > "$work/freestanding.functions"
-printf '%s\n' _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3add3addC4f128EB6_ \
-    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3div3divC4f128EB6_ \
-    _RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float3mul3mulC4f128EB6_ \
+printf '%s\n' \
     __addtf3 __divtf3 __eqtf2 __extenddftf2 __extendsftf2 __fesetround __fixtfsi \
     __fpclassifyl __getf2 __gttf2 __letf2 __lttf2 __multf3 __netf2 __subtf3 __trunctfdf2 __trunctfsf2 _start \
     crabc_x86_64_math_long_double_completion_probe exp10l exp2l fdiml feclearexcept \
     fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept modfl pow pow10l powl scalbnl |
     LC_ALL=C sort -u > "$work/freestanding.expected-functions"
 cmp "$work/freestanding.expected-functions" "$work/freestanding.functions" || fail 'freestanding function closure differs'
-for operation in 3add3add 3div3div 3mul3mul; do
-    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_RINvNtNtCsbJTFf11ssQ0_17compiler_builtins5float${operation}C4f128EB6_$" \
+if awk '$4 == "FUNC" && ($5 == "GLOBAL" || $5 == "WEAK") && $8 ~ /^_R/ && $6 != "HIDDEN" { print }' \
+    "$work/freestanding.symbols" | grep . >/dev/null; then
+    fail 'freestanding candidate exposes a Rust-mangled function'
+fi
+for operation in 3add 3div 3mul; do
+    grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+HIDDEN[[:space:]]+[0-9]+[[:space:]]_R[A-Za-z0-9_]*17compiler_builtins5float${operation}[A-Za-z0-9_]*$" \
         "$work/freestanding.symbols" || fail "binary128 helper $operation is not hidden"
 done
 for symbol in fdiml exp10l; do
