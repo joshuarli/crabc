@@ -105,54 +105,6 @@ fn take_fork_test_fault(fault: NativeAllocatorForkTestFault) -> bool {
     FORK_TEST_FAULT.compare_exchange(fault as u8, 0, Ordering::SeqCst, Ordering::SeqCst).is_ok()
 }
 
-/// Whether ordinary entry publishes `entered` with a compiler-only fence.
-///
-/// Entry is one side of a Dekker handshake: it stores `entered` and then
-/// loads the epoch, while a closing writer stores the epoch and then loads
-/// every `entered`. Each side needs StoreLoad ordering. On x86, symmetric SeqCst
-/// publication emits a locked atomic operation on every allocation and free;
-/// pinned mimalloc's local path takes no atomic read-modify-write on owner-local state. On
-/// targets that select it, once the process is registered for
-/// `MEMBARRIER_CMD_PRIVATE_EXPEDITED`, the rare writer instead supplies the
-/// full barrier on every running thread of
-/// the process ([`asymmetric_writer_fence`]), so entry needs only a compiler
-/// fence between its store and load. This is decided once, during
-/// single-threaded startup in [`register_initial_descriptor`] before any
-/// descriptor is registered, and stays fixed; the registration survives
-/// `fork`. Native x86 keeps symmetric SeqCst publication: registering the
-/// process here changes the observable membarrier state before executable
-/// preinit and in forked children. Other targets retain the asymmetric
-/// selection and its symmetric fallback if registration is refused.
-static ASYMMETRIC_ENTRY_FENCE: AtomicBool = AtomicBool::new(false);
-
-/// Selects the entry fence once, before the initial descriptor is published.
-/// Native x86 must leave process-private expedited membarrier unregistered
-/// until an application explicitly registers it; symmetric entry publication
-/// supplies the StoreLoad ordering needed by the closing writer.
-fn select_asymmetric_entry_fence() {
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        if crabc_core::thread::membarrier(crabc_core::thread::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED).is_ok() {
-            ASYMMETRIC_ENTRY_FENCE.store(true, Ordering::Release);
-        }
-    }
-}
-
-/// The writer half of the asymmetric handshake, issued after the writer's
-/// epoch store and before it scans `entered`. Returns false only if the
-/// selected expedited barrier cannot be issued; the writer then cannot prove
-/// that it observes every compiler-fenced entry and must not claim
-/// quiescence.
-fn asymmetric_writer_fence() -> bool {
-    if !ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire) { return true; }
-    use crabc_core::thread::{membarrier, MEMBARRIER_CMD_PRIVATE_EXPEDITED, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED};
-    membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED).is_ok()
-        // Registration is per memory map and inherited by fork; re-register
-        // once in case a kernel did not carry it into this process image.
-        || (membarrier(MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED).is_ok()
-            && membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED).is_ok())
-}
-
 /// Obtains only the current TLS record's identity. Libc publishes this pointer
 /// before worker registration/attachment; it must never dereference it itself.
 pub fn current_native_allocator_thread_descriptor() -> NonNull<NativeAllocatorThreadDescriptor> {
@@ -212,7 +164,7 @@ pub fn native_allocator_initial_thread_descriptor() -> Option<NonNull<NativeAllo
 pub(super) fn register_initial_descriptor() -> bool {
     let descriptor = current_native_allocator_thread_descriptor();
     match INITIAL_DESCRIPTOR.compare_exchange(core::ptr::null_mut(), descriptor.as_ptr(), Ordering::AcqRel, Ordering::Acquire) {
-        Ok(_) => select_asymmetric_entry_fence(),
+        Ok(_) => {},
         Err(existing) if existing == descriptor.as_ptr() => {},
         Err(_) => return false,
     }
@@ -295,28 +247,11 @@ impl NativeAllocatorOperationGuard {
                 FORK_CLOSED => { core::hint::spin_loop(); continue; },
                 _ => {},
             }
-            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-            {
-                // The closing writer's SeqCst epoch store and entered scan
-                // pair with this SeqCst publication and the following epoch
-                // load. OR with true publishes the same flag; its previous
-                // value is unused, and the full StoreLoad ordering is retained.
-                let _ = record.entered.fetch_or(true, Ordering::SeqCst);
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            {
-                if ASYMMETRIC_ENTRY_FENCE.load(Ordering::Relaxed) {
-                    // Every closing writer issues `asymmetric_writer_fence`
-                    // between its epoch store and its `entered` scan. Either
-                    // this store is visible to that scan, or the load below
-                    // observes the writer's epoch. The compiler fence keeps
-                    // the store and load in program order.
-                    record.entered.store(true, Ordering::Relaxed);
-                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
-                } else {
-                    record.entered.store(true, Ordering::SeqCst);
-                }
-            }
+            // The closing writer's SeqCst epoch store and entered scan pair
+            // with this SeqCst publication and the following epoch load. OR
+            // with true publishes the same flag; its previous value is
+            // unused, and the full StoreLoad ordering is retained.
+            let _ = record.entered.fetch_or(true, Ordering::SeqCst);
             if epoch.state.load(Ordering::SeqCst) == observed {
                 unsafe { *record.nesting.get() = 1; }
                 return Ok(());
@@ -769,13 +704,6 @@ impl NativeAllocatorEpoch {
         let closed = observed | mode;
         self.state.compare_exchange(observed, closed, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| NativeAllocatorQuiescenceError::WriterBusy)?;
-        // One barrier after the epoch store suffices: every entry that its
-        // scan can miss must load the closed epoch afterwards.
-        let mut fenced_asymmetric = ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire);
-        if !asymmetric_writer_fence() {
-            self.reopen(closed)?;
-            return Err(NativeAllocatorQuiescenceError::WriterBusy);
-        }
         loop {
             let mut active = false;
             let mut failure = None;
@@ -799,17 +727,6 @@ impl NativeAllocatorEpoch {
             if let Some(error) = failure {
                 self.reopen(closed)?;
                 return Err(error);
-            }
-            if !active && !fenced_asymmetric && ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire) {
-                // Production selects the entry fence before any worker
-                // exists; a unit-test process may select it concurrently.
-                // Fence and rescan so compiler-fenced entries are covered.
-                fenced_asymmetric = true;
-                if !asymmetric_writer_fence() {
-                    self.reopen(closed)?;
-                    return Err(NativeAllocatorQuiescenceError::WriterBusy);
-                }
-                continue;
             }
             if !active {
                 if mode == TERMINAL_CLOSING {
@@ -1441,18 +1358,9 @@ mod tests {
 
     #[test]
     fn entry_never_overlaps_a_completed_writer_drain() {
-        // Entry and writer need a StoreLoad handshake. The symmetric protocol
-        // uses SeqCst entry publication; the asymmetric protocol uses a compiler
-        // fence and an expedited writer barrier. Each round releases one
-        // entry and one terminal writer together, the store-buffering race
-        // that a missing barrier loses.
-        select_asymmetric_entry_fence();
-        #[cfg(target_arch = "x86_64")]
-        assert!(!ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
-            "native x86 leaves private expedited membarrier unregistered");
-        #[cfg(not(target_arch = "x86_64"))]
-        assert!(ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
-            "the native test image permits private expedited membarrier");
+        // Entry and writer need a StoreLoad handshake through SeqCst entry
+        // publication. Each round releases one entry and one terminal writer
+        // together, the store-buffering race that a missing barrier loses.
         const ROUNDS: usize = 20_000;
         let epochs: std::vec::Vec<NativeAllocatorEpoch> = (0..ROUNDS).map(|_| NativeAllocatorEpoch::new()).collect();
         let records: std::vec::Vec<NativeAllocatorThreadDescriptor> = (0..ROUNDS).map(|_| registered_record()).collect();
