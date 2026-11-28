@@ -193,14 +193,16 @@ def declaration_names_hash(declarations: list[Declaration]) -> str:
     return sha256_bytes(contents)
 
 
-def expected_contract(header: bytes, pin: dict[str, object]) -> dict[str, object]:
+def expected_contract(header: bytes, pin: dict[str, object], architecture: str = "x86_64") -> dict[str, object]:
+    if architecture not in {"x86_64", "aarch64"}:
+        raise InventoryError(f"unsupported source inventory architecture: {architecture}")
     source = header.decode("utf-8")
     declarations = source_declarations(source)
     return {
         "format": 1,
-        "kind": "mimalloc-x86_64-source-c-api-inventory",
+        "kind": f"mimalloc-{architecture}-source-c-api-inventory",
         "maturity": "bounded-source-inventory-foundation",
-        "profile": "linux-x86_64-mimalloc-source-c-api",
+        "profile": f"linux-{architecture}-mimalloc-source-c-api",
         "scope": {
             "included_declaration_form": (
                 "uncommented semicolon-terminated mi_decl_export declarations "
@@ -219,9 +221,9 @@ def expected_contract(header: bytes, pin: dict[str, object]) -> dict[str, object
             ),
         },
         "target_context": {
-            "architecture": "x86_64",
+            "architecture": architecture,
             "endianness": "little",
-            "rust_target": "x86_64-unknown-linux-musl",
+            "rust_target": f"{architecture}-unknown-linux-musl",
             "system": "linux",
         },
         "upstream": {
@@ -238,7 +240,7 @@ def expected_contract(header: bytes, pin: dict[str, object]) -> dict[str, object
             "name": "source-declared-c-function",
             "meaning": (
                 "Each entry is declared by the pinned source header. It is not a "
-                "claim that a Linux/x86_64 mimalloc object defines the symbol."
+                f"claim that a Linux/{architecture} mimalloc object defines the symbol."
             ),
         },
         "declarations": [declaration.as_json() for declaration in declarations],
@@ -258,21 +260,22 @@ def expected_contract(header: bytes, pin: dict[str, object]) -> dict[str, object
     }
 
 
-def load_contract() -> dict[str, object]:
+def load_contract(architecture: str = "x86_64") -> dict[str, object]:
+    contract_path = ROOT / f"compat/allocator/{architecture}-api-v3.5.0.json"
     try:
-        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
-        raise InventoryError(f"missing checked-in inventory: {CONTRACT_PATH}") from error
+        raise InventoryError(f"missing checked-in inventory: {contract_path}") from error
     if not isinstance(contract, dict):
         raise InventoryError("x86_64 API inventory must be a JSON object")
     return contract
 
 
-def check_contract(archive_path: Path) -> None:
+def check_contract(archive_path: Path, architecture: str = "x86_64") -> None:
     pin = load_mimalloc_pin()
     header = read_pinned_header(archive_path, pin)
-    observed = expected_contract(header, pin)
-    checked_in = load_contract()
+    observed = expected_contract(header, pin, architecture)
+    checked_in = load_contract(architecture)
     if checked_in != observed:
         raise InventoryError(
             "x86_64 source C API inventory drifted from pinned mimalloc v3.5.0; "
@@ -288,6 +291,7 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_ARCHIVE_PATH,
         help="path to the SHA-256-pinned mimalloc v3.5.0 archive",
     )
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument(
         "--print-observed",
         action="store_true",
@@ -301,10 +305,10 @@ def main() -> int:
     pin = load_mimalloc_pin()
     header = read_pinned_header(arguments.archive, pin)
     if arguments.print_observed:
-        print(json.dumps(expected_contract(header, pin), indent=2))
+        print(json.dumps(expected_contract(header, pin, arguments.architecture), indent=2))
         return 0
-    check_contract(arguments.archive)
-    print("allocator x86_64 source C API inventory: PASS")
+    check_contract(arguments.archive, arguments.architecture)
+    print(f"allocator {arguments.architecture} source C API inventory: PASS")
     return 0
 
 

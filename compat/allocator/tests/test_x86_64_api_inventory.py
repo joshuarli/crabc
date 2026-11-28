@@ -86,6 +86,18 @@ mi_decl_export void* mi_third(void) mi_attr_alloc_size(1);
             self.contract["classification"]["meaning"],
         )
 
+    def test_aarch64_inventory_keeps_the_same_source_declarations(self) -> None:
+        arm = INVENTORY.load_contract("aarch64")
+        self.assertEqual(arm["target_context"], {
+            "architecture": "aarch64", "endianness": "little",
+            "rust_target": "aarch64-unknown-linux-musl", "system": "linux",
+        })
+        self.assertEqual(arm["declarations"], self.contract["declarations"])
+        self.assertEqual(arm["source"], self.contract["source"])
+        self.assertEqual(arm["integration_boundary"], self.contract["integration_boundary"])
+        self.assertEqual(arm["kind"], "mimalloc-aarch64-source-c-api-inventory")
+        self.assertNotEqual(arm["target_context"], self.contract["target_context"])
+
     def test_entries_are_source_anchors_not_implementation_statuses(self) -> None:
         declarations = self.contract["declarations"]
         self.assertEqual(self.contract["declaration_count"], len(declarations))
