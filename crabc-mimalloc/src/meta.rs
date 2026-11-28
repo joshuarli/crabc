@@ -1960,7 +1960,22 @@ pub(crate) struct NativeChildHeapImage {
     state: NativeChildHeapImageState,
 }
 
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+static TEST_REFUSE_NEXT_NATIVE_CHILD_HEAP_IMAGE: AtomicBool = AtomicBool::new(false);
+
 impl NativeChildHeapImage {
+    /// Makes the next native child Heap image request return the pinned
+    /// `mi_heap_zalloc` null result (`src/heap.c:133-134`).
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub(crate) fn test_refuse_next_allocation() {
+        TEST_REFUSE_NEXT_NATIVE_CHILD_HEAP_IMAGE.store(true, Ordering::Release);
+    }
+
+    #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub(crate) fn test_refusal_pending() -> bool {
+        TEST_REFUSE_NEXT_NATIVE_CHILD_HEAP_IMAGE.load(Ordering::Acquire)
+    }
+
     const fn image_request_size() -> usize {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         { crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE }
@@ -1976,6 +1991,8 @@ impl NativeChildHeapImage {
             const _: () = assert!(size_of::<Heap>() <= crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE);
             let parent = crate::source_heap_api::heap_main();
             if parent.is_null() { return None; }
+            #[cfg(test)]
+            if TEST_REFUSE_NEXT_NATIVE_CHILD_HEAP_IMAGE.swap(false, Ordering::AcqRel) { return None; }
             // SAFETY: subprocess creation retains the calling thread's live
             // parent main Heap until this unpublished child image is released.
             let pointer = unsafe {
@@ -7072,6 +7089,13 @@ impl<'owner> MetadataEngine<'owner> {
     pub(crate) fn test_fail_next_direct_zeroed_size(&self, size: usize) {
         assert_ne!(size, 0);
         self.fail_next_direct_zeroed_size.store(size, Ordering::Release);
+    }
+
+    /// Whether a planned direct-zeroed refusal is still unconsumed.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_direct_zeroed_failure_pending(&self) -> bool {
+        self.fail_next_direct_zeroed_size.load(Ordering::Acquire) != 0
     }
 
     /// Makes one exact `_mi_meta_rezalloc` replacement request fail after its

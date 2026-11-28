@@ -22275,6 +22275,92 @@ mod tests {
         );
     }
 
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
+    #[test]
+    fn emit_m2_ambient_memory_detection_c_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::emit_m2_ambient_memory_detection_c_rust_trace",
+            || {
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                unsafe extern "C" {
+                    fn getauxval(kind: core::ffi::c_ulong) -> core::ffi::c_ulong;
+                }
+                const AT_PAGESZ: core::ffi::c_ulong = 6;
+                // SAFETY: musl's getauxval reads the process auxiliary vector.
+                let page_size = unsafe { getauxval(AT_PAGESZ) } as usize;
+                assert!(test_initialize_process_from_host_environment(page_size, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+                    panic!("the started initial thread enters the allocator");
+                };
+                // SAFETY: PROCESS_ACTIVE follows the permanent owner publication.
+                let owner = unsafe { RUNTIME_PROCESS.active_owner() }.expect("the started process owner");
+                let ready = owner.ready().expect("the started process is READY");
+                let config = ready.memory_config().expect("the READY memory configuration");
+                let nodes = ready.vm_process().expect("the READY VM process").policy().numa_node_count();
+                for (field, value) in [
+                    ("page_size", config.page_size().bytes()),
+                    ("alloc_granularity", config.alloc_granularity()),
+                    ("large_page_size", config.large_page_size()),
+                    ("physical_memory_in_kib", config.physical_memory_in_kib()),
+                    ("virtual_address_bits", config.virtual_address_bits()),
+                    ("has_overcommit", usize::from(config.has_overcommit())),
+                    ("has_partial_free", usize::from(config.has_partial_free())),
+                    ("has_virtual_reserve", usize::from(config.has_virtual_reserve())),
+                    ("has_transparent_huge_pages", usize::from(config.has_transparent_huge_pages())),
+                    ("numa_node_count", nodes),
+                ] {
+                    std::println!("m2.ambient_detection.{field}={value}");
+                }
+            },
+        );
+    }
+
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
+    #[test]
+    fn emit_m2_process_init_repeat_c_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::emit_m2_process_init_repeat_c_rust_trace",
+            || {
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                let emit = |field: &str, value: usize| {
+                    std::println!("m2.process_init_repeat.{field}={value}");
+                };
+                // SAFETY: each projection reads this thread's TLS default root.
+                let initialized = || unsafe { default_theap().as_ref() }.is_initialized();
+                let subprocess = MainSubprocess::global();
+                let cold = !RUNTIME_PROCESS.is_active() && !initialized();
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                let first = default_theap();
+                let (total, live) = (subprocess.total_thread_count(), subprocess.live_thread_count());
+                emit("first.cold_before", usize::from(cold));
+                emit("first.initialized", usize::from(RUNTIME_PROCESS.is_active() && initialized()));
+                emit("first.thread_total", total);
+                emit("first.thread_live", live);
+
+                let repeated = initialize_process();
+                emit("repeat.entry_returned", usize::from(repeated));
+                emit("repeat.default_preserved", usize::from(default_theap() == first && initialized()));
+                emit("repeat.counts_preserved", usize::from(subprocess.total_thread_count() == total
+                    && subprocess.live_thread_count() == live));
+
+                let (refused, no_default) = thread::spawn(move || {
+                    let before = !initialized();
+                    let started = initialize_process();
+                    (!started, before && !initialized())
+                }).join().expect("the distinct caller returns");
+                emit("distinct.entry_refused", usize::from(refused));
+                emit("distinct.no_default", usize::from(no_default));
+                emit("distinct.counts_preserved", usize::from(subprocess.total_thread_count() == total
+                    && subprocess.live_thread_count() == live));
+                emit("distinct.owner_preserved", usize::from(default_theap() == first));
+            },
+        );
+    }
+
     #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri), feature = "native-runtime-test-fault"))]
     #[test]
     fn heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation() {

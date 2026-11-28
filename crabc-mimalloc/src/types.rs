@@ -1276,6 +1276,22 @@ impl Heap {
         Ok(is_member)
     }
 
+    /// Counts this Heap's Theap list under its source list lock.
+    #[cfg(test)]
+    pub(crate) fn test_theap_list_count(&self) -> Option<usize> {
+        let guard = self.theaps_lock.lock().ok()?;
+        let mut count = 0;
+        // SAFETY: the held source Heap-list lock serializes every hnext link
+        // and keeps each linked Theap allocated through this walk.
+        let mut current = unsafe { self.theaps.get().read() };
+        while !current.is_null() {
+            count += 1;
+            current = unsafe { *(*current).hnext.get() };
+        }
+        guard.unlock().ok()?;
+        Some(count)
+    }
+
     /// Observes the exact two-member Heap-list shape during compiler-TLS
     /// teardown of a cached auxiliary and default Theap on one TLD.
     ///

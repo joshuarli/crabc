@@ -1035,8 +1035,28 @@ class NativeVmAssemblyTests(unittest.TestCase):
         arm = producer.load_fragment(RUNNER.M2_AARCH64_FAULT_FRAGMENT, "aarch64")
         x86 = producer.load_fragment(RUNNER.M2_X86_64_FAULT_FRAGMENT)
         self.assertEqual(arm["target"]["rust_target"], "aarch64-unknown-linux-musl")
-        self.assertEqual(arm["component"]["checks"], x86["component"]["checks"])
-        self.assertEqual(arm["component"]["branch_matrix"], x86["component"]["branch_matrix"])
+        self.assertEqual(arm["component"]["checks"],
+                         x86["component"]["checks"] + [dict(check) for check in RUNNER.M2_FAULT_ADDED_CHECKS["aarch64"]])
+        self.assertEqual(RUNNER.M2_FAULT_ADDED_CHECKS["x86_64"], ())
+        base_rows = len(x86["component"]["branch_matrix"])
+        self.assertEqual(arm["component"]["branch_matrix"][:base_rows], x86["component"]["branch_matrix"])
+        self.assertEqual({check for row in arm["component"]["branch_matrix"][base_rows:]
+                          for check in row["evidence_check_ids"]},
+                         set(RUNNER.M2_FAULT_DIRECT_RECEIVERS["aarch64"]))
+        for mutate in (
+            lambda component: component["checks"].pop(),
+            lambda component: component["branch_matrix"].pop(),
+            lambda component: component["bounded_source_definitions"].pop(),
+            lambda component: component["branch_matrix"][-1]["evidence_check_ids"].append(
+                "source-indexed-fault-seam-inventory"),
+        ):
+            changed = copy.deepcopy(arm)
+            mutate(changed["component"])
+            with tempfile.TemporaryDirectory() as directory:
+                candidate = Path(directory) / "fragment.json"
+                candidate.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaises(producer.EvidenceError):
+                    producer.load_fragment(candidate, "aarch64")
         self.assertNotEqual(arm["component"]["remaining_conditions"], x86["component"]["remaining_conditions"])
         with self.assertRaises(producer.EvidenceError):
             producer.load_fragment(RUNNER.M2_X86_64_FAULT_FRAGMENT, "aarch64")

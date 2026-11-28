@@ -4056,6 +4056,80 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
+    #[test]
+    fn emit_m2_thread_local_slot_failure_c_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::emit_m2_thread_local_slot_failure_c_rust_trace",
+            || {
+                use core::sync::atomic::{AtomicUsize, Ordering};
+                static EFAULT_REPORTS: AtomicUsize = AtomicUsize::new(0);
+                static OTHER_REPORTS: AtomicUsize = AtomicUsize::new(0);
+                unsafe extern "C" fn count_error(error: core::ffi::c_int, _: *mut core::ffi::c_void) {
+                    let counter = if error == crabc_core::Errno::FAULT.raw() { &EFAULT_REPORTS } else { &OTHER_REPORTS };
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
+                let emit = |field: &str, value: usize| {
+                    std::println!("m2.thread_local_slot_failure.{field}={value}");
+                };
+                // SAFETY: the Heap stays live until its release below.
+                let theap_count = |heap: NonNull<Heap>| unsafe { heap.as_ref() }.test_theap_list_count().unwrap();
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                // SAFETY: the static handler counts only and never unwinds.
+                unsafe { crate::source_options_api::register_error(Some(count_error), core::ptr::null_mut()) };
+                let heap = native_heap_new().expect("a Heap");
+                let key = heap_key(heap).unwrap();
+                emit("setup.key_first_slot", usize::from(key.index().get() == 0 && key.version() == 1));
+                emit("setup.table_empty", usize::from(thread_local_count() == 0));
+                emit("setup.no_heap_theap", usize::from(unsafe { heap.as_ref() }.test_theaps_head().is_null()));
+
+                let count = crate::thread_local::expanded_slot_count(0, key.index().get()).unwrap();
+                MetaAllocator::global()
+                    .test_fail_next_direct_zeroed_size(DynamicThreadLocalBacking::allocation_size(count).unwrap());
+                let default = crate::compiler_tls::default_theap();
+                let first = unsafe { native_heap_allocate(heap, 64, None, false) };
+                let first_theap = unsafe { heap.as_ref() }.test_theaps_head();
+                emit("failure.refused", usize::from(!MetaAllocator::global().test_direct_zeroed_failure_pending()));
+                emit("failure.allocated", usize::from(first.is_some()));
+                emit("failure.theap_linked", usize::from(!first_theap.is_null()
+                    && unsafe { Theap::heap_at(NonNull::new_unchecked(first_theap)) } == heap.as_ptr()));
+                emit("failure.table_empty", usize::from(thread_local_count() == 0));
+                emit("failure.slot_unset", usize::from(thread_local_get(key).is_null()));
+                emit("failure.heap_theaps", theap_count(heap));
+                emit("failure.cached_main", usize::from(cached_theap() == default));
+
+                let retried = unsafe { native_heap_allocate(heap, 64, None, false) };
+                let second_theap = cached_theap();
+                emit("retry.allocated", usize::from(retried.is_some()));
+                emit("retry.second_theap", usize::from(second_theap.as_ptr() != first_theap
+                    && unsafe { Theap::heap_at(second_theap) } == heap.as_ptr()
+                    && unsafe { heap.as_ref() }.test_theaps_head() == second_theap.as_ptr()));
+                emit("retry.heap_theaps", theap_count(heap));
+                emit("retry.slot_set", usize::from(thread_local_get(key) == second_theap.as_ptr().cast()));
+                emit("retry.table_count", thread_local_count() as usize);
+                emit("retry.refusals", usize::from(!MetaAllocator::global().test_direct_zeroed_failure_pending()));
+
+                let main = NonNull::new(MainSubprocess::global().ready_main_heap_pointer()).expect("the main Heap");
+                let main_block = unsafe { native_heap_allocate(main, 16, None, false) };
+                let cache_moved = main_block.is_some() && cached_theap() == default;
+                let stable = unsafe { native_heap_allocate(heap, 64, None, false) };
+                emit("stable.slot_theap", usize::from(cache_moved && stable.is_some()
+                    && cached_theap() == second_theap && theap_count(heap) == 2));
+
+                for block in [main_block, stable, retried, first].into_iter().flatten() {
+                    // SAFETY: each live client is freed exactly once.
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                }
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                emit("release.slot_table_kept", usize::from(thread_local_count() == 16));
+                emit("report.efault", EFAULT_REPORTS.load(Ordering::Relaxed));
+                emit("report.other", OTHER_REPORTS.load(Ordering::Relaxed));
+            },
+        );
+    }
+
 
     /// Pinned `mi_realloc` of a non-main Heap's block through the default
     /// Theap: its Heap is not the default Theap's, so a fitting block is not

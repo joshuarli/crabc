@@ -401,37 +401,69 @@ because its relations are fixed to the VM's 4 KiB base pages; 16 KiB and
 
 `m2-fault-seam-inventory-aarch64-v3.5.0.fragment.json` keeps the x86 fault
 fragment's seven checks, nine bounded source definitions and 33-row branch
-matrix; `x86_64_fault_seam_inventory.py` validates either fragment by
-architecture. `allocator-m2` reuses the AArch64 VM receipt and runs the
-huge-branch profile, the ordinary OS-publication and metadata-publication
+matrix, then appends five AArch64-added receivers with their own definitions
+and branch rows; `x86_64_fault_seam_inventory.py` validates either fragment by
+architecture and binds the appended rows to the aggregate's
+`M2_FAULT_ADDED_CHECKS`. `allocator-m2` reuses the AArch64 VM receipt and runs
+the huge-branch profile, the ordinary OS-publication and metadata-publication
 receivers against the aggregate's `aarch64-unknown-linux-musl` test binary,
 and the process-owned map, commit and decommit receivers through
 `run_unit_x86_64.py`; the aggregate refuses an arm receipt whose binary is
 not the arm product. All seven matched pinned C natively on AArch64.
 
-AArch64 has no `SYS_open`, so pinned `src/prim/unix/prim.c:84-119` reads its
-Linux overcommit and THP observations through libc `open`, `read` and
-`close`. The fault profile of `m2_vm_x86_64.c` therefore intercepts that
-import on arm and the raw syscalls on x86-64; Rust keeps its raw
-`openat`/`read`/`close` route on both. The Rust trace roster now names the
-converged `crabc-core/src/syscall/<architecture>.rs` and no longer the
-`mm_x86_64.rs` and `syscall_x86_64.rs` files that `19827e480` removed, which
-also lets the x86 fault-inventory host tests read their roster again.
+The five added receivers use the direct-receiver record of the VM component
+(`m2_direct_receiver.py` builds each fixture against the pinned closure and
+runs its Rust test through `run_unit_x86_64.py`); the aggregate re-parses
+their physical C and Rust transcripts. Each is pending on x86 until a native
+x86 run admits it into the x86 fragment:
 
-The arm conditions that waited on other components now name the evidence
-those components execute: the metadata component (detached allocation,
-replacement and release, child-subprocess ownership, the Arena-kind release)
-and the initialization component (later-TLD and Theap metadata failures)
-cover the other metadata callers; allocator-recursion covers recursive output
-reentry; initialization covers process initialization beyond the detection
-observations and output-callback delivery during startup. What stays open is
-named exactly: `mi_subproc_new`'s failed-allocation cleanup and the dynamic
-thread-local slot tables have no fault receiver; general diagnostic
-receivers, FILE-stream parity, the deferred-free and error callbacks, the
-general statistics owners, ambient detection callers and installed-product
-startup remain unqualified; the VM has no hugetlbfs pool or NUMA nodes; and
-16 KiB and 64 KiB hosts need their own runs. The x86 fault fragment is
-unchanged.
+- `subproc-new-failure-cleanup-c-rust-differential`
+  (`m2_subproc_new_failure_x86_64.c`) refuses `mi_subproc_new`'s child image,
+  metadata Theap or child main Heap (`src/subproc.c:141-263`,
+  `src/heap.c:128-148`) through link-time wrappers. Each refusal returns no
+  subprocess, publishes no list member and releases every block; only the
+  main-Heap refusal consumes a subprocess sequence, and an exact retry
+  succeeds.
+- `thread-local-slot-failure-c-rust-differential`
+  (`m2_thread_local_slot_failure_x86_64.c`) refuses the first regular slot
+  table (`src/threadlocal.c:104-173`). The linked Theap still serves the
+  allocation (`src/heap.c:60-100`); its first page's arena-pages record goes
+  through the main Heap (`src/arena.c:1661-1674`) and moves the cache, so the
+  next lookup creates a second Theap whose slot growth succeeds. Rust omits
+  the source `EFAULT` report of `src/threadlocal.c:136`; the receipt records
+  C's one report and Rust's none.
+- `thread-local-key-bitmap-refusal-c-rust-differential` runs M6's
+  `heap_lifecycle.c` key-bitmap refusal (first publication and first
+  1024-key growth, `src/threadlocal.c:251-303`) against its Rust test, which
+  needs the `native-runtime-test-fault` feature; `run_unit_x86_64.py` accepts
+  that one feature.
+- `ambient-memory-detection-c-rust-differential`
+  (`m2_ambient_detection_x86_64.c`) compares the process-start
+  `_mi_os_init`/`_mi_prim_mem_init` observations and the first TLD's NUMA
+  count on the host's real files with Rust startup. The host values (page
+  size, physical memory, overcommit, THP, NUMA count) are compared C to Rust
+  rather than fixed (`host_equal`), and C records its libc import route.
+- `deferred-free-callback-c-rust-differential` builds the probe embedded in
+  `x86_64_deferred_free_callback_evidence.py` with only its native-target
+  guard rewritten and compares its 15 generic, forced-retry and owner-exit
+  callback values with the Rust trace.
+
+AArch64 defines no `SYS_open`, so pinned `src/prim/unix/prim.c:92-119`
+selects its libc branch and reads the Linux overcommit and THP observations
+through `open`, `read` and `close` (and the NUMA scan through `access`). The
+fault profile of `m2_vm_x86_64.c` therefore intercepts that import on arm and
+the raw syscalls on x86-64; Rust keeps its raw `openat`/`read`/`close` route
+on both. The Rust trace roster names the converged
+`crabc-core/src/syscall/<architecture>.rs`.
+
+What stays open is named exactly in the fragment: the Rust slot-table
+`EFAULT` omission and the uncompared report of `src/heap.c:138`; the
+delayed-output bound beyond the startup flushes; FILE-stream parity, which
+crabc's runtime stderr callback makes installed-product evidence;
+allocator-site error reports and statistics outside the compared receivers,
+whose M7 differentials have no AArch64 run; hardware huge pages and NUMA
+placement on a VM without hugetlbfs or NUMA nodes; and 16 KiB and 64 KiB
+hosts. The x86 fault fragment is unchanged.
 
 ### AArch64 metadata, bitmap and allocator-recursion components
 
@@ -461,7 +493,8 @@ a receipt from any other product.
 ### AArch64 initialization component
 
 `m2-initialization-aarch64-v3.5.0.fragment.json` runs the x86 fragment's
-thirteen checks in the arenas fragment's partial-fragment schema. It keeps the
+thirteen checks in the arenas fragment's partial-fragment schema, then one
+AArch64-added receiver. It keeps the
 fourteen x86 source definitions and adds the process-init once body
 (`src/init.c:537-592`), the pthread-key setup and destructor
 (`src/init.c:442-446`, `src/prim/unix/prim.c:1011-1040`), process done
@@ -482,11 +515,24 @@ boundaries, the three pinned-C teardown receipts, the five Rust teardown and
 fork-repair owners, the exclusive-arena Theap slice and the later-TLD fault
 retry all matched natively on AArch64.
 
+The added `initialization-repeated-native-process-init-c-rust-differential`
+(`m2_process_init_repeat_x86_64.c`, direct-receiver record) repeats explicit
+`mi_process_init` on the initializing thread and from a distinct thread, and
+Rust drives the native runtime entry `initialize_process` the same way in a
+fresh process: one owner, one TLD, unchanged counts and no default Theap for
+the distinct caller. It is pending on x86 until a native x86 run admits it.
+
 The component stays partial: Rust compares later-main post-state, not the C
-fixtures' source order; installed-product startup, thread exit,
-cancellation, `.fini_array` process done and fork through crabc libc are
-runtime-lane evidence; general callback timing is not inferred; and 16 KiB
-and 64 KiB hosts need their own runs. The x86 initialization fragment is
+fixtures' source order; the pinned lazy later-main callers (first
+allocation, Heap Theap lookup, `mi_theap_get_default`, `mi_heap_new_in_arena`,
+`mi_subproc_new`, `mi_thread_init`) have no Rust receiver because crabc
+attaches every worker before user code and refuses an unregistered thread's
+allocation; a pinned process-body callback needs a registration before
+`mi_process_init`, which the Rust engine does not admit, so its body interval
+stays the test-component startup's controlled observer; installed-product
+startup, thread exit, cancellation, `.fini_array` process done and fork
+through crabc libc are runtime-lane evidence; and 16 KiB and 64 KiB hosts
+need their own runs. The x86 initialization fragment is
 unchanged. `x86_64_m2_concurrent_init.c` now admits either native target, so
 the x86 concurrent-init receipt must be re-run natively in the x86 phase.
 

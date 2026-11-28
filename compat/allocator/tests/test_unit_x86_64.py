@@ -44,8 +44,18 @@ class ExactAllocatorUnitTests(unittest.TestCase):
         self.assertEqual(self.run_result(101, "compiler or test failure\n"), (101, "compiler or test failure\n"))
         self.assertEqual(self.run_result(-9, ""), (137, ""))
 
+    def test_one_selected_test_seam_feature_reaches_cargo(self) -> None:
+        result = subprocess.CompletedProcess([], 0, "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.02s\n")
+        with patch.object(unit.subprocess, "run", return_value=result) as run, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(unit.main(["--features", "native-runtime-test-fault", "os::tests::retry"]), 0)
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--no-default-features") + 1:][:3],
+                         ["--features", "native-runtime-test-fault", "os::tests::retry"])
+
     def test_invalid_selection_never_starts_cargo(self) -> None:
-        for arguments in ([], ["os"], ["os::"], ["--ignored"], ["os::test", "extra"]):
+        for arguments in ([], ["os"], ["os::"], ["--ignored"], ["os::test", "extra"],
+                          ["--features", "mi-secure-1", "os::test"], ["--features", "native-runtime-test-fault"]):
             with self.subTest(arguments=arguments), patch.object(unit.subprocess, "run") as run, \
                     contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(unit.main(arguments), 2)

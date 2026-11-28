@@ -480,6 +480,19 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
         ],
     },
 ]
+FAULT_COMPONENT_UNQUALIFIED_MATRIX_BY_ARCHITECTURE = {
+    "x86_64": FAULT_COMPONENT_UNQUALIFIED_MATRIX,
+    "aarch64": [
+        {
+            "id": "remaining-ambient-and-hardware-fault-receivers",
+            "source_scope": "Ambient option acquisition from the real process environment, hardware huge-page success, physical NUMA placement, allocator-site error reports and statistics owners outside the compared receivers, and unselected OS/PageMap callers.",
+            "required_evidence": [
+                "typed owner-specific fault rows",
+                "native current-source receiver evidence",
+            ],
+        },
+    ],
+}
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
     "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Unselected metadata callers remain unqualified.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
@@ -490,10 +503,10 @@ FAULT_COMPONENT_REMAINING_CONDITIONS = [
 FAULT_COMPONENT_REMAINING_CONDITIONS_BY_ARCHITECTURE = {
     "x86_64": FAULT_COMPONENT_REMAINING_CONDITIONS,
     "aarch64": [
-        "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Metadata callers outside this receiver are compared natively by the AArch64 metadata component (detached `_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc` and `_mi_meta_free`, child-subprocess ownership and the Arena-kind release) and the initialization component (the later TLD's failed and retried allocation, src/init.c:253-272, and the later-main Theap allocation failure, src/theap.c:308-334). No fault receiver covers `mi_subproc_new`'s failed-allocation cleanup (src/subproc.c:158-194) or the dynamic thread-local slot tables (src/threadlocal.c:104-131 and 263-288).",
-        "The selected node-62 fault diagnostic relation is source-bound and private. Recursive output reentry from output callbacks and the default FILE primitive (src/options.c:444-549) is compared natively by the AArch64 allocator-recursion component; general diagnostic receivers and FILE-stream parity beyond that reentry remain unqualified.",
-        "Ambient hardware huge-page success, physical NUMA placement and unselected callers remain unqualified. Output-callback delivery during process initialization and recursive reentry is compared by the AArch64 initialization and allocator-recursion components, and the external OS-memory callbacks by the AArch64 VM and arenas components; the deferred-free and error callbacks and the general statistics owners remain unqualified. The qualifying arm64 VM exposes no hugetlbfs pool and no NUMA node topology, so its huge-page and mbind rows cover only the fixed primitive-response profile.",
-        "The Linux detection matrix admits only direct overcommit/THP observation and physical-memory sysinfo conversion. AArch64 has no SYS_open, so pinned src/prim/unix/prim.c:84-119 reads those files through libc open/read/close; the C receiver intercepts that import, and Rust keeps its raw openat/read/close route. Open/read errors retain their source fallback; every successful open closes its exact real descriptor once, including EOF and read/close EINTR, and no close retry may consume a reused descriptor. Process initialization beyond these observations is compared by the AArch64 initialization component (TLD and Theap creation and failure, explicit worker recovery, repeated and contended process initialization, the loader tail, the first-allocation entropy fault and automatic teardown); ambient detection callers and installed-product startup remain unqualified.",
+        "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Metadata callers outside this receiver are compared natively by the AArch64 metadata component (detached `_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc` and `_mi_meta_free`, child-subprocess ownership and the Arena-kind release), the initialization component (the later TLD's failed and retried allocation, src/init.c:253-272, and the later-main Theap allocation failure, src/theap.c:308-334), and this component's added receivers: `mi_subproc_new`'s refused child image, metadata Theap and child main Heap (src/subproc.c:141-263, src/heap.c:128-148) and the refused regular slot table and key bitmap (src/threadlocal.c:104-173 and 251-303). Rust omits the `_mi_error_message(EFAULT, ...)` report of a refused slot table (src/threadlocal.c:136); that receipt records C's one report and Rust's none. The key-bitmap receiver does not compare the report of src/heap.c:138.",
+        "The selected node-62 fault diagnostic relation is source-bound and private. The allocator-recursion component's options differential compares, natively on AArch64, recursive output reentry from output callbacks and the default FILE primitive (src/options.c:444-549) and `_mi_error_message`'s registered-handler and default-errno dispatch (src/options.c:566-609). The default stderr primitive is `fputs(msg, stderr)` (src/prim/unix/prim.c:865-867); crabc supplies that FILE transport through the embedding runtime's stderr callback, so its short-write, error and buffering parity is installed-product evidence. The 16 KiB delayed-output bound and flush (src/options.c:358-397) beyond the startup flushes compared by the initialization component remain unqualified on AArch64.",
+        "Ambient hardware huge-page success, physical NUMA placement and unselected callers remain unqualified. Output-callback delivery during process initialization and recursive reentry is compared by the AArch64 initialization and allocator-recursion components, the external OS-memory callbacks by the AArch64 VM and arenas components, and the deferred-free callback (src/page.c:987-1042, src/theap.c:123-156) by this component's added receiver for one registered context and one same-thread owner. Allocator-site error reports are compared on AArch64 only where a receiver records them, such as the slot-table receiver above; the M7 error-site differential (`x86_64_m7_error_sites_oracle.c`) has no AArch64 run. The statistics owners (src/stats.c) are compared only as the reserved and committed deltas that the VM, page-map, metadata and arenas receivers record; the M7 statistics differentials (`x86_64_m7_statistics_*`) have no AArch64 run. The qualifying arm64 VM exposes no hugetlbfs pool and no NUMA node topology, so its huge-page and mbind rows cover only the fixed primitive-response profile.",
+        "The Linux detection matrix admits only direct overcommit/THP observation and physical-memory sysinfo conversion. AArch64 defines no SYS_open, so pinned src/prim/unix/prim.c:92-119 selects its libc branch (lines 106-119: `open`, `read`, `close`, `access`); the fault receiver intercepts that import, and Rust keeps its raw openat/read/close route. Open/read errors retain their source fallback; every successful open closes its exact real descriptor once, including EOF and read/close EINTR, and no close retry may consume a reused descriptor. The added ambient receiver compares the process-start callers on the host's real files (`_mi_os_init`, src/os.c:99-101; `_mi_prim_mem_init`, src/prim/unix/prim.c:250-277; the first TLD's `_mi_os_numa_node_count`, src/os.c:862-879, through src/prim/unix/prim.c:677-689) and records C's one libc open, read and close per file, one sysinfo and an access-only node scan. On AArch64 the `/proc/cpuinfo` read (src/prim/unix/prim.c:217-248) is RISC-V only, and the `/dev/urandom` read (src/prim/unix/prim.c:979-994) runs only after `getrandom` reports ENOSYS. Process initialization beyond these observations is compared by the AArch64 initialization component (TLD and Theap creation and failure, explicit worker recovery, repeated process initialization on the component storage and through the native runtime entry, the loader tail, the first-allocation entropy fault and automatic teardown); installed-product startup is runtime-lane evidence.",
         "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts. The executed receivers and their expected relations are fixed to the qualifying arm64 VM's 4 KiB geometry.",
         "The fault-injection component and M2 remain partial.",
     ],
@@ -530,6 +543,12 @@ def _rust_trace_source_roster(architecture: str) -> tuple[str, ...]:
 
 def _nonclaims(architecture: str) -> tuple[str, ...]:
     return NONCLAIMS if _require_architecture(architecture) == "x86_64" else NONCLAIMS_BY_ARCHITECTURE[architecture]
+
+
+def _unqualified_matrix(architecture: str) -> list[dict[str, Any]]:
+    if _require_architecture(architecture) == "x86_64":
+        return FAULT_COMPONENT_UNQUALIFIED_MATRIX
+    return FAULT_COMPONENT_UNQUALIFIED_MATRIX_BY_ARCHITECTURE[architecture]
 
 
 def _remaining_conditions(architecture: str) -> list[str]:
@@ -919,6 +938,77 @@ def inventory_definition() -> dict[str, list[str]]:
     }
 
 
+def _validate_added_source_definitions(
+    definitions: Sequence[object], added_ids: Sequence[str],
+) -> list[Mapping[str, Any]]:
+    """Admit the architecture's added receivers' bounded definitions.
+
+    The aggregate re-reads each anchor's digest and required definitions from
+    the pinned archive; this binds every added receiver to at least one of
+    them and no definition to a base or unknown check.
+    """
+
+    anchors: list[Mapping[str, Any]] = []
+    bound: set[str] = set()
+    identifiers = {row.identifier for row in SOURCE_ROWS}
+    for definition in definitions:
+        anchor = definition.get("source_anchor") if isinstance(definition, Mapping) else None
+        evidence = definition.get("evidence_check_ids") if isinstance(definition, Mapping) else None
+        required = definition.get("required_definitions") if isinstance(definition, Mapping) else None
+        if (
+            not isinstance(definition, Mapping)
+            or set(definition) != {"evidence_check_ids", "id", "required_definitions", "source_anchor"}
+            or not isinstance(definition.get("id"), str)
+            or definition["id"] in identifiers
+            or not isinstance(anchor, Mapping)
+            or set(anchor) != {"end_line", "member", "sha256", "start_line"}
+            or not isinstance(required, list) or not required
+            or not all(isinstance(item, str) and item for item in required)
+            or not isinstance(evidence, list) or not evidence
+            or not all(item in added_ids for item in evidence)
+            or len(set(evidence)) != len(evidence)
+        ):
+            raise EvidenceError("fault inventory M2 added source definition changed")
+        identifiers.add(definition["id"])
+        anchors.append(anchor)
+        bound.update(evidence)
+    if bound != set(added_ids):
+        raise EvidenceError("fault inventory M2 added receivers lack bounded source definitions")
+    return anchors
+
+
+def _validate_added_branch_rows(
+    rows: Sequence[object], added_ids: Sequence[str], anchors: Sequence[Mapping[str, Any]],
+) -> None:
+    """Bind every added receiver to admitted branch rows over its own anchors."""
+
+    bound: set[str] = set()
+    identifiers = {row.identifier for row in BRANCH_ROWS}
+    for row in rows:
+        evidence = row.get("evidence_check_ids") if isinstance(row, Mapping) else None
+        missing = row.get("missing_conditions") if isinstance(row, Mapping) else None
+        row_anchors = row.get("source_anchors") if isinstance(row, Mapping) else None
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != {"disposition", "evidence_check_ids", "id", "missing_conditions", "source_anchors", "source_scope"}
+            or not isinstance(row.get("id"), str)
+            or row["id"] in identifiers
+            or row.get("disposition") != "admitted-current-source-c-rust-relation"
+            or not isinstance(row.get("source_scope"), str) or not row["source_scope"]
+            or not isinstance(evidence, list) or not evidence
+            or not all(item in added_ids for item in evidence)
+            or not isinstance(missing, list) or not missing
+            or not all(isinstance(item, str) and item for item in missing)
+            or not isinstance(row_anchors, list) or not row_anchors
+            or any(anchor not in anchors for anchor in row_anchors)
+        ):
+            raise EvidenceError("fault inventory M2 added branch row changed")
+        identifiers.add(row["id"])
+        bound.update(evidence)
+    if bound != set(added_ids):
+        raise EvidenceError("fault inventory M2 added receivers lack branch rows")
+
+
 def load_fragment(path: Path | None = None, architecture: str = "x86_64") -> dict[str, Any]:
     """Load the one fixed partial-M2 fragment without widening its receiver set."""
 
@@ -962,6 +1052,8 @@ def load_fragment(path: Path | None = None, architecture: str = "x86_64") -> dic
         or component.get("source_map_records") != FAULT_COMPONENT_SOURCE_MAP_RECORDS
     ):
         raise EvidenceError("fault inventory M2 component boundary changed")
+    added_checks = [dict(check) for check in runner.M2_FAULT_ADDED_CHECKS[architecture]]
+    added_ids = [check["id"] for check in added_checks]
     checks = component.get("checks")
     if checks != [{
         "id": FAULT_COMPONENT_CHECK_ID,
@@ -998,13 +1090,14 @@ def load_fragment(path: Path | None = None, architecture: str = "x86_64") -> dic
         "kind": "c-rust-fault-seam-inventory",
         "target": DECOMMIT_TARGET,
         "expected_passed_test_count": 1,
-    }]:
+    }, *added_checks]:
         raise EvidenceError("fault inventory M2 check roster changed")
     definitions = component.get("bounded_source_definitions")
-    if not isinstance(definitions, list) or [item.get("id") if isinstance(item, Mapping) else None for item in definitions] != [
+    if not isinstance(definitions, list) or [item.get("id") if isinstance(item, Mapping) else None for item in definitions[:len(SOURCE_ROWS)]] != [
         row.identifier for row in SOURCE_ROWS
     ]:
         raise EvidenceError("fault inventory M2 source-definition roster changed")
+    added_anchors = _validate_added_source_definitions(definitions[len(SOURCE_ROWS):], added_ids)
     for row, definition, anchor, required_definitions in zip(
         SOURCE_ROWS, definitions, SOURCE_ANCHORS, SOURCE_REQUIRED_DEFINITIONS
     ):
@@ -1017,10 +1110,11 @@ def load_fragment(path: Path | None = None, architecture: str = "x86_64") -> dic
         ):
             raise EvidenceError("fault inventory M2 source definition changed")
     matrix = component.get("branch_matrix")
-    if not isinstance(matrix, list) or [item.get("id") if isinstance(item, Mapping) else None for item in matrix] != [
+    if not isinstance(matrix, list) or [item.get("id") if isinstance(item, Mapping) else None for item in matrix[:len(BRANCH_ROWS)]] != [
         row.identifier for row in BRANCH_ROWS
     ]:
         raise EvidenceError("fault inventory M2 branch-matrix roster changed")
+    _validate_added_branch_rows(matrix[len(BRANCH_ROWS):], added_ids, added_anchors)
     anchors_by_source_row = {
         source_row.identifier: anchor for source_row, anchor in zip(SOURCE_ROWS, SOURCE_ANCHORS)
     }
@@ -1037,7 +1131,7 @@ def load_fragment(path: Path | None = None, architecture: str = "x86_64") -> dic
         ):
             raise EvidenceError("fault inventory M2 branch matrix changed")
     unqualified = component.get("unqualified_failure_matrix")
-    if unqualified != FAULT_COMPONENT_UNQUALIFIED_MATRIX:
+    if unqualified != _unqualified_matrix(architecture):
         raise EvidenceError("fault inventory M2 unqualified receiver roster changed")
     remaining = component.get("remaining_conditions")
     if remaining != _remaining_conditions(architecture):

@@ -26,8 +26,15 @@ ONE_PASS = re.compile(
 )
 
 
+FEATURES = frozenset({"native-runtime-test-fault"})
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if arguments is None else arguments)
+    features: list[str] = []
+    if len(arguments) == 3 and arguments[0] == "--features" and arguments[1] in FEATURES:
+        features = arguments[:2]
+        arguments = arguments[2:]
     if len(arguments) != 1 or TEST_NAME.fullmatch(arguments[0]) is None:
         print("ERROR: expected one fully qualified Rust test name", file=sys.stderr)
         return 2
@@ -37,7 +44,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 2
     command = [
         "cargo", "test", "--locked", "--target", f"{architecture}-unknown-linux-musl",
-        "-p", "crabc-mimalloc", "--lib", "--no-default-features", arguments[0],
+        "-p", "crabc-mimalloc", "--lib", "--no-default-features", *features, arguments[0],
         "--", "--exact", "--nocapture", "--test-threads=1",
     ]
     environment = {**os.environ, "CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_TEST_OPT_LEVEL": "0"}

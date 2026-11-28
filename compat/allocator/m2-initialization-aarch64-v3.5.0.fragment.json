@@ -296,7 +296,8 @@
           "mi_atomic_store_release(&once->tid,1)"
         ],
         "evidence_check_ids": [
-          "initialization-process-once-body-and-loader-tail"
+          "initialization-process-once-body-and-loader-tail",
+          "initialization-repeated-native-process-init-c-rust-differential"
         ]
       },
       {
@@ -313,7 +314,8 @@
         ],
         "evidence_check_ids": [
           "initialization-process-once-body-and-loader-tail",
-          "initialization-explicit-worker-recovery-lifecycle"
+          "initialization-explicit-worker-recovery-lifecycle",
+          "initialization-repeated-native-process-init-c-rust-differential"
         ]
       },
       {
@@ -651,7 +653,7 @@
           "initialization-process-once-body-and-loader-tail"
         ],
         "missing_conditions": [
-          "The reservation callback's Rust interval is a controlled post-attachment observer, so general callback delivery and timing are not inferred; installed-product startup through crabc libc is outside this gate."
+          "In pinned C a callback runs inside the process body only when it was registered before `mi_process_init` (src/options.c:424-428); Rust admits no output registration before startup and routes the startup reservation warning through the published process output, so its body interval is the test-component startup's controlled post-attachment observer. Installed-product startup through crabc libc is outside this gate."
         ]
       },
       {
@@ -768,6 +770,29 @@
           "initialization-exclusive-arena-theap-slice-c-rust-differential"
         ],
         "missing_conditions": []
+      },
+      {
+        "id": "repeated-native-process-init-entry",
+        "disposition": "qualified-fixed-profile",
+        "source_scope": "src/init.c:537-592 and src/libc.c:115-140: repeated explicit `mi_process_init` on the initializing thread and from a distinct thread returns through the completed once with the first default Theap, one TLD and unchanged thread counts, and gives the distinct thread no default Theap; Rust drives the native runtime entry `initialize_process` (a repeat returns true without a second body, a distinct caller is refused) in a fresh process.",
+        "evidence_check_ids": [
+          "initialization-repeated-native-process-init-c-rust-differential"
+        ],
+        "missing_conditions": [],
+        "source_anchors": [
+          {
+            "member": "src/init.c",
+            "start_line": 537,
+            "end_line": 592,
+            "sha256": "2bcd63427e424e8d18ad7d2dc660ed6a4f0c233e8867a7ac13fc5dc3d42f23c5"
+          },
+          {
+            "member": "src/libc.c",
+            "start_line": 115,
+            "end_line": 140,
+            "sha256": "e19d20143539c56e12ab1125023f89f3fb831cea2748ef24d70417be647f23e8"
+          }
+        ]
       }
     ],
     "unqualified_failure_matrix": [
@@ -864,12 +889,18 @@
         "kind": "c-rust-exclusive-arena-theap-differential",
         "target": "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
         "expected_passed_test_count": 1
+      },
+      {
+        "expected_passed_test_count": 1,
+        "id": "initialization-repeated-native-process-init-c-rust-differential",
+        "kind": "c-rust-process-init-repeat-differential",
+        "target": "compat/allocator/m2_process_init_repeat_x86_64.py"
       }
     ],
     "remaining_conditions": [
-      "The ordinary later-main rows compare the direct pinned-C `_mi_thread_init_with_heap(mi_heap_main())` caller's Malloc TLD/Theap, dual list, default/fixed-TLS root, counter and explicit-finish post-state with Rust's `MainHeapThreadAttachment` natively on AArch64. The C fixtures separately verify source order, which Rust does not alias, and the paired Theap-failure row compares only retained failure post-state under source-specific C and typed Rust faults.",
+      "The ordinary later-main rows compare the direct pinned-C `_mi_thread_init_with_heap(mi_heap_main())` caller's Malloc TLD/Theap, dual list, default/fixed-TLS root, counter and explicit-finish post-state with Rust's `MainHeapThreadAttachment` natively on AArch64. The C fixtures separately verify source order, which Rust does not alias, and the paired Theap-failure row compares only retained failure post-state under source-specific C and typed Rust faults. Every other pinned later-main caller enters the same body through `_mi_thread_init()` and `_mi_thread_init_with_heap(NULL)`, which selects `mi_heap_main()` (src/init.c:305-369): an uninitialized thread's first allocation (src/page.c:1011-1020), `mi_heap_init_theap` (src/heap.c:67-69), `mi_heap_new_in_arena` (src/heap.c:150-155), `mi_theap_get_default` (src/theap.c:172-180), `mi_subproc_new` (src/subproc.c:158-159) and public `mi_thread_init`. Rust has no lazy later-thread entry: crabc attaches each worker before user code, and a native allocation from an unregistered thread after startup is refused (crabc-mimalloc/src/runtime_lifecycle.rs `enter_native_first_allocation_operation`), so those callers have no Rust receiver. `mi_subproc_add_current_thread`'s child-Heap caller (src/subproc.c:284-300) is outside these rows.",
       "Automatic thread and process teardown is qualified on AArch64 by the pinned-C automatic, cancellation and process-done pthread-key receipts and by the Rust owner-exit, physical process-destroy and fork-repair owners, all executed natively here. Their installed-product composition through crabc libc (natural return, pthread_exit, cancellation, fork and the .fini_array process-done) is runtime-lane evidence, not this allocator gate's.",
-      "Repeated explicit process initialization, the process-body callback interval with a blocked distinct caller, the loader-tail release boundary and the first-allocation entropy fault match pinned C natively on AArch64. The Rust reservation-callback interval remains a controlled post-attachment observer, so general callback delivery and timing are not inferred; the Rust-only startup rows remain ownership evidence, and installed-product startup remains open.",
+      "Repeated explicit process initialization matches pinned C natively on AArch64 both on the component storage (the explicit-worker-recovery receipt) and through the native runtime entry `initialize_process` with a distinct caller (src/init.c:537-592, src/libc.c:115-140). The loader-tail release boundary and the first-allocation entropy fault also match. In pinned C a callback runs inside the process body only when it was registered before `mi_process_init` (src/options.c:424-428); otherwise body messages enter the delayed buffer (src/options.c:365-382) that the loader tail flushes. Rust admits no output registration before startup (crabc-mimalloc/src/source_options_api.rs `register_output`) and routes startup reservation warnings through the published process output (crabc-mimalloc/src/process_init.rs `process_warning_message`), so its process-body interval with the blocked distinct caller stays the test-component startup's controlled post-attachment observer, and the delivery reachable in the product is the loader-tail flush. The Rust-only startup rows remain ownership evidence; installed-product startup is runtime-lane evidence.",
       "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts; the executed receivers ran on the qualifying arm64 VM's 4 KiB base pages."
     ]
   }

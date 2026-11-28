@@ -14795,6 +14795,174 @@ M2_VM_DIRECT_RECEIVERS = {
     "x86_64": {},
     "aarch64": M2_AARCH64_VM_DIRECT_RECEIVERS,
 }
+# Fault-injection receivers that only the AArch64 fault fragment admits, in
+# the direct-receiver record format. Each links the unmodified pinned closure
+# and refuses one exact source request through a link-time or source-unit
+# wrapper; their x86 admission waits for a native x86 run.
+M2_SUBPROC_NEW_FAILURE_STAGES = (("image", 1), ("metadata_theap", 2), ("heap", 4))
+M2_AARCH64_FAULT_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
+    "subproc-new-failure-cleanup-c-rust-differential": {
+        "artifact": "m2-subproc-new-failure",
+        "kind": "c-rust-subproc-new-failure-differential",
+        "target": "compat/allocator/m2_subproc_new_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_subproc_new_failure_x86_64.c",
+        "rust_test": "subproc::lifecycle::tests::emit_m2_subproc_new_failure_cleanup_c_rust_trace",
+        "trace_prefix": "m2.subproc_new_failure.",
+        "c_sources": ORACLE_SOURCES,
+        "c_link": (
+            "-Wl,--wrap=mi_theap_zalloc", "-Wl,--wrap=mi_heap_zalloc", "-Wl,--wrap=mi_free",
+            "-Wl,--wrap=_mi_free_subproc_safe",
+        ),
+        "common": {
+            "start.main_sequence": 0, "start.members": 1,
+            **{
+                f"{stage}.{field}": sequence if field == "retry_sequence" else 1
+                for stage, sequence in M2_SUBPROC_NEW_FAILURE_STAGES
+                for field in (
+                    "refused", "returned_null", "no_member", "blocks_released", "retry_created",
+                    "retry_sequence", "retry_head", "retry_destroyed",
+                )
+            },
+        },
+        "c_only": {"heap.release_order": 1},
+        "rust_only": {f"{stage}.typed_failure": 1 for stage, _ in M2_SUBPROC_NEW_FAILURE_STAGES},
+        "c_receipt": ("c_source_continuation", "c_only"),
+        "scope": "pinned-c-rust-subproc-new-refused-image-metadata-theap-or-main-heap-releases-every-block-and-publishes-no-member-before-retry",
+    },
+    "ambient-memory-detection-c-rust-differential": {
+        "artifact": "m2-ambient-detection",
+        "kind": "c-rust-ambient-detection-differential",
+        "target": "compat/allocator/m2_ambient_detection_x86_64.py",
+        "fixture": "compat/allocator/m2_ambient_detection_x86_64.c",
+        "rust_test": "runtime_lifecycle::tests::emit_m2_ambient_memory_detection_c_rust_trace",
+        "trace_prefix": "m2.ambient_detection.",
+        "c_sources": M1_RAW_PRIMITIVE_ORACLE_SOURCES,
+        "c_link": tuple(f"-Wl,--wrap={name}" for name in ("open", "read", "close", "access", "sysinfo")),
+        "common": {
+            "large_page_size": 2 * 1024 * 1024, "virtual_address_bits": 48,
+            "has_partial_free": 1, "has_virtual_reserve": 1,
+        },
+        "host_equal": (
+            "page_size", "alloc_granularity", "physical_memory_in_kib", "has_overcommit",
+            "has_transparent_huge_pages", "numa_node_count",
+        ),
+        "c_only": {
+            "route.raw_open_selected": 0, "route.overcommit_opens": 1, "route.thp_opens": 1,
+            "route.other_opens": 0, "route.detection_reads": 2, "route.detection_closes": 2,
+            "route.other_closes": 0, "route.node_scan_complete": 1, "route.sysinfo_calls": 1,
+        },
+        "rust_only": {},
+        "c_receipt": ("c_libc_import_route", "c_only"),
+        "scope": "pinned-c-rust-process-start-ambient-page-overcommit-thp-physical-memory-and-numa-observations-through-the-aarch64-libc-import-route",
+    },
+    "thread-local-slot-failure-c-rust-differential": {
+        "artifact": "m2-thread-local-slot-failure",
+        "kind": "c-rust-thread-local-slot-failure-differential",
+        "target": "compat/allocator/m2_thread_local_slot_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_thread_local_slot_failure_x86_64.c",
+        "rust_test": "subproc::main_heaps::tests::emit_m2_thread_local_slot_failure_c_rust_trace",
+        "trace_prefix": "m2.thread_local_slot_failure.",
+        "c_sources": tuple(item for item in ORACLE_SOURCES if item != "src/threadlocal.c"),
+        "common": {
+            "setup.key_first_slot": 1, "setup.table_empty": 1, "setup.no_heap_theap": 1,
+            "failure.refused": 1, "failure.allocated": 1, "failure.theap_linked": 1,
+            "failure.table_empty": 1, "failure.slot_unset": 1, "failure.heap_theaps": 1,
+            "failure.cached_main": 1, "retry.allocated": 1, "retry.second_theap": 1,
+            "retry.heap_theaps": 2, "retry.slot_set": 1, "retry.table_count": 16,
+            "retry.refusals": 1, "stable.slot_theap": 1, "release.slot_table_kept": 1,
+            "report.other": 0,
+        },
+        "c_only": {"report.efault": 1},
+        "rust_only": {"report.efault": 0},
+        "c_receipt": ("c_source_error_report", "c_only"),
+        "scope": "pinned-c-rust-regular-thread-local-slot-growth-refusal-keeps-the-linked-theap-usable-and-a-later-lookup-creates-a-second-theap",
+    },
+    "thread-local-key-bitmap-refusal-c-rust-differential": {
+        "artifact": "m2-thread-local-key-bitmap-refusal",
+        "kind": "c-rust-thread-local-key-refusal-differential",
+        "target": "compat/allocator/m2_thread_local_key_refusal_x86_64.py",
+        "fixture": "compat/allocator/heap_lifecycle.c",
+        "rust_test": "runtime_lifecycle::tests::heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation",
+        "rust_command": (
+            "python3", "compat/allocator/run_unit_x86_64.py", "--features", "native-runtime-test-fault",
+            "runtime_lifecycle::tests::heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation",
+        ),
+        "trace_prefix": "m6.heap.",
+        "c_defines": ("-D_GNU_SOURCE", "-DCRABC_HEAP_KEY_FAULT=1"),
+        "c_sources": M1_COMPILER_TLS_ORACLE_SOURCES,
+        "common": {f"key_fault.{index}": 1 for index in range(32)},
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-thread-local-key-bitmap-first-and-growth-refusal-publishes-no-heap-and-retries-the-original-generation",
+    },
+    "deferred-free-callback-c-rust-differential": {
+        "artifact": "m2-deferred-free-callback",
+        "kind": "c-rust-deferred-free-callback-differential",
+        "target": "compat/allocator/m2_deferred_free_callback_x86_64.py",
+        "fixture": "compat/allocator/x86_64_deferred_free_callback_evidence.py",
+        "c_probe": "C_TRACE_PROBE",
+        "c_compile_definitions": ("-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1"),
+        "rust_test": "runtime_lifecycle::tests::native_deferred_free_callback_trace_matches_pinned_generic_and_owner_exit_timing",
+        "trace_prefix": "trace.deferred_free.",
+        "common": {
+            "context_matches": 1, "nested_allocation_completed": 1, "nested_reentry_suppressed": 1,
+            "first_heartbeat": 1, "nested_heartbeat": 2, "mini_callbacks": 9, "full_callbacks": 1,
+            "full_heartbeat": 11, "force_callbacks": 1, "force_heartbeat_advanced": 1,
+            "owner_exit_callback_count": 1, "owner_exit_force": 1,
+            "owner_exit_nested_allocation_completed": 1, "owner_exit_default_identity_preserved": 1,
+            "callback_count": 12,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-deferred-free-callback-at-the-generic-1000-and-10000-boundaries-the-forced-fallback-retry-and-owner-exit-with-nested-allocation",
+    },
+}
+M2_FAULT_DIRECT_RECEIVERS = {
+    "x86_64": {},
+    "aarch64": M2_AARCH64_FAULT_DIRECT_RECEIVERS,
+}
+M2_FAULT_ADDED_CHECKS = {
+    architecture: tuple(
+        {
+            "expected_passed_test_count": 1,
+            "id": check_id,
+            "kind": receiver["kind"],
+            "target": receiver["target"],
+        }
+        for check_id, receiver in receivers.items()
+    )
+    for architecture, receivers in M2_FAULT_DIRECT_RECEIVERS.items()
+}
+M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
+    "initialization-repeated-native-process-init-c-rust-differential": {
+        "artifact": "m2-process-init-repeat",
+        "kind": "c-rust-process-init-repeat-differential",
+        "target": "compat/allocator/m2_process_init_repeat_x86_64.py",
+        "fixture": "compat/allocator/m2_process_init_repeat_x86_64.c",
+        "rust_test": "runtime_lifecycle::tests::emit_m2_process_init_repeat_c_rust_trace",
+        "trace_prefix": "m2.process_init_repeat.",
+        "c_sources": ORACLE_SOURCES,
+        "common": {
+            "first.cold_before": 1, "first.initialized": 1, "first.thread_total": 1,
+            "first.thread_live": 1, "repeat.default_preserved": 1, "repeat.counts_preserved": 1,
+            "distinct.no_default": 1, "distinct.counts_preserved": 1, "distinct.owner_preserved": 1,
+        },
+        "c_only": {},
+        "rust_only": {"repeat.entry_returned": 1, "distinct.entry_refused": 1},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-repeated-explicit-process-init-through-the-native-runtime-entry-keeps-one-owner-and-gives-a-distinct-caller-no-default",
+    },
+}
+M2_AARCH64_ADDED_DIRECT_RECEIVER_COMPONENTS = {
+    **{check_id: "fault-injection" for check_id in M2_AARCH64_FAULT_DIRECT_RECEIVERS},
+    **{check_id: "initialization" for check_id in M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS},
+}
+M2_AARCH64_ADDED_DIRECT_RECEIVER_SPECS: dict[str, dict[str, Any]] = {
+    **M2_AARCH64_FAULT_DIRECT_RECEIVERS,
+    **M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS,
+}
 
 
 def _m2_x86_64_page_map_first_map_fallback_producer() -> Any:
@@ -15219,6 +15387,15 @@ M2_AARCH64_INITIALIZATION_CHECKS = (
         "kind": "c-rust-exclusive-arena-theap-differential",
         "target": "dynamic_theap::tests::requested_arena_dynamic_owner_collects_live_pages_before_typed_metadata_release",
     },
+    *(
+        {
+            "expected_passed_test_count": 1,
+            "id": check_id,
+            "kind": receiver["kind"],
+            "target": receiver["target"],
+        }
+        for check_id, receiver in M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS.items()
+    ),
 )
 M2_AARCH64_PARTIAL_BRANCH_DISPOSITIONS = frozenset(
     {"qualified-fixed-profile", "partial-fixed-profile", "unqualified"}
@@ -15615,6 +15792,7 @@ def _m2_x86_64_validated_component(
                 "c-rust-fault-seam-inventory",
                 "c-oracle-teardown-receipt",
                 "rust-teardown-owner",
+                *(receiver["kind"] for receiver in M2_AARCH64_ADDED_DIRECT_RECEIVER_SPECS.values()),
             }
             or not isinstance(raw_check.get("target"), str)
             or (
@@ -15719,6 +15897,16 @@ def _m2_x86_64_validated_component(
                 or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
             ):
                 raise HarnessError("native x86 M2 process-arena evidence target is absent")
+        elif architecture == "aarch64" and raw_check.get("id") in M2_AARCH64_ADDED_DIRECT_RECEIVER_SPECS:
+            receiver = M2_AARCH64_ADDED_DIRECT_RECEIVER_SPECS[raw_check["id"]]
+            if (
+                component_id != M2_AARCH64_ADDED_DIRECT_RECEIVER_COMPONENTS[raw_check["id"]]
+                or raw_check.get("kind") != receiver["kind"]
+                or raw_check.get("target") != receiver["target"]
+                or not (ROOT / receiver["target"]).is_file()
+                or not (ROOT / receiver["fixture"]).is_file()
+            ):
+                raise HarnessError(f"native aarch64 M2 added {component_id} receiver is absent")
         elif architecture == "aarch64" and raw_check.get("id") in M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS:
             receiver = M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS[raw_check["id"]]
             if (
@@ -17443,6 +17631,12 @@ def _m2_vm_direct_receiver_check_records(
         observed = evidence[check_id]
         artifacts = ARTIFACT_ROOT / architecture / receiver["artifact"]
         expected_command = ["python3", receiver["target"]]
+        host_equal = tuple(receiver.get("host_equal", ()))
+        trace = observed.get("trace") if isinstance(observed, Mapping) else None
+        host_values = (
+            {field: trace[field] for field in host_equal}
+            if isinstance(trace, Mapping) and all(type(trace.get(field)) is int for field in host_equal) else None
+        )
         receipt_keys: set[str] = set()
         expected_c_receipt: object = None
         if receiver["c_receipt"] is not None:
@@ -17463,7 +17657,8 @@ def _m2_vm_direct_receiver_check_records(
             or observed.get("status") != "passed"
             or observed.get("pinned_revision") != pin["revision"]
             or observed.get("rust_test") != receiver["rust_test"]
-            or observed.get("trace") != {**receiver["common"], **receiver["rust_only"]}
+            or host_values is None
+            or trace != {**receiver["common"], **receiver["rust_only"], **host_values}
             or any(observed.get(key) != expected_c_receipt for key in receipt_keys)
             or observed.get("fixture") != artifact_record(ROOT / receiver["fixture"])
             or observed.get("c_executable") != artifact_record(artifacts / "pinned-c-oracle")
@@ -17473,8 +17668,8 @@ def _m2_vm_direct_receiver_check_records(
         ):
             raise HarnessError(f"native {architecture} M2 direct VM receipt is invalid")
         for side, expected in (
-            ("c", {**receiver["common"], **receiver["c_only"]}),
-            ("rust", {**receiver["common"], **receiver["rust_only"]}),
+            ("c", {**receiver["common"], **receiver["c_only"], **host_values}),
+            ("rust", {**receiver["common"], **receiver["rust_only"], **host_values}),
         ):
             values: dict[str, int] = {}
             for line in str(observed[f"{side}_stdout"]).splitlines():
@@ -17972,7 +18167,7 @@ def _m2_x86_64_fault_check_records(
     receipt_keys = ("huge_branch_receipt", "os_publication_receipt",
         "metadata_publication_receipt", "metadata_publication_receipt",
         "map_receipt", "commit_receipt", "decommit_receipt")
-    if len(component["checks"]) != len(receipt_keys):
+    if len(component["checks"]) != len(receipt_keys) + len(M2_FAULT_ADDED_CHECKS[architecture]):
         raise HarnessError("native x86 M2 fault-inventory check roster is absent")
     producer = _m2_x86_64_fault_producer()
     if not isinstance(evidence, Mapping):
@@ -18604,7 +18799,9 @@ M2_AARCH64_PAGE_MAP_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "aarch64/m2-page-map-t
 M2_AARCH64_PAGE_MAP_EVIDENCE_KEYS = frozenset({
     "cold", "first_map_fallback", "init_cleanup", "lazy", "process", "startup_statistics", "success",
 })
-M2_AARCH64_INITIALIZATION_EVIDENCE_KEYS = frozenset({"exclusive_arena_theap", "matrix", "teardown", "tld_retry"})
+M2_AARCH64_INITIALIZATION_EVIDENCE_KEYS = frozenset({
+    "added_direct", "exclusive_arena_theap", "matrix", "teardown", "tld_retry",
+})
 M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset({
     "added_direct", "destruction", "direct", "huge_progress", "lifecycle", "reclaim_on_free",
     "reservation_warnings",
@@ -19113,7 +19310,7 @@ def _m2_aarch64_arena_check_records(
 
 
 def _m2_aarch64_initialization_check_records(
-    summary: Mapping[str, Any], evidence: object,
+    summary: Mapping[str, Any], evidence: object, pin: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     """Bind the AArch64 initialization receipts in the fragment's check order.
 
@@ -19146,6 +19343,10 @@ def _m2_aarch64_initialization_check_records(
             "initialization-tld-direct-source-matrix", "initialization-explicit-worker-recovery-lifecycle",
         } and "aarch64-unknown-linux-musl" not in command:
             raise HarnessError(f"native aarch64 M2 initialization receipt {record['id']} did not build the aarch64 test product")
+    records.extend(_m2_vm_direct_receiver_check_records(
+        next(component for component in summary["components"] if component["id"] == "initialization"),
+        pin, evidence["added_direct"], "aarch64", receivers=M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS,
+    ))
     by_id = {record["id"]: record for record in records}
     order = [check["id"] for check in M2_AARCH64_INITIALIZATION_CHECKS]
     if len(by_id) != len(records) or set(by_id) != set(order):
@@ -19163,6 +19364,20 @@ def _m2_aarch64_recursion_check_records(summary: Mapping[str, Any], evidence: ob
     if not record["command"] or not _m2_x86_64_vm_rust_binary_path_is_bound(record["command"][0], "aarch64"):
         raise HarnessError("native aarch64 M2 recursive-output receipt did not run the aarch64 test product")
     return [record]
+
+
+def _m2_aarch64_fault_check_records(
+    summary: Mapping[str, Any], pin: Mapping[str, str], evidence: object, direct_evidence: object,
+) -> list[dict[str, Any]]:
+    """Bind the fixed fault-inventory receipts, then the AArch64-added direct receivers."""
+
+    component = next(item for item in summary["components"] if item["id"] == "fault-injection")
+    return [
+        *_m2_x86_64_fault_check_records(summary, evidence, "aarch64"),
+        *_m2_vm_direct_receiver_check_records(
+            component, pin, direct_evidence, "aarch64", receivers=M2_FAULT_DIRECT_RECEIVERS["aarch64"],
+        ),
+    ]
 
 
 def _m2_aarch64_metadata_check_records(summary: Mapping[str, Any], evidence: object) -> list[dict[str, Any]]:
@@ -19190,6 +19405,7 @@ def m2_aarch64_memory_substrate_report(
     arena_evidence: Mapping[str, Any],
     page_map_evidence: Mapping[str, Any],
     fault_evidence: Mapping[str, Any],
+    fault_direct_evidence: Mapping[str, Any],
     bitmap_evidence: Mapping[str, Any],
     metadata_evidence: Mapping[str, Any],
     initialization_evidence: Mapping[str, Any],
@@ -19212,8 +19428,8 @@ def m2_aarch64_memory_substrate_report(
         "metadata": _m2_aarch64_metadata_check_records(summary, metadata_evidence),
         "bitmaps": _m2_x86_64_bitmap_check_records(summary, bitmap_evidence, "aarch64"),
         "page-map": _m2_aarch64_page_map_check_records(summary, page_map_evidence),
-        "initialization": _m2_aarch64_initialization_check_records(summary, initialization_evidence),
-        "fault-injection": _m2_x86_64_fault_check_records(summary, fault_evidence, "aarch64"),
+        "initialization": _m2_aarch64_initialization_check_records(summary, initialization_evidence, pin),
+        "fault-injection": _m2_aarch64_fault_check_records(summary, pin, fault_evidence, fault_direct_evidence),
         "allocator-recursion": _m2_aarch64_recursion_check_records(summary, recursion_evidence),
     }
     expected_anchors = {
@@ -19340,6 +19556,7 @@ def m2_aarch64_memory_substrate_report(
             "arena_evidence": dict(arena_evidence),
             "bitmap_evidence": dict(bitmap_evidence),
             "fault_evidence": dict(fault_evidence),
+            "fault_direct_evidence": dict(fault_direct_evidence),
             "initialization_evidence": dict(initialization_evidence),
             "metadata_evidence": dict(metadata_evidence),
             "recursion_evidence": dict(recursion_evidence),
@@ -19399,6 +19616,9 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     fault_evidence = _run_m2_x86_64_fault_evidence(
         offline=offline, test_program=test_program, vm_evidence=vm_evidence, architecture="aarch64",
     )
+    fault_direct_evidence = _run_m2_vm_direct_receiver_evidence(
+        offline=offline, architecture="aarch64", receivers=M2_FAULT_DIRECT_RECEIVERS["aarch64"],
+    )
     bitmap_evidence = _run_m2_x86_64_bitmap_evidence(
         offline=offline, test_program=test_program, architecture="aarch64",
     )
@@ -19430,6 +19650,9 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             )[1],
             architecture="aarch64",
         ),
+        "added_direct": _run_m2_vm_direct_receiver_evidence(
+            offline=offline, architecture="aarch64", receivers=M2_AARCH64_INITIALIZATION_DIRECT_RECEIVERS,
+        ),
     }
     recursion_evidence = _run_m2_x86_64_recursion_evidence(
         offline=offline, test_program=test_program,
@@ -19442,10 +19665,10 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     )
     arena_checks = _m2_aarch64_arena_check_records(summary, pin, vm_evidence, arena_evidence)
     page_map_checks = _m2_aarch64_page_map_check_records(summary, page_map_evidence)
-    fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence, "aarch64")
+    fault_checks = _m2_aarch64_fault_check_records(summary, pin, fault_evidence, fault_direct_evidence)
     bitmap_checks = _m2_x86_64_bitmap_check_records(summary, bitmap_evidence, "aarch64")
     metadata_checks = _m2_aarch64_metadata_check_records(summary, metadata_evidence)
-    initialization_checks = _m2_aarch64_initialization_check_records(summary, initialization_evidence)
+    initialization_checks = _m2_aarch64_initialization_check_records(summary, initialization_evidence, pin)
     recursion_checks = _m2_aarch64_recursion_check_records(summary, recursion_evidence)
     executed_checks = (
         *vm_checks, *metadata_checks, *bitmap_checks, *page_map_checks, *arena_checks,
@@ -19477,6 +19700,7 @@ def run_aarch64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         arena_evidence=arena_evidence,
         page_map_evidence=page_map_evidence,
         fault_evidence=fault_evidence,
+        fault_direct_evidence=fault_direct_evidence,
         bitmap_evidence=bitmap_evidence,
         metadata_evidence=metadata_evidence,
         initialization_evidence=initialization_evidence,

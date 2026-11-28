@@ -4324,6 +4324,69 @@ pub(crate) mod tests {
 
     #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
     #[test]
+    fn emit_m2_subproc_new_failure_cleanup_c_rust_trace() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::emit_m2_subproc_new_failure_cleanup_c_rust_trace",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let (_, registry) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                let metadata = crate::meta::MetaAllocator::global();
+                let main = MainSubprocess::global().identity();
+                let emit = |stage: &str, field: &str, value: usize| {
+                    std::println!("m2.subproc_new_failure.{stage}.{field}={value}");
+                };
+                let members = registry_members(registry);
+                let capabilities = metadata.test_allocation_audit().live_capability_count;
+                emit("start", "main_sequence", main.test_registry_sequence());
+                emit("start", "members", usize::from(members == [main.as_ptr()]));
+                for stage in ["image", "metadata_theap", "heap"] {
+                    match stage {
+                        "image" => metadata.test_fail_next_direct_zeroed_size(
+                            core::mem::size_of::<crate::subproc::ChildSubprocessImage>()),
+                        "metadata_theap" => metadata.test_fail_next_direct_zeroed_size(core::mem::size_of::<Theap>()),
+                        _ => crate::meta::NativeChildHeapImage::test_refuse_next_allocation(),
+                    }
+                    let failure = native_subproc_new();
+                    let typed = matches!((stage, failure),
+                        ("image", Err(NativeSubprocessError::New(ChildSubprocessNewError::ContextAllocation(_))))
+                        | ("metadata_theap", Err(NativeSubprocessError::New(ChildSubprocessNewError::MetadataTheapAllocation(_))))
+                        | ("heap", Err(NativeSubprocessError::New(ChildSubprocessNewError::HeapAllocation))));
+                    emit(stage, "refused", usize::from(typed && !metadata.test_direct_zeroed_failure_pending()
+                        && !crate::meta::NativeChildHeapImage::test_refusal_pending()));
+                    emit(stage, "returned_null", usize::from(failure.is_err()));
+                    emit(stage, "no_member", usize::from(registry_members(registry) == members));
+                    emit(stage, "blocks_released", usize::from(
+                        metadata.test_allocation_audit().live_capability_count == capabilities));
+                    emit(stage, "typed_failure", usize::from(typed));
+
+                    let retry = native_subproc_new().expect("the same parent retries creation");
+                    // SAFETY: the retry id is live until the destroy below.
+                    let identity = unsafe { retry.with_owner(|owner| owner.as_mut().and_then(|child| child.identity_pointer())) }
+                        .expect("the retry record lock").expect("the retry child projects its identity");
+                    // SAFETY: the retry child's identity stays allocated until its destroy.
+                    let retry_identity = unsafe { &*identity };
+                    emit(stage, "retry_created", 1);
+                    emit(stage, "retry_sequence", retry_identity.test_registry_sequence());
+                    let mut expected = std::vec![identity];
+                    expected.extend_from_slice(&members);
+                    emit(stage, "retry_head", usize::from(registry_members(registry) == expected
+                        && retry_identity.is_registered_child_of(main)));
+                    // SAFETY: no member, client, callback, or other operation
+                    // has been admitted to this newly created retry child.
+                    let destroyed = unsafe { native_subproc_destroy(retry) } == Ok(());
+                    emit(stage, "retry_destroyed", usize::from(destroyed && registry_members(registry) == members
+                        && metadata.test_allocation_audit().live_capability_count == capabilities));
+                }
+            },
+        );
+    }
+
+    #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(miri)))]
+    #[test]
     fn native_empty_child_destroy_needs_no_arena_failure_storage() {
         crate::test_process::run_in_fresh_process(
             "subproc::lifecycle::tests::native_empty_child_destroy_needs_no_arena_failure_storage",
