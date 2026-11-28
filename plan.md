@@ -147,8 +147,17 @@ converged onto one route for both arches `b57623927` (1,626 lib tests and
 every native target pass on AArch64; the cfg-expanded x86 source differs only
 by moving `PageSize` and deleting the dead asymmetric fence).
 
-Open in this phase: the allocator harness on AArch64 (launcher, unit,
-integration, M1, then M2–M4 and M6–M10 correctness gates); CRAB-7 D1–D3;
+Also integrated: the allocator harness on AArch64 through M1 `759bbfaf3`
+(native arm evidence image, unit, native integration, M1 producer and reader;
+the normal-engine audit now builds the fat-LTO `dist` profile it documents,
+which also repairs the x86 check left stale by `6161b069d`); the M2 bitmap
+differential per architecture `a20fa89b2`; CRAB-7 D1 `70802121a`.
+
+Open in this phase: allocator M2 and later milestones. M2 is incomplete on
+x86-64 as well: VM primitives, arenas, initialization and fault seams keep
+remaining conditions in their x86 fragments, and M3 requires a complete M2.
+This is engine fidelity work, closed component by component with native
+AArch64 C/Rust evidence and recorded as pending for x86. CRAB-7 D2–D3;
 the full arm correctness candidate at one SHA after the product lanes land
 (a baseline run at `db3eb2f5a` with seeded inputs had no preflight blockers).
 
