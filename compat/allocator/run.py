@@ -173,15 +173,15 @@ X86_64_TLS_CODEGEN_REPORT = REPORT_ROOT / "tls-codegen-x86_64.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 M1_FOUNDATIONS_CONTRACT = ALLOCATOR_ROOT / "m1-foundations-v3.5.0.json"
-M1_FOUNDATIONS_REPORT = REPORT_ROOT / "aarch64/m1-foundations-latest.json"
-M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "aarch64/m1-foundations/cargo-target"
-M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "aarch64/m1-foundations/raw-primitive-trace"
-M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "aarch64/m1-foundations/compiler-tls-trace"
+M1_FOUNDATIONS_REPORT = REPORT_ROOT / "m1-foundations-latest.json"
+M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
+M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/raw-primitive-trace"
+M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-tls-trace"
 # This is the source-only C producer for the selected same-TLD terminal
 # trace. The standalone prototype command exposes its C half; the foundations
 # check pairs the same producer with its dedicated Rust comparison.
 M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
-    ARTIFACT_ROOT / "aarch64/m1-foundations/compiler-tls-same-tld-trace"
+    ARTIFACT_ROOT / "m1-foundations/compiler-tls-same-tld-trace"
 )
 # The native x86 foundations check has a distinct contract and result path.
 # It may reuse only the source-shaped check and layout inventories common to
