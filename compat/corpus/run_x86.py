@@ -337,7 +337,7 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
         if not isinstance(name, str) or Path(name).name != name or not name.endswith(".apk"):
             fail("native corpus archive roster has an unsafe filename")
         archive_roster[name] = require_sha256(digest, f"archive digest {name}")
-    if len(archive_roster) != (59 if ARCH == "x86_64" else 58):
+    if len(archive_roster) != 59:
         fail("native corpus archive roster count drifted")
     excluded_values = excluded.get("archives")
     if excluded_values != (["musl-1.2.6-r3.apk"] if ARCH == "x86_64" else []) or any(name not in archive_roster for name in excluded_values):

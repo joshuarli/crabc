@@ -23,13 +23,13 @@ sed = "4.9-r2"
 file = "5.47-r2"
 tar = "1.35-r5"
 gzip = "1.15-r0"
-zstd = "1.5.7-r2"
+zstd = "1.6.0-r1"
 sqlite = "3.53.4-r0"
 curl = "8.23.0-r0"
 openssl = "3.5.9-r1"
 openssh-client-default = "10.3_p1-r2"
 git = "2.54.1-r0"
-python3 = "3.14.10-r1"
+python3 = "3.14.10-r2"
 
 [native_version_deltas]
 gzip = { aarch64 = "1.14-r2", x86_64 = "1.15-r0" }
@@ -38,7 +38,8 @@ curl = { aarch64 = "8.21.0-r0", x86_64 = "8.23.0-r0" }
 openssl = { aarch64 = "3.5.7-r0", x86_64 = "3.5.9-r1" }
 openssh-client-default = { aarch64 = "10.3_p1-r0", x86_64 = "10.3_p1-r2" }
 git = { aarch64 = "2.54.0-r0", x86_64 = "2.54.1-r0" }
-python3 = { aarch64 = "3.14.7-r1", x86_64 = "3.14.10-r1" }
+python3 = { aarch64 = "3.14.7-r1", x86_64 = "3.14.10-r2" }
+zstd = { aarch64 = "1.5.7-r2", x86_64 = "1.6.0-r1" }
 
 [archive_roster]
 "acl-libs-2.3.2-r1.apk" = "5bfce1fc46a3625268a7a60c10b5680aa846534d98856a108e692824a1f1b710"
@@ -64,8 +65,8 @@ python3 = { aarch64 = "3.14.7-r1", x86_64 = "3.14.10-r1" }
 "libcrypto3-3.5.9-r1.apk" = "58ea027d8bd64fffac7d2106a9034341d6735387298a5e01b551429c73a13c71"
 "libcurl-8.23.0-r0.apk" = "64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127"
 "libedit-20260508.3.1-r1.apk" = "3055936ce398b3657fe6b0c7c6ce95618bfb2b21364d7aea823a192bb8237ac3"
-"libexpat-2.10.0-r0.apk" = "99144fe0b1bb9316a3bc30c38707996767806661f4a0456fcf4565ac92e79b0f"
-"libffi-3.5.2-r1.apk" = "9a67280b0c7c62db658c2d4d32ed1199903bef859c32dd4245e1a7e35c89ab4b"
+"libexpat-2.11.0-r0.apk" = "cf19455af9c5c9dcd3915294d299f743553855519431bba38577b8c4a23c4373"
+"libffi-3.8.2-r0.apk" = "231d78957b26072bee17deab6cfc26c6ad3336ab52435f479ad63a2af1e6d1d4"
 "libgcc-15.2.0-r5.apk" = "369aaa6e9d099a737bad6dd3e6c2fe7bb1547ca26d22b94ee0411228f709b403"
 "libidn2-2.3.8-r0.apk" = "d02ffda4510652f89c5fb89cd2e7ff721afb0c74e7d75476ad60bebe7ac0ae20"
 "libmagic-5.47-r2.apk" = "bcd233f28a6f1c07cd789c47df2234eb35d2bac295aa223ea2ccef17d75ce0f0"
@@ -83,10 +84,11 @@ python3 = { aarch64 = "3.14.7-r1", x86_64 = "3.14.10-r1" }
 "openssh-keygen-10.3_p1-r2.apk" = "c7ba694e102891f34cc53f143356ec28f961d5e98ac58e6333bec352bffed452"
 "openssl-3.5.9-r1.apk" = "4f5adffa94887a87807d9222cf26930e906ae47e6a15ee9b8d1da034d695614d"
 "pcre2-10.49-r0.apk" = "03efd0b29f7f38deb10a9ccb54f56e19683eb7ac27eb1f347e6dbd2e59ea000d"
-"pyc-3.14.10-r1.apk" = "327b6fa5948e31d6794fd1e49b2b0a06f0d411f37b7942ee906a00f6e3b9a3c3"
-"python3-3.14.10-r1.apk" = "980b5108e756f1aae298c041ef6bb229b655b7a5393b8c001f6bac8a03825429"
-"python3-pyc-3.14.10-r1.apk" = "9dbc6bf33d5c90c51d90bf00ea93e94fc52c0d8d5e8076e557479fd2062bfadf"
-"python3-pycache-pyc0-3.14.10-r1.apk" = "7efec44a37bcb3c958b07f523de214da3ae0e8fb9c4e45cbc2709d7fae15a4a1"
+"pyc-3.14.10-r2.apk" = "5c47c16789e3616d20dccca602780c8a46040cb1e8baa9482360022576460f0d"
+"python3-3.14.10-r2.apk" = "5b3b31cb75a51d0b4956d128f3d737be654740590c0262c4fbd6aae2dfb2afb4"
+"python3-ndbm-3.14.10-r3.apk" = "3c38ca3d623a6a4e32f81245d469c315ef63bfd4944d50b8f7abc00429273019"
+"python3-pyc-3.14.10-r2.apk" = "80fcdbdacd8e4698481dddb0aa8f94b4bb11be489a0f7f9764cab5c31f0b9015"
+"python3-pycache-pyc0-3.14.10-r2.apk" = "6c9c1ec8d5be14c19e333a33a09839fc397a814822868661e886eaa5d94398de"
 "readline-8.3.3-r1.apk" = "9f0ae0923c02b0d6aba62e9173542b65396ba3f0efefcbf087ea32f1120e7b34"
 "sed-4.9-r2.apk" = "0e5acbf1751703d8bb4d30c0cbc7e2abb3511edea618c7cbe7fb70e04946f174"
 "skalibs-libs-2.15.0.0-r0.apk" = "7ea58fb512067402b519079fcce8a48381eb2b9c690341c4a017aa15f719c198"
@@ -97,9 +99,8 @@ python3 = { aarch64 = "3.14.7-r1", x86_64 = "3.14.10-r1" }
 "utmps-libs-0.1.3.3-r0.apk" = "d6487b6f260728969191314f6706d4cc62527370e757ec3ac6f7fee8ed38cf88"
 "xz-libs-5.8.4-r0.apk" = "9be375832e747afe14f98e400e8b55d8f6fde25e41663090c81600628daab093"
 "zlib-1.4-r0.apk" = "d3e30d012a3445222b0b4a28f1d4d97ce67387f8b48561921111696da174f0de"
-"zstd-1.5.7-r2.apk" = "0e4d6b9bcb7db12e3fcd580c6226a88884ddfa561ebc7f64285baef5e789b541"
-"zstd-libs-1.5.7-r2.apk" = "2bb5136c89f5b0bbe1554c8915a3b520d5aa63ae2a51d4d821eb81698db5a818"
-
+"zstd-1.6.0-r1.apk" = "4f1eadcfaa4c63dbb4b5560aa7d3103f624207c6274f2b19530aa1f811e3c130"
+"zstd-libs-1.6.0-r1.apk" = "923a9b5fffbc8272ce65b67fa7f768a9e3ea55c395b36030dc11635f29645eae"
 [excluded_payload]
 archives = []
 

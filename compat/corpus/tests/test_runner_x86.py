@@ -86,7 +86,7 @@ class NativeManifestTests(unittest.TestCase):
         with mock.patch.object(RUNNER, "ARCH", "aarch64"):
             manifest = RUNNER.load_manifest(RUNNER.ROOT / "compat/corpus/manifest-aarch64.toml")
         self.assertEqual(len(manifest.cases), 34)
-        self.assertEqual(len(manifest.archive_roster), 58)
+        self.assertEqual(len(manifest.archive_roster), 59)
         with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
             directory = Path(temporary)
             name = next(iter(manifest.archive_roster))
@@ -137,9 +137,11 @@ class NativeManifestTests(unittest.TestCase):
             package["name"]: package["version"]
             for package in tomllib.loads(self.manifest.source_manifest.read_text())["packages"]
         }
-        package_name = "zstd"
+        package_name = next(name for name, version in sorted(self.manifest.direct_packages.items())
+                            if version == source_versions[name])
         current = self.manifest.direct_packages[package_name]
-        updated = "1.5.7-r3"
+        base, release = current.rsplit("-r", 1)
+        updated = f"{base}-r{int(release) + 1}"
         manifest_text = RUNNER.MANIFEST.read_text()
         self.assertIn(f'{package_name} = "{current}"', manifest_text)
         manifest_text = manifest_text.replace(f'{package_name} = "{current}"', f'{package_name} = "{updated}"', 1)
