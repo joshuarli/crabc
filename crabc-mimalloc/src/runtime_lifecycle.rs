@@ -6902,6 +6902,8 @@ pub unsafe fn native_runtime_abandonment_words_test_audit(
     // SAFETY: the exact live client and quiescent page owner keep this lookup
     // and its short immutable scalar projection valid.
     let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
+    // SAFETY: the live client keeps its page registered and the quiescent
+    // owner excludes ordinary-field mutation while this copies its geometry.
     let page_ref = unsafe { page.as_ref() };
     let block_size = page_ref.block_size();
     if block_size <= SMALL_SIZE_MAX || block_size > MEDIUM_MAX_OBJ_SIZE {

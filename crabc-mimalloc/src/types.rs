@@ -4919,8 +4919,7 @@ impl Page {
     #[cfg(feature = "native-runtime-test-audit")]
     #[inline]
     pub(crate) fn xthread_free_address_at(page: NonNull<Self>) -> usize {
-        // SAFETY: this computes a field address without reading the page.
-        unsafe { core::ptr::addr_of!((*page.as_ptr()).xthread_free) }.addr()
+        page.as_ptr().addr() + core::mem::offset_of!(Self, xthread_free)
     }
 
     #[inline]

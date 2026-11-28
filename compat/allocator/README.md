@@ -575,9 +575,11 @@ until a native x86 run admits them:
   retried CAS leaves the page mapped. A free-triggered unabandon's
   `mi_bitmap_clear_once_set` CAS is paused while an arena reader clears the
   bit and pauses at its ownership claim, so the freer counts one busy wait
-  until the reader restores the bit. Every pause names the exact bitmap word
-  or page head on both sides, and 100 repeated runs of each side under CPU
-  load produced the same 56 values.
+  until the reader restores the bit. That wait runs from the try-free caller
+  and, under `page_reclaim_on_free=1`, from the reclaim-on-free caller, whose
+  freer then owns the page. Every pause names the exact bitmap word or page
+  head on both sides, and repeated runs of each side under CPU load produce
+  the same 77 values.
 - `arena-purge-rotation-c-rust-differential`
   (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
   eight arenas with disabled-delay, immediate-delay, preloading and
@@ -596,9 +598,8 @@ direct-receiver record; the aggregate re-parses every physical transcript.
 The component stays partial. The unown retry after a full unmapped or
 OS-list abandonment stays open, because every source step between that
 collection and the release CAS writes only the page's own metadata (or the
-Heap's OS-list lock), so a page-protection pause cannot isolate it. The
-clear-once wait from the cross-thread reclaim-on-free caller is also not yet
-driven. Large-page and huge-page reservation success, NUMA placement and the
+Heap's OS-list lock), so a page-protection pause cannot isolate it.
+Large-page and huge-page reservation success, NUMA placement and the
 16 KiB and 64 KiB base-page geometries stay open because this VM cannot
 supply them.
 

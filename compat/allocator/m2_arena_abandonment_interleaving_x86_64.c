@@ -5,13 +5,13 @@
    page; its SIGSEGV handler waits until the main thread has let another
    thread act and restored the page, and the access then retries.
 
-   unown.first: the exiting owner's publication of its page's
+   first: the exiting owner's publication of its page's
    `pages_abandoned[bin]` bit (src/arena.c:1330-1331) faults. The freer frees
    the page's last block while the owner still holds the low owner bit
    (src/free.c:62-97), so `mi_abandoned_page_unown` sees it at its first head
    load and takes the all-free unabandon-and-free arm (src/arena.c:631-653).
 
-   unown.cas and unown.cas_live: after that publication the owner's release
+   cas and cas_live: after that publication the owner's release
    CAS faults. The freer's publication makes the CAS fail; the retry collects
    it, and frees the page when no block is live, or releases ownership with
    the page still mapped when one block is.
@@ -24,9 +24,15 @@
    counts one busy wait and spins (src/bitmap.c:109-129) until the reader's
    failed claim restores the bit, then frees the page.
 
+   reclaim: as wait, but with `page_reclaim_on_free=1` and a second block
+   still live, so the freer's unabandon is the one of
+   `mi_abandoned_page_try_reclaim` (src/free.c:428-476). After the reader
+   restores the bit the freer reclaims the page into its own Theap.
+
    `crabc-mimalloc/tests/native_arena_abandonment_interleaving.rs` prints the
    same fields. */
 #include "static.c"
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -82,10 +88,17 @@ static int current_role(void) {
   return 0;
 }
 
+static void pause_at(uintptr_t address);
+
 static void on_fault(int signal, siginfo_t* info, void* context) {
   (void)signal;
   (void)context;
-  const uintptr_t address = (uintptr_t)info->si_addr;
+  const int saved_errno = errno;
+  pause_at((uintptr_t)info->si_addr);
+  errno = saved_errno;
+}
+
+static void pause_at(uintptr_t address) {
   const uintptr_t base = address & ~(os_page - 1);
   const int role = current_role();
   const bool armed_page = base == atomic_load(&armed[0]) || base == atomic_load(&armed[1]);
@@ -198,8 +211,12 @@ static void emit_span(const char* name, const span_t* span) {
   emit(name, "purge", (long long)purge);
 }
 
+enum { JOB_FREE = 1, JOB_OWNS = 2 };
+
 static mailbox_t freer_box;
 static _Atomic(void*) freer_job;
+static _Atomic int freer_kind;
+static _Atomic bool freer_owns;
 static int freer_jobs;
 
 static void* freer(void* unused) {
@@ -213,7 +230,11 @@ static void* freer(void* unused) {
     await_posted(&freer_box, job);
     void* const block = atomic_load_explicit(&freer_job, memory_order_acquire);
     if (block == NULL) break;
-    mi_free(block);
+    if (atomic_load_explicit(&freer_kind, memory_order_relaxed) == JOB_FREE) {
+      mi_free(block);
+    } else {
+      atomic_store(&freer_owns, mi_page_thread_id(_mi_ptr_page(block)) == _mi_thread_id());
+    }
     complete(&freer_box);
   }
   mi_free(own);
@@ -221,11 +242,14 @@ static void* freer(void* unused) {
   return NULL;
 }
 
-static void post_free(void* block) {
+static void post_job(int kind, void* block) {
+  atomic_store_explicit(&freer_kind, kind, memory_order_relaxed);
   atomic_store_explicit(&freer_job, block, memory_order_release);
   freer_jobs++;
   post(&freer_box);
 }
+
+static void post_free(void* block) { post_job(JOB_FREE, block); }
 
 static void await_free(void) { await_completed(&freer_box, freer_jobs + 1); }
 
@@ -364,14 +388,16 @@ static size_t main_heap_abandoned_count(void) {
   return count;
 }
 
-static void unabandon_wait(void) {
+static void unabandon_wait(const char* name, size_t count) {
   owner_t state = {0};
-  start_owner(&state, 1);
+  start_owner(&state, count);
   post(&state.box);
   finish_owner(&state);
   const span_t span = span_of(state.blocks[0]);
-  emit_layout("wait", &span, state.blocks[0]);
-  emit_span("wait.abandoned", &span);
+  emit_layout(name, &span, state.blocks[0]);
+  char span_name[32];
+  snprintf(span_name, sizeof span_name, "%s.abandoned", name);
+  emit_span(span_name, &span);
   mi_page_t* const page = _mi_ptr_page(state.blocks[0]);
   const uintptr_t word = abandoned_word(&span);
   const uintptr_t head = (uintptr_t)&page->xthread_free;
@@ -382,30 +408,46 @@ static void unabandon_wait(void) {
   const int64_t waits_before = busy_waits();
   reset_pauses();
   restrict_page(0, word, PROT_READ);
-  post_free(state.blocks[0]);
-  emit("wait", "freer_pause_word", await_pause(0, ROLE_FREER) == word);
-  emit("wait", "freer_owns", (mi_atomic_load_relaxed(&page->xthread_free) & 1) == 1);
+  post_free(state.blocks[count - 1]);
+  emit(name, "freer_pause_word", await_pause(0, ROLE_FREER) == word);
+  emit(name, "freer_owns", (mi_atomic_load_relaxed(&page->xthread_free) & 1) == 1);
   restrict_page(1, head, PROT_READ);
   restore_page(0, word);
   post(&observer.box);
-  emit("wait", "reader_pause_head", await_pause(1, ROLE_READER) == head);
-  emit("wait", "reader_cleared", !mi_bitmap_is_setN(span.pages->pages_abandoned[span.bin], span.slice, 1));
+  emit(name, "reader_pause_head", await_pause(1, ROLE_READER) == head);
+  emit(name, "reader_cleared", !mi_bitmap_is_setN(span.pages->pages_abandoned[span.bin], span.slice, 1));
   release_pause(0);
   struct timespec start;
   clock_gettime(CLOCK_MONOTONIC, &start);
   while (busy_waits() == waits_before && elapsed_since(&start) < 30) sched_yield();
-  emit("wait", "freer_waiting", busy_waits() - waits_before);
+  emit(name, "freer_waiting", busy_waits() - waits_before);
   restore_page(1, head);
   release_pause(1);
   await_free();
   await_completed(&observer.box, 2);
-  emit("wait", "busy_waits", busy_waits() - waits_before);
-  emit("wait", "reader_owns", observer.owned);
-  emit("wait", "pauses", atomic_load(&pause_count));
-  emit("wait.freed", "abandoned_count", (long long)main_heap_abandoned_count());
+  emit(name, "busy_waits", busy_waits() - waits_before);
+  emit(name, "reader_owns", observer.owned);
+  emit(name, "pauses", atomic_load(&pause_count));
+  char freed_name[32];
+  snprintf(freed_name, sizeof freed_name, "%s.freed", name);
+  emit(freed_name, "abandoned_count", (long long)main_heap_abandoned_count());
+  if (count > 1) {
+    post_job(JOB_OWNS, state.blocks[0]);
+    await_free();
+    emit(name, "freer_reclaimed", atomic_load(&freer_owns));
+    snprintf(span_name, sizeof span_name, "%s.reclaimed", name);
+    emit_span(span_name, &span);
+  }
   post(&observer.box);
   require(pthread_join(observer.thread, NULL) == 0);
-  emit_span("wait.last", &span);
+  if (count > 1) {
+    post_free(state.blocks[0]);
+    await_free();
+  } else {
+    char last_name[32];
+    snprintf(last_name, sizeof last_name, "%s.last", name);
+    emit_span(last_name, &span);
+  }
 }
 
 int main(void) {
@@ -426,7 +468,10 @@ int main(void) {
   unown_first();
   unown_cas("cas", 1);
   unown_cas("cas_live", 2);
-  unabandon_wait();
+  unabandon_wait("wait", 1);
+  mi_option_set(mi_option_page_reclaim_on_free, 1);
+  unabandon_wait("reclaim", 2);
+  mi_option_set(mi_option_page_reclaim_on_free, 0);
   atomic_store_explicit(&freer_job, NULL, memory_order_release);
   post(&freer_box);
   require(pthread_join(thread, NULL) == 0);

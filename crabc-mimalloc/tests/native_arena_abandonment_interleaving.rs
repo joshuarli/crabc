@@ -24,7 +24,7 @@ use crabc_mimalloc::__crabc_runtime::{
     native_runtime_abandonment_words_test_audit, native_runtime_arena_span_state_test_audit,
     native_runtime_current_local_page_test_audit, native_runtime_live_client_arena_span_test_audit,
     native_runtime_live_client_page_test_audit, native_runtime_main_heap_abandoned_count_test_audit,
-    native_runtime_unabandon_busy_wait_test_audit, prepare_native_later_thread_arena,
+    native_runtime_unabandon_busy_wait_test_audit, prepare_native_later_thread_arena, source_options_api,
 };
 
 const REQUEST: usize = 10_248;
@@ -38,6 +38,7 @@ const SA_SIGINFO: c_int = 4;
 const PROT_READ: u32 = 1;
 const PROT_READ_WRITE: u32 = 3;
 const SIGINFO_ADDRESS_OFFSET: usize = 16;
+const PAGE_RECLAIM_ON_FREE: c_int = 35;
 
 #[repr(C)]
 struct SigAction {
@@ -49,6 +50,7 @@ struct SigAction {
 
 unsafe extern "C" {
     fn sigaction(signal: c_int, action: *const SigAction, previous: *mut SigAction) -> c_int;
+    fn __errno_location() -> *mut c_int;
 }
 
 struct Pause {
@@ -72,9 +74,20 @@ fn current_role() -> usize {
 }
 
 extern "C" fn on_fault(_signal: c_int, info: *mut c_void, _context: *mut c_void) {
+    // SAFETY: musl returns the faulting thread's live errno slot.
+    let errno = unsafe { __errno_location() };
+    // SAFETY: that slot stays valid for the whole handler.
+    let saved_errno = unsafe { errno.read() };
+    let field = info.cast::<u8>().wrapping_add(SIGINFO_ADDRESS_OFFSET).cast::<usize>();
     // SAFETY: the kernel passes a valid `siginfo_t` for an SA_SIGINFO
     // SIGSEGV; `si_addr` follows its three leading ints and padding.
-    let address = unsafe { info.cast::<u8>().add(SIGINFO_ADDRESS_OFFSET).cast::<usize>().read() };
+    let address = unsafe { field.read() };
+    pause_at(address);
+    // SAFETY: as above; the handler restores the interrupted code's errno.
+    unsafe { errno.write(saved_errno) };
+}
+
+fn pause_at(address: usize) {
     let base = address & !(OS_PAGE.load(Ordering::Relaxed) - 1);
     let role = current_role();
     let armed = ARMED.iter().any(|page| page.load(Ordering::Acquire) == base);
@@ -198,24 +211,40 @@ fn finish() {
     assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
 }
 
+enum Job {
+    Free(usize),
+    Owns(usize),
+}
+
 struct Freer {
-    jobs: Sender<Option<usize>>,
-    done: Receiver<()>,
+    jobs: Sender<Option<Job>>,
+    done: Receiver<i64>,
     thread: std::thread::JoinHandle<()>,
 }
 
 impl Freer {
     fn start() -> Self {
-        let (jobs, job_receiver) = channel::<Option<usize>>();
+        let (jobs, job_receiver) = channel::<Option<Job>>();
         let (done_sender, done) = channel();
         let thread = std::thread::spawn(move || {
             register_role(ROLE_FREER);
             attach();
             let own = allocate(REQUEST);
-            done_sender.send(()).expect("the main thread awaits the freer");
-            while let Some(address) = job_receiver.recv().expect("the main thread posts jobs") {
-                free(NonNull::new(address as *mut u8).expect("a client"));
-                done_sender.send(()).expect("the main thread awaits the free");
+            done_sender.send(0).expect("the main thread awaits the freer");
+            while let Some(job) = job_receiver.recv().expect("the main thread posts jobs") {
+                let result = match job {
+                    Job::Free(address) => {
+                        free(NonNull::new(address as *mut u8).expect("a client"));
+                        0
+                    }
+                    Job::Owns(address) => {
+                        let block = NonNull::new(address as *mut u8).expect("a client");
+                        // SAFETY: the client is live and this thread is its
+                        // only allocator participant.
+                        i64::from(unsafe { native_runtime_current_local_page_test_audit(block) }.is_ok())
+                    }
+                };
+                done_sender.send(result).expect("the main thread awaits the job");
             }
             free(own);
             finish();
@@ -225,7 +254,12 @@ impl Freer {
     }
 
     fn post(&self, block: NonNull<u8>) {
-        self.jobs.send(Some(block.as_ptr() as usize)).expect("the freer accepts a job");
+        self.jobs.send(Some(Job::Free(block.as_ptr() as usize))).expect("the freer accepts a job");
+    }
+
+    fn owns(&self, block: NonNull<u8>) -> i64 {
+        self.jobs.send(Some(Job::Owns(block.as_ptr() as usize))).expect("the freer accepts a job");
+        self.done.recv_timeout(WAIT).expect("the ownership check returns")
     }
 
     fn await_free(&self) {
@@ -342,14 +376,14 @@ fn busy_waits() -> i64 {
     native_runtime_unabandon_busy_wait_test_audit().expect("the active subprocess statistics are auditable")
 }
 
-fn unabandon_wait(freer: &Freer) {
-    let owner = Owner::start(1);
-    let block = owner.blocks[0];
-    let (span, words) = audits(block);
+fn unabandon_wait(freer: &Freer, name: &str, count: usize) {
+    let owner = Owner::start(count);
+    let blocks = owner.blocks.clone();
+    let (span, words) = audits(blocks[0]);
     owner.post_exit();
     owner.finish();
-    emit_layout("wait", words);
-    emit_span("wait.abandoned", span);
+    emit_layout(name, words);
+    emit_span(&format!("{name}.abandoned"), span);
 
     let (ready_sender, ready) = channel();
     let (go, go_receiver) = channel::<()>();
@@ -372,35 +406,44 @@ fn unabandon_wait(freer: &Freer) {
     let waits_before = busy_waits();
     reset_pauses();
     restrict_page(0, words.abandoned_word, PROT_READ);
-    freer.post(block);
-    emit("wait", "freer_pause_word", i64::from(await_pause(0, ROLE_FREER) == words.abandoned_word));
+    freer.post(blocks[count - 1]);
+    emit(name, "freer_pause_word", i64::from(await_pause(0, ROLE_FREER) == words.abandoned_word));
     // SAFETY: the freer holds the page's owner bit and is paused before it
     // can release the page, so its initialized head word stays mapped.
     let head = unsafe { (*(words.thread_free as *const AtomicUsize)).load(Ordering::Relaxed) };
-    emit("wait", "freer_owns", i64::from(head & 1 == 1));
+    emit(name, "freer_owns", i64::from(head & 1 == 1));
     restrict_page(1, words.thread_free, PROT_READ);
     restore_page(0, words.abandoned_word);
     go.send(()).expect("the reader accepts the search");
-    emit("wait", "reader_pause_head", i64::from(await_pause(1, ROLE_READER) == words.thread_free));
-    emit("wait", "reader_cleared", 1 - abandoned_record_set(span));
+    emit(name, "reader_pause_head", i64::from(await_pause(1, ROLE_READER) == words.thread_free));
+    emit(name, "reader_cleared", 1 - abandoned_record_set(span));
     release_pause(0);
     let deadline = Instant::now() + WAIT;
     while busy_waits() == waits_before && Instant::now() < deadline {
         std::thread::yield_now();
     }
-    emit("wait", "freer_waiting", busy_waits() - waits_before);
+    emit(name, "freer_waiting", busy_waits() - waits_before);
     restore_page(1, words.thread_free);
     release_pause(1);
     freer.await_free();
     let owned = ready.recv_timeout(WAIT).expect("the reader allocates");
-    emit("wait", "busy_waits", busy_waits() - waits_before);
-    emit("wait", "reader_owns", owned);
-    emit("wait", "pauses", PAUSE_COUNT.load(Ordering::Acquire) as i64);
-    emit("wait.freed", "abandoned_count", native_runtime_main_heap_abandoned_count_test_audit()
+    emit(name, "busy_waits", busy_waits() - waits_before);
+    emit(name, "reader_owns", owned);
+    emit(name, "pauses", PAUSE_COUNT.load(Ordering::Acquire) as i64);
+    emit(&format!("{name}.freed"), "abandoned_count", native_runtime_main_heap_abandoned_count_test_audit()
         .expect("the main Heap is auditable") as i64);
+    if count > 1 {
+        emit(name, "freer_reclaimed", freer.owns(blocks[0]));
+        emit_span(&format!("{name}.reclaimed"), span);
+    }
     go.send(()).expect("the reader accepts its end");
     reader.join().expect("the reader completes");
-    emit_span("wait.last", span);
+    if count > 1 {
+        freer.post(blocks[0]);
+        freer.await_free();
+    } else {
+        emit_span(&format!("{name}.last"), span);
+    }
 }
 
 #[test]
@@ -415,6 +458,9 @@ fn abandonment_interleavings_match_the_pinned_source() {
     unown_first(&freer);
     unown_cas(&freer, "cas", 1);
     unown_cas(&freer, "cas_live", 2);
-    unabandon_wait(&freer);
+    unabandon_wait(&freer, "wait", 1);
+    source_options_api::option_set(PAGE_RECLAIM_ON_FREE, 1);
+    unabandon_wait(&freer, "reclaim", 2);
+    source_options_api::option_set(PAGE_RECLAIM_ON_FREE, 0);
     freer.stop();
 }

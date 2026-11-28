@@ -897,7 +897,9 @@ def _m2_aarch64_arena_abandonment_interleaving_trace() -> dict[str, int]:
     block still live the retried CAS leaves the page mapped until its last
     free. A free-triggered unabandon whose clear-once CAS finds the bit taken
     by a concurrent arena reader counts one busy wait and clears it only after
-    the reader's failed claim restores it. Every paused access is the exact
+    the reader's failed claim restores it, both from the try-free caller and,
+    under `page_reclaim_on_free=1`, from the reclaim-on-free caller, whose
+    freer then owns the reclaimed page. Every paused access is the exact
     bitmap word or page head, on an OS page distinct from the head, the bin's
     bitmap pointer and the arena base.
     """
@@ -907,6 +909,10 @@ def _m2_aarch64_arena_abandonment_interleaving_trace() -> dict[str, int]:
 
     freed = span(0, 0, 8)
     mapped = span(1, 1, 0)
+    waiting = {
+        "distinct_pages": 1, "freer_pause_word": 1, "freer_owns": 1, "reader_pause_head": 1,
+        "reader_cleared": 1, "freer_waiting": 1, "busy_waits": 1, "reader_owns": 1, "pauses": 2,
+    }
     rows: dict[str, dict[str, int]] = {
         "first": {"distinct_pages": 1, "exit_pause_word": 1, "freer_returned": 1, "pauses": 1},
         "first.exit": freed,
@@ -920,13 +926,14 @@ def _m2_aarch64_arena_abandonment_interleaving_trace() -> dict[str, int]:
         "cas.exit": freed,
         "cas_live.exit": mapped,
         "cas_live.last": freed,
-        "wait": {
-            "distinct_pages": 1, "freer_pause_word": 1, "freer_owns": 1, "reader_pause_head": 1,
-            "reader_cleared": 1, "freer_waiting": 1, "busy_waits": 1, "reader_owns": 1, "pauses": 2,
-        },
+        "wait": waiting,
         "wait.abandoned": mapped,
         "wait.freed": {"abandoned_count": 0},
         "wait.last": freed,
+        "reclaim": {**waiting, "freer_reclaimed": 1},
+        "reclaim.abandoned": mapped,
+        "reclaim.freed": {"abandoned_count": 0},
+        "reclaim.reclaimed": span(1, 0, 0),
     }
     return {f"{name}.{field}": value for name, fields in rows.items() for field, value in fields.items()}
 
