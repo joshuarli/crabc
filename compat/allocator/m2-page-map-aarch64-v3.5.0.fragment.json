@@ -369,7 +369,7 @@
       }
     ],
     "remaining_conditions": [
-      "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts. The executed receivers and their expected relations are fixed to the qualifying arm64 VM's 4 KiB base pages; its 48-bit PageMap span (`MI_MAX_VABITS`, include/mimalloc/bits.h:119-128) reserves a 4.25 MiB good-size top-level map, twice the x86-64 extent, and those relations are compared natively here."
+      "Repeat this component's native evidence on 16 KiB and 64 KiB base-page AArch64 hosts. The executed receivers and their expected relations are fixed to the qualifying arm64 VM's 4 KiB base pages; its 48-bit PageMap span (`MI_MAX_VABITS`, include/mimalloc/bits.h:119-128) doubles the x86-64 top-level entry count, so the good-size reservation with its trailing submap is 4.25 MiB rather than 2.25 MiB, and those relations are compared natively here."
     ]
   }
 }
