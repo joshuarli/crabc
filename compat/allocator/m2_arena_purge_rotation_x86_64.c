@@ -1,7 +1,8 @@
 /* Copyright (c) 2026 crabc contributors. SPDX-License-Identifier: MIT */
 /* Pinned `mi_arenas_try_purge` (src/arena.c:2389-2435) over eight regular
    arenas, each with one freed committed slice scheduled for purge and arena 1
-   marked pinned afterwards. A preloading call returns before any visit; four
+   marked pinned afterwards. A disabled (negative) and an immediate (zero)
+   purge delay, and a preloading call, each return before any visit; four
    forced bounded calls then spend the `max_arena/4 + 1` budget from their
    thread-sequence start, skip the pinned arena (src/arena.c:2362-2365), drain
    the rest and finally clear the subprocess expiration. */
@@ -83,6 +84,13 @@ int main(void) {
   const int64_t bytes = owner->stats.purged.total;
   emit("setup", mi_arenas_get_count(owner) == ARENAS);
   emit("initial_pending", pending_mask());
+  mi_option_set(mi_option_purge_delay, -1);
+  mi_arenas_try_purge(true, true, owner, 0);
+  emit_stage("disabled", visits, calls);
+  mi_option_set(mi_option_purge_delay, 0);
+  mi_arenas_try_purge(true, true, owner, 0);
+  emit_stage("immediate", visits, calls);
+  mi_option_set(mi_option_purge_delay, 100000);
   os_preloading = true;
   mi_arenas_try_purge(true, true, owner, 0);
   os_preloading = false;

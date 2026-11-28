@@ -5289,6 +5289,13 @@ mod tests {
                 (std::format!("{name}_calls"), vm.purge_calls - before_vm.purge_calls),
             ]);
         };
+        for (name, delay) in [("disabled", -1), ("immediate", 0)] {
+            let unpurged = purge_process(delay, true);
+            // SAFETY: `unpurged` reads only its own purge delay, which ends
+            // the traversal before any arena or binding is inspected.
+            assert!(unsafe { backing.collect_purge(unpurged, config(), true, true, 0) });
+            stage(name, &mut rows);
+        }
         process.policy().enter_process_done_preloading();
         // SAFETY: `process` and `config()` are this backing's fixed binding,
         // every published arena stays live and no claim is outstanding.

@@ -953,6 +953,8 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
             **{
                 f"{stage}_{field}": value
                 for stage, values in (
+                    ("disabled", (255, 0, 1, 0, 0)),
+                    ("immediate", (255, 0, 1, 0, 0)),
                     ("preloading", (255, 0, 1, 0, 0)),
                     ("first", (242, 13, 2, 3, 3)),
                     ("second", (18, 237, 2, 6, 6)),
@@ -966,7 +968,7 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "c_only": {},
         "rust_only": {},
         "c_receipt": None,
-        "scope": "pinned-c-rust-eight-arena-bounded-purge-rotation-with-preloading-refusal-pinned-skip-three-visit-budget-and-global-clear",
+        "scope": "pinned-c-rust-eight-arena-bounded-purge-rotation-with-disabled-immediate-and-preloading-refusals-pinned-skip-three-visit-budget-and-global-clear",
     },
     "arena-page-abandonment-c-rust-differential": {
         "artifact": "m2-arena-abandonment",
