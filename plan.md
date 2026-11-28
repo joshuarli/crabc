@@ -178,9 +178,15 @@ runtime defect: AArch64 `__divtc3` called compiler_builtins' Rust-ABI
 `e367a4188`). Candidate 3 runs at `e367a4188` in the VM clone's
 `.work/wt/arm-cand3` (log `.work/wt/arm-cand3-run.log`).
 
-Allocator M2 on AArch64 (`fc949c1dd`): the VM component runs natively (63
-checks, no C/Rust mismatch); its conditions narrow as the arenas,
-fault-injection and M7 statistics components land.
+Allocator M2 on AArch64: all eight components run natively with no C/Rust
+mismatch; bitmaps and recursion are complete (`f9d27ec12`). `0dbeffd7e` closed
+the arena unown and unabandon interleavings by page-protection pauses at the
+exact source access on both sides, made both concurrent-reserve tests
+deterministic, and narrowed the VM conditions to source facts. Still open and
+not host-limited: VM trim, hint and THP callers and the subprocess statistics
+owner; the unmapped and OS-list unown retry; installed-product initialization;
+and the remaining fault-injection receivers. Pending for x86: the interleaving
+receiver and the two concurrent-reserve fields.
 
 Blocked here: allocator conditions that need hugetlbfs pools, physical NUMA
 nodes or 16/64 KiB pages. The OrbStack kernel has no hugetlbfs and no NUMA
