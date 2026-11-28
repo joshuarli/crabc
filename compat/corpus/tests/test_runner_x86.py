@@ -127,7 +127,7 @@ class NativeManifestTests(unittest.TestCase):
         changed = {name for name, version in self.manifest.direct_packages.items() if version != source_versions[name]}
         deltas = tomllib.loads(RUNNER.MANIFEST.read_text())["native_version_deltas"]
         self.assertEqual(len(self.manifest.archive_roster), 59)
-        self.assertEqual(self.manifest.excluded_archives, {"musl-1.2.6-r3.apk"})
+        self.assertEqual(self.manifest.excluded_archives, set(RUNNER.EXCLUDED_PAYLOAD[RUNNER.ARCH]))
         self.assertEqual(set(deltas), changed)
         for name in changed:
             self.assertEqual(deltas[name], {"aarch64": source_versions[name], "x86_64": self.manifest.direct_packages[name]})
@@ -231,20 +231,21 @@ class ProductIdentityTests(unittest.TestCase):
                 (product / "lib").mkdir(parents=True)
                 (product / "usr/lib").mkdir(parents=True)
                 (product / "share/crabc").mkdir(parents=True)
-                (product / "lib/ld-crabc-x86_64.so.1").write_bytes(b"selected loader")
+                (product / f"lib/ld-crabc-{RUNNER.ARCH}.so.1").write_bytes(b"selected loader")
                 (product / "usr/lib/libc.so").write_bytes(b"selected libc")
-                (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
+                (product / f"lib/ld-crabc-{RUNNER.ARCH}.so.1").chmod(0o755)
                 (product / "usr/lib/libc.so").chmod(0o755)
-                (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+                for alias, target in RUNNER.PRODUCT_ALIAS.items():
+                    (product / alias).symlink_to(target)
             selected = {
                 name: RUNNER.sha256_file(dynamic / name, name)
-                for name in ("lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so")
+                for name in (f"lib/ld-crabc-{RUNNER.ARCH}.so.1", "usr/lib/libc.so")
             }
             dynamic_manifest = {
                 "schema": 1, "format": RUNNER.PRODUCT_FORMAT,
-                "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
+                "target": f"{RUNNER.ARCH}-unknown-linux-musl", "toolchain": "pinned-test",
                 "hardening_profile": "compatibility", "files": selected,
-                "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+                "symlinks": dict(RUNNER.PRODUCT_ALIAS),
             }
             (dynamic / "share/crabc/manifest.json").write_text(json.dumps(dynamic_manifest))
             (combined / "share/crabc/dynamic").mkdir()
@@ -255,8 +256,8 @@ class ProductIdentityTests(unittest.TestCase):
             static_archive.write_bytes(b"selected archive")
             static_manifest = combined / "share/crabc/static/manifest.json"
             static_manifest.write_text(json.dumps({
-                "schema": 1, "format": "crabc-x86-64-owned-static-sysroot-v1",
-                "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
+                "schema": 1, "format": RUNNER.STATIC_PRODUCT_FORMAT,
+                "target": f"{RUNNER.ARCH}-unknown-linux-musl", "toolchain": "pinned-test",
                 "hardening_profile": "compatibility", "installed": {"files": {"usr/lib/libc.a": RUNNER.sha256_file(static_archive, "static archive")}},
             }))
             files = dict(selected)
@@ -264,8 +265,8 @@ class ProductIdentityTests(unittest.TestCase):
             files["usr/lib/libc.a"] = RUNNER.sha256_file(static_archive, "static archive")
             files["share/crabc/static/manifest.json"] = RUNNER.sha256_file(static_manifest, "static manifest")
             combined_manifest = {
-                "schema": 1, "format": "crabc-x86-64-owned-sysroot-v1",
-                "target": "x86_64-unknown-linux-musl", "toolchain": "pinned-test",
+                "schema": 1, "format": RUNNER.COMBINED_PRODUCT_FORMAT,
+                "target": f"{RUNNER.ARCH}-unknown-linux-musl", "toolchain": "pinned-test",
                 "hardening_profile": "compatibility", "modes": ["static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
                 "files": files, "executables": sorted(selected), "symlinks": dynamic_manifest["symlinks"],
                 "products": {
@@ -273,7 +274,7 @@ class ProductIdentityTests(unittest.TestCase):
                                 "manifest": "share/crabc/dynamic/manifest.json",
                                 "placements": {**{name: name for name in selected},
                                                "share/crabc/manifest.json": "share/crabc/dynamic/manifest.json"}},
-                    "static": {"format": "crabc-x86-64-owned-static-sysroot-v1",
+                    "static": {"format": RUNNER.STATIC_PRODUCT_FORMAT,
                                "manifest": "share/crabc/static/manifest.json",
                                "placements": {"usr/lib/libc.a": "usr/lib/libc.a",
                                               "share/crabc/manifest.json": "share/crabc/static/manifest.json"}},
@@ -305,19 +306,19 @@ class ProductIdentityTests(unittest.TestCase):
                 RUNNER.validate_product(combined)
             embedded.write_bytes(embedded_bytes)
 
-            loader = combined / "lib/ld-crabc-x86_64.so.1"
+            loader = combined / f"lib/ld-crabc-{RUNNER.ARCH}.so.1"
             loader.chmod(0o644)
-            with self.assertRaisesRegex(RUNNER.CorpusError, "mode differs: lib/ld-crabc-x86_64.so.1"):
+            with self.assertRaisesRegex(RUNNER.CorpusError, f"mode differs: lib/ld-crabc-{RUNNER.ARCH}.so.1"):
                 RUNNER.validate_product(combined)
             loader.chmod(0o755)
 
-            alias = combined / "lib/ld-musl-x86_64.so.1"
+            alias = combined / f"lib/ld-musl-{RUNNER.ARCH}.so.1"
             alias.unlink()
             alias.symlink_to("libc.so")
             with self.assertRaisesRegex(RUNNER.CorpusError, "installed roster drifted"):
                 RUNNER.validate_product(combined)
             alias.unlink()
-            alias.symlink_to("ld-crabc-x86_64.so.1")
+            alias.symlink_to(f"ld-crabc-{RUNNER.ARCH}.so.1")
 
             combined_manifest["files"]["usr//lib/libc.so"] = combined_manifest["files"].pop("usr/lib/libc.so")
             combined_manifest_path.write_text(json.dumps(combined_manifest))
@@ -493,12 +494,24 @@ class PrivatePayloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "fixture-1.0-r0.apk"
             with tarfile.open(archive, "w:gz") as stream:
-                metadata = b"pkgname = fixture\npkgver = 1.0-r0\narch = x86_64\n"
+                metadata = f"pkgname = fixture\npkgver = 1.0-r0\narch = {RUNNER.ARCH}\n".encode()
                 info = tarfile.TarInfo(".PKGINFO")
                 info.size = len(metadata)
                 import io
                 stream.addfile(info, io.BytesIO(metadata))
-            self.assertEqual(RUNNER.apk_metadata(archive), {"pkgname": "fixture", "pkgver": "1.0-r0", "arch": "x86_64"})
+            self.assertEqual(RUNNER.apk_metadata(archive), {"pkgname": "fixture", "pkgver": "1.0-r0", "arch": RUNNER.ARCH})
+
+    def test_apk_metadata_rejects_a_foreign_architecture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "fixture-1.0-r0.apk"
+            foreign_arch = "aarch64" if RUNNER.ARCH == "x86_64" else "x86_64"
+            with tarfile.open(archive, "w:gz") as stream:
+                metadata = f"pkgname = fixture\npkgver = 1.0-r0\narch = {foreign_arch}\n".encode()
+                info = tarfile.TarInfo(".PKGINFO")
+                info.size = len(metadata)
+                stream.addfile(info, io.BytesIO(metadata))
+            with self.assertRaisesRegex(RUNNER.CorpusError, "identity differs"):
+                RUNNER.apk_metadata(archive)
 
     def test_apk_metadata_accepts_noarch_payloads_from_the_x86_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -524,8 +537,8 @@ class PrivatePayloadTests(unittest.TestCase):
             root = Path(temporary)
             (root / "lib").mkdir()
             (root / "usr/lib").mkdir(parents=True)
-            loader = root / "lib/ld-musl-x86_64.so.1"
-            libc = root / "lib/libc.musl-x86_64.so.1"
+            loader = root / f"lib/ld-musl-{RUNNER.ARCH}.so.1"
+            libc = root / f"lib/libc.musl-{RUNNER.ARCH}.so.1"
             loader.write_bytes(b"loader")
             libc.write_bytes(b"libc")
             (root / "usr/lib/libc.so").write_bytes(b"foreign")
@@ -869,7 +882,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
                 self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--quiet"]), 0)
             self.assertEqual(__import__("json").loads(report.read_text(encoding="utf-8")), result)
             self.assertIn(f"owned package corpus evidence: {run_root}", stderr.getvalue())
-            self.assertIn("owned x86_64 package corpus: status: pass", stderr.getvalue())
+            self.assertIn(f"owned {RUNNER.ARCH} package corpus: status: pass", stderr.getvalue())
             self.assertIn(str(report), stderr.getvalue())
 
     def test_fresh_explicit_report_is_created_below_checkout_work(self) -> None:
@@ -910,7 +923,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
             (root / "lib").mkdir()
             runtime = root / "lib/libc.so"
             runtime.write_bytes(b"original musl runtime")
-            (root / "lib/ld-musl-x86_64.so.1").symlink_to("libc.so")
+            (root / f"lib/ld-musl-{RUNNER.ARCH}.so.1").symlink_to("libc.so")
             marker = root / ".crabc-oracle"
             marker.write_bytes(b"same pinned source marker")
             with mock.patch.object(RUNNER, "ORACLE_ROOT", root), \
@@ -923,7 +936,7 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
     def test_source_identity_binds_the_actual_process_lifetime_helpers(self) -> None:
         identity = RUNNER.source_identity(self.manifest)
         self.assertEqual(identity["runner"]["path"], "compat/corpus/run_x86.py")
-        self.assertEqual(identity["native_manifest"]["path"], "compat/corpus/manifest-x86_64.toml")
+        self.assertEqual(identity["native_manifest"]["path"], f"compat/corpus/manifest-{RUNNER.ARCH}.toml")
         self.assertEqual(identity["workload_source"]["path"], "compat/corpus/manifest.toml")
         self.assertEqual(
             {entry["path"] for entry in identity["process_lifetime_helpers"].values()},

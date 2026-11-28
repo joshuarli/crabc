@@ -46,6 +46,7 @@ KEYS = Path("/etc/apk/keys")
 ORACLE_SOURCE_MANIFEST = ORACLE_ROOT / ".crabc-oracle"
 LIFETIME_HELPER = ROOT / "compat/x86_64/run_qualification_manifest.py"
 LIFETIME_HELPER_MANIFEST = ROOT / "compat/x86_64/generate_qualification_manifest.py"
+EXCLUDED_PAYLOAD = {"x86_64": ("musl-1.2.6-r3.apk",), "aarch64": ()}
 TIERS = ("A", "B", "C", "D")
 TIMEOUT_SECONDS = 12
 SCHEMA = "crabc.x86_64-owned-package-corpus/v3"
@@ -340,7 +341,7 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     if len(archive_roster) != 59:
         fail("native corpus archive roster count drifted")
     excluded_values = excluded.get("archives")
-    if excluded_values != (["musl-1.2.6-r3.apk"] if ARCH == "x86_64" else []) or any(name not in archive_roster for name in excluded_values):
+    if excluded_values != list(EXCLUDED_PAYLOAD[ARCH]) or any(name not in archive_roster for name in excluded_values):
         fail("native corpus excluded libc archive contract drifted")
     source_text = workload.get("source_manifest")
     if not isinstance(source_text, str):

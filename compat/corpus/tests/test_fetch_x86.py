@@ -142,7 +142,7 @@ class MaterializeTests(unittest.TestCase):
             with mock.patch.object(FETCH, "ROOT", root), mock.patch.object(FETCH, "MANIFEST", manifest), \
                     mock.patch.object(FETCH, "primary_input", return_value=None), \
                     mock.patch.object(FETCH, "install", side_effect=install), contextlib.redirect_stderr(errors):
-                self.assertEqual(FETCH.main([]), 1)
+                self.assertEqual(FETCH.main(["--architecture", "x86_64"]), 1)
             self.assertEqual(calls, ["apks/absent.apk", "apks/available.apk", FETCH.INDEX_NAME])
             self.assertIn("absent.apk", errors.getvalue())
 
