@@ -9,7 +9,7 @@ Executing this module prints the immutable Docker ID of one architecture:
 
 CORE_IMAGE_ID = "sha256:b243d937bf906259565a2e3e1b4162a6d1162a5209405995b12a62a9beccd394"
 CORE_IMAGE_REFERENCE = "crabc-core-evidence@" + CORE_IMAGE_ID
-AARCH64_CORE_IMAGE_ID = "sha256:7ac9c379fbd0ba3c6bdd7e28b18f95276615cfecf668f26e104ba14271c0bce0"
+AARCH64_CORE_IMAGE_ID = "sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683"
 
 _IMAGE_IDS = {"x86_64": CORE_IMAGE_ID, "aarch64": AARCH64_CORE_IMAGE_ID}
 

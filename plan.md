@@ -17,21 +17,24 @@ products and native x86-64 and AArch64 results agree at one fixed SHA. Work the
 step M6 is the only acceptance attempt. Convergence is already on main by owner
 direction; pre-merge sequencing in CRAB-8 and earlier Status no longer blocks.
 
-**Active: M6 candidate `84a8b07b3` running on both native hosts** (started
+**M6 candidate `84a8b07b3`** (started
 2026-11-24 ~07:20 UTC). It is main `529358665` plus the provisional
 declaration; both dry-runs had 86 steps and no preflight blockers.
 x86: `threadripper:~/d/crabc/.work/wt/d25-m6`, `--work .work/x86_64/feature-complete`.
-arm: OrbStack machine `crabc`, `/mnt/crabc/home/crabc/.work/wt/d25-m6`,
-`--work .work/aarch64/feature-complete`. Both use `--profile correctness
+arm: that run was on another arm host and is not used in this phase; the Mac's
+`crabc` machine had no M6 checkout on 2026-11-27. Both use `--profile correctness
 --inputs .work/<arch>/inputs.json`; logs are `../../tmp/m6-run.log` beside each
 checkout. Do not write to either checkout while they run.
 
-The owner re-pinned arm to
-`sha256:7ac9c379fbd0ba3c6bdd7e28b18f95276615cfecf668f26e104ba14271c0bce0` on
-2026-11-24 after the old `7b7cd03d…` image was lost; every manifest-tracked
-tool except rustc is byte-identical. The VM is Alpine 3.23, kernel 7.2.12, 4 KiB
-pages, 9 CPUs, with the clone, `.work` and Docker data root on a 40M-inode ext4
-loop mount at `/mnt/crabc`. Nothing is accepted.
+On 2026-11-27 arm was re-pinned back to
+`sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`, the
+2026-11-22 build from `6161b069d` (rustc `nightly-2026-11-09`, commit
+`5b7b37aef`). It survives in the Mac's OrbStack `crabc` machine; the interim
+`7ac9c379…` pin was built on another host that this phase does not use, so arm
+evidence collected in it is not admitted. The machine is Alpine 3.23, kernel
+7.2.12, 17 CPUs; the clone and `.work` live on a 40M-inode ext4 loop mount at
+`/mnt/crabc` (`/var/lib/crabc-disk/ext4.img`, in `/etc/fstab`), and Docker Engine
+keeps its data root at `/var/lib/docker`. Nothing is accepted.
 
 | Step | Done on x86-64 | Still needs native arm64 |
 | --- | --- | --- |
@@ -47,7 +50,7 @@ Arm64 sequence:
    Keep the clone on the VM's disk and `.work/aarch64` on ext4 with about 40M
    inodes. Install Docker Engine inside the VM, and never use a macOS bind mount
    or emulation.
-2. Confirm `docker image inspect sha256:7ac9c379fbd0ba3c6bdd7e28b18f95276615cfecf668f26e104ba14271c0bce0`
+2. Confirm `docker image inspect sha256:7b7cd03d19a2e65ea35addb5358bcb849dd935e8cb717581e42233356d40d683`
    succeeds. The arm image is not reproducible, so a rebuild with another ID is
    a re-pin that changes the frozen inputs: stop and ask the owner before
    adopting it.
@@ -84,7 +87,7 @@ the pinned image before retiring a worktree.
 
 Current environment facts (verify, do not trust): `rust-toolchain.toml` selects
 `nightly-2026-11-09` since `6161b069d`, which also rebuilt both core images
-(`compat/x86_64/core_image.py`: x86 `sha256:b243d937…`, arm `sha256:7ac9c379…` since the 2026-11-24 re-pin).
+(`compat/x86_64/core_image.py`: x86 `sha256:b243d937…`, arm `sha256:7b7cd03d…` since the 2026-11-27 re-pin).
 The 2026-11-21 cold-capsule and two-build reproduction results proved the earlier
 `c689abaa…` image on the earlier nightly at `b82313a51`; they are historical and
 prove nothing about the current pair.
