@@ -80,6 +80,38 @@ impl PrivateLock {
         self.state.load(Ordering::Acquire) == CONTENDED
     }
 
+    /// Waits up to 30 seconds until every listed thread is blocked in a
+    /// futex wait on this lock, and returns how many are. A race test holds
+    /// the lock first, so a blocked thread has passed every step before its
+    /// acquisition.
+    #[cfg(test)]
+    pub(crate) fn test_wait_for_blocked_waiters(&self, tids: &[core::sync::atomic::AtomicI32]) -> usize {
+        #[cfg(target_arch = "x86_64")]
+        const FUTEX_SYSCALL: usize = 202;
+        #[cfg(target_arch = "aarch64")]
+        const FUTEX_SYSCALL: usize = 98;
+        let start = core::ptr::from_ref(self).addr();
+        let blocked = |tid: i32| {
+            let Ok(line) = std::fs::read_to_string(std::format!("/proc/self/task/{tid}/syscall")) else {
+                return false;
+            };
+            let mut fields = line.split_ascii_whitespace();
+            let futex = fields.next().and_then(|number| number.parse::<usize>().ok()) == Some(FUTEX_SYSCALL);
+            let address = fields.next().and_then(|address|
+                usize::from_str_radix(address.trim_start_matches("0x"), 16).ok());
+            futex && address.is_some_and(|address|
+                address >= start && address < start + core::mem::size_of_val(self))
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let waiters = tids.iter().filter(|tid| blocked(tid.load(Ordering::Acquire))).count();
+            if waiters == tids.len() || std::time::Instant::now() > deadline {
+                return waiters;
+            }
+            std::thread::yield_now();
+        }
+    }
+
     /// Acquires the lock, blocking when another thread holds it.
     ///
     /// A successful acquire is an Acquire operation. The dropping guard's

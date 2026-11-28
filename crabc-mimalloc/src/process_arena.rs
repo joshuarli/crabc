@@ -5664,41 +5664,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
-    const FUTEX_SYSCALL: usize = 202;
-    #[cfg(target_arch = "aarch64")]
-    const FUTEX_SYSCALL: usize = 98;
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    fn blocked_on_lock(tid: i32, lock: &crate::lock::PrivateLock) -> bool {
-        let Ok(line) = std::fs::read_to_string(std::format!("/proc/self/task/{tid}/syscall")) else {
-            return false;
-        };
-        let mut fields = line.split_ascii_whitespace();
-        let futex = fields.next().and_then(|number| number.parse::<usize>().ok())
-            == Some(FUTEX_SYSCALL);
-        let address = fields.next().and_then(|address|
-            usize::from_str_radix(address.trim_start_matches("0x"), 16).ok());
-        let start = core::ptr::from_ref(lock).addr();
-        futex && address.is_some_and(|address|
-            address >= start && address < start + core::mem::size_of_val(lock))
-    }
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    fn wait_for_reserve_waiters(
-        tids: &[core::sync::atomic::AtomicI32; 2], lock: &crate::lock::PrivateLock,
-    ) -> usize {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        loop {
-            let waiters = tids.iter()
-                .filter(|tid| blocked_on_lock(tid.load(Ordering::Acquire), lock)).count();
-            if waiters == tids.len() || std::time::Instant::now() > deadline {
-                return waiters;
-            }
-            std::thread::yield_now();
-        }
-    }
-
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn emit_m2_second_arena_concurrent_reserve_c_rust_trace() {
@@ -5820,7 +5785,7 @@ mod tests {
                     }));
                 }
                 start.wait();
-                let reserve_waiters = wait_for_reserve_waiters(&worker_tids, reserve_lock);
+                let reserve_waiters = reserve_lock.test_wait_for_blocked_waiters(&worker_tids);
                 let registry_waiting = backing.registry().count();
                 drop(held);
                 claimed.wait();

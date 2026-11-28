@@ -4986,17 +4986,25 @@ mod tests {
         let concurrent = Box::leak(Box::new(ProcessArenaBacking::new()));
         let concurrent_process = VmProcess::new(process.policy(), MainSubprocess::test_static_owner());
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let tids: &'static [core::sync::atomic::AtomicI32; 8] =
+            Box::leak(Box::new([const { core::sync::atomic::AtomicI32::new(0) }; 8]));
         let mut threads = std::vec::Vec::new();
         let shared: &'static ProcessArenaBacking = concurrent;
-        for _ in 0..8 {
+        let held = shared.test_reserve_lock().lock().expect("the test holds the source reserve lock");
+        for index in 0..8 {
             let barrier = barrier.clone();
             threads.push(std::thread::spawn(move || {
+                tids[index].store(crabc_core::thread::gettid(), Ordering::Release);
                 let claim = unsafe { shared.try_allocate_slices(concurrent_process, config(),
                     search(ArenaId::none()), 1, ARENA_SLICE_SIZE, true) }.unwrap();
                 barrier.wait();
                 assert!(claim.release());
             }));
         }
+        assert_eq!(shared.test_reserve_lock().test_wait_for_blocked_waiters(tids), 8,
+            "every first use failed its search and read the empty registry count");
+        assert_eq!(shared.registry().count(), 0);
+        drop(held);
         for thread in threads { thread.join().unwrap(); }
         assert_eq!(shared.registry().count(), 1);
     }
