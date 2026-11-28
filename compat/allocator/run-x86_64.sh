@@ -32,6 +32,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   image
   allocator --quick
   allocator-m1
+  allocator-m1-read
   allocator-m1-clock-fallback
   allocator-m2
   allocator-m3 [--differential-only|--owner-only|--miri-only|--miri-ownership-only|--miri-guarded-ownership-only|--miri-page-ownership-only|--page-ownership-only|--queue-reorder-only]
@@ -510,7 +511,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    allocator-m1-clock-fallback)
+    allocator-m1-clock-fallback|allocator-m1-read)
         ;;
     allocator-public-theap)
         ;;
@@ -531,7 +532,7 @@ esac
 configure_execution_budget
 if [ "$ARCH" = aarch64 ]; then
     case "$command" in
-        image|allocator-unit|allocator-native-integration|allocator-m1) ;;
+        image|allocator-unit|allocator-native-integration|allocator-m1|allocator-m1-read) ;;
         *) fail "allocator command $command is not qualified on aarch64" ;;
     esac
 fi
@@ -554,6 +555,12 @@ case "$command" in
         else
             run_in_container python3 compat/allocator/run.py --m1 --offline --architecture "$ARCH"
         fi
+        ;;
+    allocator-m1-read)
+        [ "$#" -eq 0 ] || fail "allocator-m1-read takes no arguments"
+        [ "$ARCH" = aarch64 ] || fail "allocator-m1-read is available on aarch64"
+        ensure_image
+        run_in_container python3 -B compat/allocator/x86_64_foundation_gate_receipts.py m1 --architecture "$ARCH"
         ;;
     allocator-m1-clock-fallback)
         [ "$#" -eq 0 ] || fail "allocator-m1-clock-fallback takes no arguments"

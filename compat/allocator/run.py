@@ -3430,7 +3430,7 @@ int main(void) {
   printf("trace.fundamental.realloc_size_zero.usable=%zu\n", mi_usable_size(size_zero));
   mi_free(size_zero);
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(CRABC_M1_SHARED_AARCH64)
   const size_t recalloc_original_size = 257;
   const size_t recalloc_count = 3;
   const size_t recalloc_size = 2731;
@@ -6762,9 +6762,11 @@ FUNDAMENTAL_TRACE_EXPECTED_KEYS = FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS
 FUNDAMENTAL_TRACE_EXPECTED_COUNT = FUNDAMENTAL_TRACE_AARCH64_EXPECTED_COUNT
 
 
-def fundamental_trace_schema(architecture: str) -> tuple[frozenset[str], int]:
+def fundamental_trace_schema(architecture: str, native_shared: bool = False) -> tuple[frozenset[str], int]:
     """Return the fixed trace schema for one explicitly selected architecture."""
 
+    if architecture == "aarch64" and native_shared:
+        return FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS, FUNDAMENTAL_TRACE_X86_64_EXPECTED_COUNT
     if architecture == "aarch64":
         return FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS, FUNDAMENTAL_TRACE_AARCH64_EXPECTED_COUNT
     if architecture == "x86_64":
@@ -23068,11 +23070,12 @@ def compare_fundamental_trace(
     rust_trace: Mapping[str, int],
     *,
     architecture: str = "aarch64",
+    native_shared: bool = False,
 ) -> dict[str, Any]:
     """Require one architecture's Rust trace to equal its pinned C record."""
 
-    validate_fundamental_trace_schema(c_trace, source="pinned C", architecture=architecture)
-    validate_fundamental_trace_schema(rust_trace, source="Rust", architecture=architecture)
+    validate_fundamental_trace_schema(c_trace, source="pinned C", architecture=architecture, native_shared=native_shared)
+    validate_fundamental_trace_schema(rust_trace, source="Rust", architecture=architecture, native_shared=native_shared)
 
     missing_from_c = sorted(set(rust_trace).difference(c_trace))
     missing_from_rust = sorted(set(c_trace).difference(rust_trace))
@@ -23310,11 +23313,11 @@ def compare_m1_compiler_tls_same_tld_trace(
 
 
 def validate_fundamental_trace_schema(
-    trace: Mapping[str, int], *, source: str, architecture: str = "aarch64"
+    trace: Mapping[str, int], *, source: str, architecture: str = "aarch64", native_shared: bool = False
 ) -> None:
     """Reject a trace whose fields drift from its architecture's fixed record."""
 
-    expected_keys, expected_count = fundamental_trace_schema(architecture)
+    expected_keys, expected_count = fundamental_trace_schema(architecture, native_shared)
     if len(expected_keys) != expected_count:
         raise HarnessError(
             "internal fundamental-operation trace schema has an unexpected key count"
@@ -23777,6 +23780,7 @@ def build_fundamental_trace(
     profile_flags: Sequence[str],
     *,
     architecture: str = "aarch64",
+    native_shared: bool = False,
 ) -> dict[str, Any]:
     """Build the pinned-C baseline for the selected public API slice."""
 
@@ -23791,6 +23795,7 @@ def build_fundamental_trace(
         "-DMI_SHARED_LIB",
         "-DMI_SHARED_LIB_EXPORT",
         "-DMI_LIBC_MUSL=1",
+        *(["-DCRABC_M1_SHARED_AARCH64"] if native_shared and architecture == "aarch64" else []),
         "-I",
         str(source / "include"),
         "-I",
@@ -23807,7 +23812,7 @@ def build_fundamental_trace(
     run = command_record((str(trace_binary),), cwd=source)
     require_success(run, "pinned C fundamental-operation trace execution")
     record = parse_fundamental_trace(str(run["stdout"]))
-    validate_fundamental_trace_schema(record, source="pinned C", architecture=architecture)
+    validate_fundamental_trace_schema(record, source="pinned C", architecture=architecture, native_shared=native_shared)
     return {
         "command": command,
         "record": record,
@@ -25122,6 +25127,7 @@ def build_profile(
     artifact_root: Path = ORACLE_ARTIFACT_ROOT,
     architecture: str = "aarch64",
     include_m1_static_image_probe: bool = False,
+    native_shared: bool = False,
 ) -> dict[str, Any]:
     profile_dir = artifact_root / name
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -25192,7 +25198,8 @@ def build_profile(
         )
         result["fundamental_trace"] = {
             "c_oracle": build_fundamental_trace(
-                compiler, source, profile_dir, flags, architecture=architecture
+                compiler, source, profile_dir, flags, architecture=architecture,
+                **({"native_shared": True} if native_shared else {})
             ),
             "rust_comparison": pending_fundamental_trace_comparison(),
         }
@@ -25762,6 +25769,7 @@ def rust_layout_probe(
                 c_release_fundamental_trace,
                 rust_fundamental_trace,
                 architecture=architecture,
+                **({"native_shared": True} if native_shared else {}),
             ),
             "record": rust_fundamental_trace,
         },
@@ -28048,6 +28056,7 @@ def run_x86_64_oracle(
             flags,
             artifact_root=artifact_root / "oracle",
             architecture=architecture,
+            **({} if architecture == "x86_64" else {"native_shared": True}),
         )
         for name, flags in CONFIGURATION_PROFILES.items()
     }

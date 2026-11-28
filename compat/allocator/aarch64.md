@@ -1,6 +1,6 @@
 # AArch64 allocator route
 
-The native private evidence launcher and its supported AArch64 commands are described in [`README.md`](README.md). The commands below describe the older dispatcher route and do not qualify the private launcher.
+The native private evidence launcher and its supported AArch64 commands are described in [`README.md`](README.md). Its shared M1 route supersedes the frozen route below; the historical manifests and ratchet remain unchanged. The commands below describe the older dispatcher route and do not qualify the private launcher.
 
 ```sh
 ./scripts/dev.sh allocator --quick

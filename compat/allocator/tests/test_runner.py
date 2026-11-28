@@ -1755,6 +1755,15 @@ noise after
                 "trace.fundamental.expand.usable": 1,
             })
 
+    def test_shared_arm_fundamental_trace_requires_all_extended_fields(self) -> None:
+        full = {key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS}
+        self.assertEqual(RUNNER.compare_fundamental_trace(full, full, architecture="aarch64", native_shared=True),
+                         {"compared_value_count": 75, "status": "matched"})
+        missing = dict(full)
+        missing.pop("trace.fundamental.expand.usable")
+        with self.assertRaisesRegex(RUNNER.HarnessError, "fixed 75-key schema"):
+            RUNNER.compare_fundamental_trace(missing, missing, architecture="aarch64", native_shared=True)
+
     def test_fundamental_trace_parser_rejects_raw_address_fields(self) -> None:
         output = """
 CRABC_MI_FUNDAMENTAL_TRACE_BEGIN

@@ -30,11 +30,11 @@ def require(value: bool, detail: str) -> None:
         raise RECEIPT_ERROR(detail)
 
 
-def authenticate_source(report: Mapping[str, Any], state: Mapping[str, Any], attest: Any) -> None:
+def authenticate_source(report: Mapping[str, Any], state: Mapping[str, Any], attest: Any, architecture: str = "x86_64") -> None:
     require(report.get("source") == attest(state, state), "receipt does not belong to current clean source")
-    execution = harness.require_native_x86_64(require_image_identity=True)
+    execution = harness.require_native_x86_64(require_image_identity=True) if architecture == "x86_64" else harness.require_native_aarch64_evidence()
     harness.validate_native_execution_provenance(report.get("native_execution_provenance"),
-                                                expected_image_id=execution["image_id"])
+                                                expected_image_id=execution["image_id"], architecture=architecture)
 
 
 def authenticate_artifacts(value: Any, pinned: Path) -> int:
@@ -110,22 +110,26 @@ def output(record: Mapping[str, Any]) -> str:
     return str(record["stdout"]) + "\n" + str(record["stderr"])
 
 
-def read_m1_components(path: Path | None = None) -> dict[str, Any]:
-    report = harness.read_json(path or harness.M1_X86_64_FOUNDATIONS_REPORT)
-    contract = harness.read_json(harness.M1_X86_64_FOUNDATIONS_CONTRACT)
+def read_m1_components(path: Path | None = None, architecture: str = "x86_64") -> dict[str, Any]:
+    require(architecture in {"x86_64", "aarch64"}, "unsupported M1 receipt architecture")
+    contract_path = harness.M1_X86_64_FOUNDATIONS_CONTRACT if architecture == "x86_64" else harness.ALLOCATOR_ROOT / "m1-foundations-aarch64-v3.5.0.json"
+    report_path = harness.M1_X86_64_FOUNDATIONS_REPORT if architecture == "x86_64" else harness.REPORT_ROOT / "aarch64/m1-foundations-latest.json"
+    root = harness.ARTIFACT_ROOT / architecture / "m1-foundations"
+    report = harness.read_json(path or report_path)
+    contract = harness.read_json(contract_path)
     pin = harness.load_pin()
-    summary = harness.validate_x86_64_m1_foundations_contract(contract, pin)
+    summary = harness.validate_x86_64_m1_foundations_contract(contract, pin, architecture)
     require(report["contract"] == harness.m1_foundations_contract_record(
-        contract, pin, contract_path=harness.M1_X86_64_FOUNDATIONS_CONTRACT), "foundation contract changed")
-    authenticate_source(report, harness.m1_foundations_source_state(), harness.m1_foundations_source_attestation)
+        contract, pin, contract_path=contract_path), "foundation contract changed")
+    authenticate_source(report, harness.m1_foundations_source_state(), harness.m1_foundations_source_attestation, architecture)
     require(report["milestone"]["status"] == "complete", "foundation receipt remains incomplete")
     commands = focused_commands(report, summary)
-    latest = harness.read_json(harness.X86_64_ORACLE_REPORT_ROOT / "latest.json")
+    latest = harness.read_json(harness.REPORT_ROOT / architecture / "latest.json")
     with harness.temporary_directory(prefix="foundation-receipt-reader-") as scratch:
         pinned = harness.safe_extract(harness.fetch_archive(pin, True), Path(scratch) / "source", pin["archive_root"])
         authenticate_artifacts(report, pinned)
         authenticate_artifacts(latest["c_oracle"], pinned)
-        authenticate_artifacts(latest["x86_64_normal_engine_artifact"], pinned)
+        authenticate_artifacts(latest[f"{architecture}_normal_engine_artifact"], pinned)
     timeout = summary["execution"]["timeout_seconds"]
     replayed = {}
     for argv, checks in commands.items():
@@ -149,28 +153,28 @@ def read_m1_components(path: Path | None = None) -> dict[str, Any]:
             "full unit replay differs from the original oracle")
     def c_trace(directory: Path, name: str) -> str:
         return execute([str(directory / name)], timeout)["stdout"]
-    bits = report["shared_evidence"]["x86_64_bit_arithmetic_c_rust_trace"]
-    c_bits = harness.parse_m1_bit_arithmetic_trace(c_trace(harness.M1_X86_64_BITS_TRACE_ARTIFACT_ROOT,
-        "m1-bits-c-rust-trace-probe"), source="retained C")
-    rust_bits = harness.parse_m1_bit_arithmetic_trace(output(replayed["bit-arithmetic-c-rust-differential"]), source="retained Rust")
+    bits = report["shared_evidence"][f"{architecture}_bit_arithmetic_c_rust_trace"]
+    c_bits = harness.parse_m1_bit_arithmetic_trace(c_trace((root / "bits-arithmetic-trace"),
+        "m1-bits-c-rust-trace-probe"), source="retained C", architecture=architecture)
+    rust_bits = harness.parse_m1_bit_arithmetic_trace(output(replayed["bit-arithmetic-c-rust-differential"]), source="retained Rust", architecture=architecture)
     require(c_bits == rust_bits == (harness.ROOT / bits["c_raw_output"]["path"]).read_text().splitlines()
             == (harness.ROOT / bits["rust_raw_output"]["path"]).read_text().splitlines(), "bit arithmetic observation changed")
     harness.compare_m1_raw_primitive_trace(
-        harness.parse_m1_raw_primitive_trace(c_trace(harness.M1_X86_64_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT,
+        harness.parse_m1_raw_primitive_trace(c_trace((root / "raw-primitive-trace"),
                                                    "m1-raw-primitive-trace-probe")),
         harness.parse_m1_raw_primitive_trace(output(replayed["raw-primitive-c-rust-trace"])))
-    image = harness.parse_m1_compiler_tls_image_trace(c_trace(harness.M1_X86_64_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+    image = harness.parse_m1_compiler_tls_image_trace(c_trace((root / "compiler-tls-trace"),
                                                             "m1-compiler-tls-image-trace-probe"))
-    transition = harness.parse_m1_compiler_tls_transition_trace(c_trace(harness.M1_X86_64_COMPILER_TLS_TRACE_ARTIFACT_ROOT,
+    transition = harness.parse_m1_compiler_tls_transition_trace(c_trace((root / "compiler-tls-trace"),
                                                                      "m1-compiler-tls-transition-trace-probe"))
     harness.compare_m1_compiler_tls_trace(harness.merge_m1_compiler_tls_trace(image, transition, source="retained C"),
         harness.parse_m1_compiler_tls_trace(output(replayed["compiler-tls-c-rust-trace"])))
     harness.compare_m1_compiler_tls_same_tld_trace(
-        harness.parse_m1_compiler_tls_same_tld_trace(c_trace(harness.M1_X86_64_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT,
+        harness.parse_m1_compiler_tls_same_tld_trace(c_trace((root / "compiler-tls-same-tld-trace"),
                                                            "m1-compiler-tls-same-tld-trace-probe")),
         harness.parse_m1_compiler_tls_same_tld_trace(output(replayed["compiler-tls-same-tld-terminal-c-rust-trace"])))
-    static = harness.parse_layout(c_trace(harness.M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT, "m1-static-image-probe"))
-    release = harness.parse_layout(c_trace(harness.ARTIFACT_ROOT / "x86_64/oracle/release", "layout-probe"))
+    static = harness.parse_layout(c_trace((root / "static-image"), "m1-static-image-probe"))
+    release = harness.parse_layout(c_trace(harness.ARTIFACT_ROOT / architecture / "oracle/release", "layout-probe"))
     layouts = harness.m1_foundations_layout_evidence(summary["components"], release,
         harness.parse_rust_layout(output(full)), static_image_c_layout=static)
     require(all(layouts[c["id"]] == c["layout_evidence"] for c in report["components"]), "layout observation changed")
@@ -189,16 +193,16 @@ def require_complete_substrate(summary: Mapping[str, Any]) -> None:
             "memory substrate source contract remains incomplete: " + ", ".join(open_components))
 
 
-def read_m1(path: Path | None = None) -> dict[str, Any]:
-    report = harness.read_json(path or harness.M1_X86_64_FOUNDATIONS_REPORT)
+def read_m1(path: Path | None = None, architecture: str = "x86_64") -> dict[str, Any]:
+    report = harness.read_json(path or (harness.REPORT_ROOT / architecture / "m1-foundations-latest.json"))
     physical = report.get("physical_inputs", {})
     require(isinstance(physical, Mapping) and isinstance(physical.get("unit_program"), Mapping),
             "foundation receipt lacks the retained compiler-built unit program")
     summary = harness.validate_x86_64_m1_foundations_contract(
-        harness.read_json(harness.M1_X86_64_FOUNDATIONS_CONTRACT), harness.load_pin())
+        harness.read_json(harness.ALLOCATOR_ROOT / f"m1-foundations-{architecture}-v3.5.0.json"), harness.load_pin(), architecture)
     program = physical["unit_program"]
     require(program.get("execution") == summary["execution"]
-            and program.get("cargo_target") == str(harness.M1_X86_64_FOUNDATIONS_CARGO_TARGET),
+            and program.get("cargo_target") == str(harness.ARTIFACT_ROOT / architecture / "m1-foundations/cargo-target"),
             "foundation unit build differs from the source execution contract")
     execution = summary["execution"]
     command = ["cargo", "test", "-p", execution["package"]]
@@ -212,7 +216,7 @@ def read_m1(path: Path | None = None) -> dict[str, Any]:
     require(all(harness.relative(Path(check["command"][0])) == program["artifact"]["path"]
                 for component in report["components"] for check in component["executed_checks"]),
             "foundation checks used a different compiler product")
-    return read_m1_components(path)
+    return read_m1_components(path, architecture)
 
 
 def authenticate_unit_program(program: Mapping[str, Any], *, target: str = "crabc_mimalloc", kind: str = "lib",
@@ -747,6 +751,7 @@ def main() -> int:
     parser.add_argument("--components-only", action="store_true")
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--native-only", action="store_true")
+    parser.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     arguments = parser.parse_args()
     try:
         require(not arguments.components_only or arguments.milestone in ("m1", "m3"),
@@ -755,6 +760,7 @@ def main() -> int:
                 "retained source selection supports local component replay only")
         require(not arguments.native_only or (arguments.components_only and arguments.milestone == "m3"),
                 "native-only replay requires local component diagnostic mode")
+        require(arguments.architecture == "x86_64" or arguments.milestone == "m1", "architecture selection is only supported for M1")
         if arguments.components_only:
             if arguments.milestone == "m3":
                 if arguments.native_only:
@@ -764,7 +770,9 @@ def main() -> int:
                 else:
                     read_m3_components(arguments.report, source_root=arguments.source_root)
             else:
-                read_m1_components(arguments.report)
+                read_m1_components(arguments.report, arguments.architecture)
+        elif arguments.milestone == "m1":
+            read_m1(arguments.report, arguments.architecture)
         else:
             read_report(arguments.milestone, arguments.report)
     except (harness.HarnessError, OSError, KeyError, TypeError, ValueError) as error:
