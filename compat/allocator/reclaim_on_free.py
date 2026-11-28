@@ -20,6 +20,7 @@ import re
 import run as harness
 
 
+ARCH = harness.native_evidence_architecture()
 RUST_TEST = "native_reclaim_on_free"
 CASES = ("own_full", "foreign_empty_queue", "foreign_nonempty_queue", "foreign_large")
 FIELDS = ("reclaimed", "used", "queue_count")
@@ -45,10 +46,10 @@ def trace(output: str, origin: str) -> dict[str, int]:
 
 
 def main() -> None:
-    harness.require_native_x86_64()
+    harness.require_native_evidence(ARCH)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, True)
-    artifacts = harness.ARTIFACT_ROOT / "x86_64/reclaim-on-free"
+    artifacts = harness.ARTIFACT_ROOT / ARCH / "reclaim-on-free"
     artifacts.mkdir(parents=True, exist_ok=True)
     with harness.temporary_directory(prefix="reclaim-on-free-source-") as directory:
         source = harness.safe_extract(archive, Path(directory), pin["archive_root"])
@@ -73,7 +74,7 @@ def main() -> None:
     compared = 0
     for profile, environment in PROFILES.items():
         rust = harness.command_record(
-            ["cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+            ["cargo", "test", "--locked", "--target", f"{ARCH}-unknown-linux-musl",
              "-p", "crabc-mimalloc", "--no-default-features",
              "--features", "native-runtime-test-audit", "--test", RUST_TEST,
              "--", "--nocapture", "--test-threads=1"],
@@ -89,6 +90,12 @@ def main() -> None:
         ]
     if differences:
         raise harness.HarnessError("pinned C/Rust reclaim-on-free differs: " + ", ".join(differences))
+    harness.write_json(artifacts / "evidence.json", {
+        "status": "passed", "pinned_revision": pin["revision"],
+        "fixture": harness.artifact_record(Path(__file__).with_suffix(".c").resolve()),
+        "c_executable": harness.artifact_record(artifacts / "oracle"),
+        "rust_test": RUST_TEST, "profiles": c_traces,
+    })
     print(f"reclaim-on-free: {compared} pinned C/Rust values match in {len(PROFILES)} option profiles; "
           f"{artifacts}")
 

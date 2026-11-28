@@ -379,10 +379,10 @@ of the fragment's bounded definitions. `allocator-m2` runs:
 The receivers take their architecture from `CRABC_ALLOCATOR_EVIDENCE_ARCH`; a
 direct x86 invocation keeps its historical paths and messages.
 
-The AArch64 fragment adds eight checks to the x86 inventory, each an unchanged
-pinned-C/Rust receiver that ran natively on arm. All eight are pending on x86
+The AArch64 fragment adds eleven checks to the x86 inventory, each a
+pinned-C/Rust receiver that ran natively on arm. All eleven are pending on x86
 until a native x86 run admits them into the x86 arenas record, whose manifest
-and inventory are unchanged:
+and inventory are unchanged. Nine are existing receivers:
 
 - `second-regular-arena-c-rust-differential`,
   `second-arena-concurrent-reserve-c-rust-differential` and
@@ -409,12 +409,30 @@ and inventory are unchanged:
   successful `MAP_HUGETLB` import with an ordinary mapping, so it covers
   software state and accounting only.
 
+- `cross-thread-reclaim-on-free-c-rust-differential` (`reclaim_on_free.py`,
+  which the x86 M5 gate also runs) compares the `mi_abandoned_page_try_reclaim`
+  decisions on free under its seven option profiles.
+
+Two further receivers are new with this component and run only on AArch64
+until a native x86 run admits them:
+
+- `arena-page-abandonment-c-rust-differential`
+  (`m2_arena_abandonment_x86_64.{c,py}` and the
+  `native_arena_abandonment` integration test) drives mapped, full-unmapped
+  and OS-list page abandonment through the ordinary owner exit and
+  pointer-centered free, including the mostly-used reabandon to mapped and
+  terminal unabandon.
+- `arena-purge-rotation-c-rust-differential`
+  (`m2_arena_purge_rotation_x86_64.{c,py}`) runs the forced bounded purge over
+  eight arenas with a preloading refusal and a pinned arena.
+
 Pinned-C-only primitive receipts and Rust-only retained counts use the VM
 direct-receiver record; the aggregate re-parses every physical transcript.
-The component stays partial: abandonment, reclaim
-and purge transitions beyond the selected relations remain open, and so do
-large-page and huge-page reservation success, NUMA placement and the 16 KiB and
-64 KiB base-page geometries, which this VM cannot supply.
+The component stays partial: the concurrent unown and
+unabandon interleavings, multi-arena abandoned-page search, purge-guard
+contention and the negative purge-delay skip remain open, and so do large-page
+and huge-page reservation success, NUMA placement and the 16 KiB and 64 KiB
+base-page geometries, which this VM cannot supply.
 
 ### Bitmap component
 

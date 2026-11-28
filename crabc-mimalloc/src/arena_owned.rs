@@ -5219,6 +5219,103 @@ mod tests {
         drop(advice);
     }
 
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn emit_m2_arena_purge_rotation_c_rust_trace() {
+        const ARENAS: usize = 8;
+        const PINNED: usize = 1;
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = purge_process(100_000, true);
+        let backing = backing();
+        let mut arenas = std::vec::Vec::new();
+        let mut slices = std::vec::Vec::new();
+        for _ in 0..ARENAS {
+            let id = install(backing, process, MapAccess::Reserved);
+            // SAFETY: the requested arena was just published by this backing
+            // and no other claim or traversal is in flight.
+            let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+                .expect("one committed slice in a reserved arena");
+            arenas.push(id);
+            slices.push(claim.slice_index());
+            assert!(claim.release());
+            // SAFETY: the fixture is the only collector and retains every
+            // published arena; no traversal runs during this store.
+            crate::atomic::i64_store_release(unsafe { &(*id.as_ptr()).purge_expire }, i64::MAX);
+        }
+        crate::atomic::i64_store_release(&backing.purge_expire, i64::MAX);
+        // SAFETY: no traversal or claim is in flight; the pinned bit is
+        // cleared again before the fixture ends.
+        unsafe { (*arenas[PINNED].as_ptr()).memid.is_pinned = true; }
+        // SAFETY: the leaked backing keeps every published arena and its
+        // bitmaps live, and each observation runs between traversals.
+        let view = |index: usize| unsafe { ArenaView::from_ptr(arenas[index].as_ptr()) }.unwrap();
+        let pending_mask = || -> i64 {
+            (0..ARENAS).fold(0, |mask, index| {
+                // SAFETY: as for `view`; the purge bitmap is only read here.
+                if unsafe { view(index).slices_purge() }.unwrap().is_set_range(slices[index], 1) == Some(true) {
+                    mask | (1 << index)
+                } else { mask }
+            })
+        };
+        let expiry_mask = || -> i64 {
+            (0..ARENAS).fold(0, |mask, index| {
+                // SAFETY: the published arena header outlives the fixture.
+                if crate::atomic::i64_load_relaxed(unsafe { &(*arenas[index].as_ptr()).purge_expire }) == 0 {
+                    mask | (1 << index)
+                } else { mask }
+            })
+        };
+        let global_state = || -> i64 {
+            match crate::atomic::i64_load_relaxed(&backing.purge_expire) {
+                i64::MAX => 1,
+                0 => 0,
+                _ => 2,
+            }
+        };
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let mut rows = std::vec![
+            (std::string::String::from("setup"), i64::from(backing.registry().count() == ARENAS)),
+            (std::string::String::from("initial_pending"), pending_mask()),
+        ];
+        let stage = |name: &str, rows: &mut std::vec::Vec<(std::string::String, i64)>| {
+            let vm = process.subprocess().vm_statistics().snapshot();
+            let arena = process.subprocess().arena_statistics().snapshot();
+            rows.extend([
+                (std::format!("{name}_pending"), pending_mask()),
+                (std::format!("{name}_expiry"), expiry_mask()),
+                (std::format!("{name}_global"), global_state()),
+                (std::format!("{name}_visits"), arena.arena_purges - before_arena.arena_purges),
+                (std::format!("{name}_calls"), vm.purge_calls - before_vm.purge_calls),
+            ]);
+        };
+        process.policy().enter_process_done_preloading();
+        // SAFETY: `process` and `config()` are this backing's fixed binding,
+        // every published arena stays live and no claim is outstanding.
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        process.policy().finish_preloading();
+        stage("preloading", &mut rows);
+        for (name, sequence) in [("first", 0), ("second", 5), ("third", 0), ("fourth", 0)] {
+            // SAFETY: as for the preloading traversal above.
+            assert!(unsafe { backing.collect_purge(process, config(), true, false, sequence) });
+            stage(name, &mut rows);
+        }
+        let final_vm = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: as for `view`; the commit bitmap is only read here.
+        let pinned_committed = unsafe { view(PINNED).slices_committed() }.unwrap()
+            .is_set_range(slices[PINNED], 1) == Some(true);
+        rows.extend([
+            (std::string::String::from("bytes"), final_vm.purged - before_vm.purged),
+            (std::string::String::from("pinned_committed"), i64::from(pinned_committed)),
+            (std::string::String::from("registry"), backing.registry().count() as i64),
+        ]);
+        // SAFETY: every traversal above has returned.
+        unsafe { (*arenas[PINNED].as_ptr()).memid.is_pinned = false; }
+        for (field, value) in rows {
+            std::println!("m2.arena_purge_rotation.{field}={value}");
+        }
+    }
+
     #[test]
     fn process_arena_purge_uses_process_cpu_clock_after_monotonic_fault() {
         let fault = fault::install(fault::Plan::disabled());

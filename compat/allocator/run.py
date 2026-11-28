@@ -759,6 +759,39 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
 # Arena checks that only the AArch64 fragment admits. Each receiver runs
 # unchanged pinned source against the shared engine; its x86 admission waits
 # for a native x86 run, so the x86 inventories above stay unchanged.
+def _m2_aarch64_arena_abandonment_trace() -> dict[str, int]:
+    """Pinned relations of `m2_arena_abandonment_x86_64.c` on 4 KiB AArch64.
+
+    A mapped page keeps both records until its last foreign free unabandons
+    and frees it; a full page stays unmapped through five mostly-used frees
+    (42 - used <= 42 / 8) and the sixth reabandons it to the mapped bitmap.
+    An OS-backed singleton is listed in `os_abandoned_pages` until its free.
+    The full page reuses the mapped page's freed span, whose delayed purge
+    bits stay set because `mi_arena_try_alloc_at` does not clear them.
+    """
+
+    def span(page: int, abandoned: int, free: int, committed: int, purge: int) -> dict[str, int]:
+        return {"page": page, "abandoned": abandoned, "free": free, "committed": committed, "purge": purge}
+
+    live = {"reclaimed": 0}
+    rows: dict[str, dict[str, int]] = {
+        "mapped.exit": {**span(1, 1, 0, 8, 0), **live},
+        "mapped.first": {**span(1, 1, 0, 8, 0), **live},
+        "mapped.last": span(0, 0, 8, 8, 8),
+        "full.exit": {**span(1, 0, 0, 8, 8), **live},
+        **{f"full.free{step}": {**span(1, int(step >= 6), 0, 8, 8), **live} for step in range(1, 8)},
+        "full.penultimate": {**span(1, 1, 0, 8, 8), **live},
+        "full.last": span(0, 0, 8, 8, 8),
+        "os.exit": {"listed": 1, **live},
+        "os.last": {"listed": 0},
+    }
+    return {
+        "mapped.reserved": 42, "mapped.block_size": 12288, "mapped.slices": 8, "os.arena": 0,
+        **{f"{name}.{field}": value for name, fields in rows.items() for field, value in fields.items()},
+    }
+
+
+M2_AARCH64_ARENA_ABANDONMENT_TRACE = _m2_aarch64_arena_abandonment_trace()
 # Their records use the direct-receiver format of the VM component: shared
 # relations on both sides, plus a pinned-C-only primitive receipt or a
 # Rust-only retained count where the receiver reports one.
@@ -908,6 +941,46 @@ M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS: dict[str, dict[str, Any]] = {
         "c_receipt": None,
         "scope": "pinned-c-rust-external-arena-metadata-commit-refusal-then-managed-claim-commit-purge-and-release-through-the-caller-callback",
     },
+    "arena-purge-rotation-c-rust-differential": {
+        "artifact": "m2-arena-purge-rotation",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_purge_rotation_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_purge_rotation_x86_64.c",
+        "rust_test": "arena::owned::tests::emit_m2_arena_purge_rotation_c_rust_trace",
+        "trace_prefix": "m2.arena_purge_rotation.",
+        "common": {
+            "setup": 1, "initial_pending": 255,
+            **{
+                f"{stage}_{field}": value
+                for stage, values in (
+                    ("preloading", (255, 0, 1, 0, 0)),
+                    ("first", (242, 13, 2, 3, 3)),
+                    ("second", (18, 237, 2, 6, 6)),
+                    ("third", (2, 253, 2, 7, 7)),
+                    ("fourth", (2, 253, 0, 7, 7)),
+                )
+                for field, value in zip(("pending", "expiry", "global", "visits", "calls"), values)
+            },
+            "bytes": 7 * 64 * 1024, "pinned_committed": 1, "registry": 8,
+        },
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-eight-arena-bounded-purge-rotation-with-preloading-refusal-pinned-skip-three-visit-budget-and-global-clear",
+    },
+    "arena-page-abandonment-c-rust-differential": {
+        "artifact": "m2-arena-abandonment",
+        "kind": "c-rust-arena-abandonment-differential",
+        "target": "compat/allocator/m2_arena_abandonment_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_abandonment_x86_64.c",
+        "rust_test": "native_arena_abandonment::arena_abandonment_transitions_match_the_pinned_source",
+        "trace_prefix": "m2.arena_abandon.",
+        "common": M2_AARCH64_ARENA_ABANDONMENT_TRACE,
+        "c_only": {},
+        "rust_only": {},
+        "c_receipt": None,
+        "scope": "pinned-c-rust-owner-exit-mapped-and-full-unmapped-arena-page-abandonment-foreign-unown-reabandon-to-mapped-and-terminal-unabandon-free",
+    },
 }
 # The huge-progress receiver writes a matched C/Rust report. It substitutes
 # only the successful `MAP_HUGETLB` import of `_mi_os_alloc_huge_os_pages`
@@ -941,6 +1014,41 @@ M2_AARCH64_HUGE_PROGRESS_RECEIVER: dict[str, Any] = {
     },
     "scope": "pinned-c-rust-partial-huge-primitive-progress-into-a-published-huge-kind-arena-with-pinned-claim-release-and-terminal-destruction-over-a-substituted-mapping",
 }
+# The reclaim-on-free receiver runs the ordinary free entry on worker threads
+# under seven `mimalloc_*` option images, so `mi_free_try_collect_mt`
+# (src/free.c:440-520) reaches `_mi_arenas_page_unabandon` and
+# `_mi_theap_page_reclaim` or unowns the page again for each case.
+M2_AARCH64_RECLAIM_ON_FREE_RECEIVER: dict[str, Any] = {
+    "id": "cross-thread-reclaim-on-free-c-rust-differential",
+    "artifact": "reclaim-on-free",
+    "kind": "c-rust-arena-reclaim-on-free-differential",
+    "target": "compat/allocator/reclaim_on_free.py",
+    "fixture": "compat/allocator/reclaim_on_free.c",
+    "rust_test": "native_reclaim_on_free",
+    "trace_prefix": "reclaim.",
+    "profiles": {
+        profile: {
+            f"{case}.{field}": value
+            for case, values in (
+                ("own_full", own_full),
+                ("foreign_empty_queue", (1, 2, 1) if profile != "reclaim_disabled" else (0, 0, 0)),
+                ("foreign_nonempty_queue", (1, 2, 2) if profile == "reclaim_cross_thread" else (0, 0, 0)),
+                ("foreign_large", (0, 0, 0)),
+            )
+            for field, value in zip(("reclaimed", "used", "queue_count"), values)
+        }
+        for profile, own_full in (
+            ("default", (1, 1022, 4)),
+            ("reclaim_cross_thread", (1, 1022, 4)),
+            ("reclaim_disabled", (0, 0, 0)),
+            ("max_reclaim_zero", (0, 0, 0)),
+            ("cross_thread_limit_zero", (1, 1022, 4)),
+            ("full_retain_zero", (1, 1022, 2)),
+            ("full_retain_five", (1, 1022, 7)),
+        )
+    },
+    "scope": "pinned-c-rust-own-full-and-foreign-free-reclaim-decisions-through-arena-unabandon-or-unown-under-seven-option-profiles",
+}
 M2_AARCH64_ADDED_ARENA_CHECKS: tuple[dict[str, Any], ...] = (
     *(
         {
@@ -951,12 +1059,15 @@ M2_AARCH64_ADDED_ARENA_CHECKS: tuple[dict[str, Any], ...] = (
         }
         for check_id, receiver in M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS.items()
     ),
-    {
-        "expected_passed_test_count": 1,
-        "id": M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"],
-        "kind": M2_AARCH64_HUGE_PROGRESS_RECEIVER["kind"],
-        "target": M2_AARCH64_HUGE_PROGRESS_RECEIVER["target"],
-    },
+    *(
+        {
+            "expected_passed_test_count": 1,
+            "id": receiver["id"],
+            "kind": receiver["kind"],
+            "target": receiver["target"],
+        }
+        for receiver in (M2_AARCH64_HUGE_PROGRESS_RECEIVER, M2_AARCH64_RECLAIM_ON_FREE_RECEIVER)
+    ),
 )
 M2_ARENA_CHECKS = {
     "x86_64": M2_X86_64_ARENA_CHECKS,
@@ -14986,6 +15097,8 @@ def _m2_x86_64_validated_component(
                 "c-rust-arena-delayed-purge-failure-differential",
                 "c-rust-arena-startup-huge-failure-differential",
                 "c-rust-arena-huge-reservation-progress-differential",
+                "c-rust-arena-reclaim-on-free-differential",
+                "c-rust-arena-abandonment-differential",
                 "c-rust-arena-lifecycle-differential",
                 "c-rust-arena-destruction-differential",
                 "c-rust-reservation-warnings-differential",
@@ -15112,8 +15225,14 @@ def _m2_x86_64_validated_component(
                 or not (ROOT / receiver["fixture"]).is_file()
             ):
                 raise HarnessError("native aarch64 M2 added arena receiver is absent")
-        elif architecture == "aarch64" and raw_check.get("id") == M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"]:
-            receiver = M2_AARCH64_HUGE_PROGRESS_RECEIVER
+        elif architecture == "aarch64" and raw_check.get("id") in {
+            M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"], M2_AARCH64_RECLAIM_ON_FREE_RECEIVER["id"],
+        }:
+            receiver = (
+                M2_AARCH64_HUGE_PROGRESS_RECEIVER
+                if raw_check["id"] == M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"]
+                else M2_AARCH64_RECLAIM_ON_FREE_RECEIVER
+            )
             if (
                 component_id != "arenas"
                 or raw_check.get("kind") != receiver["kind"]
@@ -15121,7 +15240,7 @@ def _m2_x86_64_validated_component(
                 or not (ROOT / receiver["target"]).is_file()
                 or not (ROOT / receiver["fixture"]).is_file()
             ):
-                raise HarnessError("native aarch64 M2 huge-progress receiver is absent")
+                raise HarnessError("native aarch64 M2 added arena receiver is absent")
         elif raw_check.get("id") in M2_ARENA_DIRECT_RECEIVERS[architecture]:
             receiver = M2_ARENA_DIRECT_RECEIVERS[architecture][raw_check["id"]]
             if (
@@ -17920,9 +18039,10 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 M2_AARCH64_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-aarch64-v3.5.0.json"
 M2_AARCH64_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "aarch64/m2-memory-substrate-latest.json"
 M2_AARCH64_EXECUTED_COMPONENT_IDS = ("vm-primitives", "arenas")
-M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset(
-    {"added_direct", "destruction", "direct", "huge_progress", "lifecycle", "reservation_warnings"}
-)
+M2_AARCH64_ARENA_EVIDENCE_KEYS = frozenset({
+    "added_direct", "destruction", "direct", "huge_progress", "lifecycle", "reclaim_on_free",
+    "reservation_warnings",
+})
 M2_AARCH64_GLOBAL_EVIDENCE = (
     "aarch64-source-contract-inventories",
     "aarch64-bounded-component-source-definitions",
@@ -18082,6 +18202,94 @@ def _run_m2_aarch64_arena_evidence(
             offline=offline, architecture="aarch64", receivers=M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS,
         ),
         "huge_progress": _run_m2_aarch64_huge_progress_evidence(offline=offline),
+        "reclaim_on_free": _run_m2_aarch64_reclaim_on_free_evidence(),
+    }
+
+
+def _run_m2_aarch64_reclaim_on_free_evidence() -> dict[str, Any]:
+    """Execute the reclaim-on-free receiver and retain each profile's transcripts.
+
+    The receiver reads only the verified offline archive, so it takes no
+    `--offline` argument.
+    """
+
+    receiver = M2_AARCH64_RECLAIM_ON_FREE_RECEIVER
+    command = ["python3", receiver["target"]]
+    execution = command_record(command, cwd=ROOT, timeout_seconds=3600)
+    require_success(execution, "reclaim-on-free C/Rust receiver")
+    artifacts = ARTIFACT_ROOT / "aarch64" / receiver["artifact"]
+    evidence = read_json(artifacts / "evidence.json")
+    profiles = evidence.get("profiles") if isinstance(evidence, Mapping) else None
+    if not isinstance(profiles, Mapping):
+        raise HarnessError("native aarch64 M2 reclaim-on-free receipt lacks its profiles")
+    return {
+        **evidence,
+        "command": command,
+        "transcripts": {
+            profile: {
+                side: (artifacts / f"{side}-{profile}.log").read_text(encoding="utf-8")
+                for side in ("c", "rust")
+            }
+            for profile in profiles
+        },
+    }
+
+
+def _m2_aarch64_reclaim_on_free_check_record(
+    component: Mapping[str, Any], pin: Mapping[str, str], evidence: object,
+) -> dict[str, Any]:
+    """Bind every option profile's pinned-C and Rust transcript to the receipt."""
+
+    receiver = M2_AARCH64_RECLAIM_ON_FREE_RECEIVER
+    check = next((item for item in component["checks"] if item["id"] == receiver["id"]), None)
+    artifacts = ARTIFACT_ROOT / "aarch64" / receiver["artifact"]
+    expected = receiver["profiles"]
+    if (
+        check is None
+        or check.get("kind") != receiver["kind"]
+        or check.get("target") != receiver["target"]
+        or not isinstance(evidence, Mapping)
+        or set(evidence) != {
+            "status", "pinned_revision", "fixture", "c_executable", "rust_test", "profiles",
+            "command", "transcripts",
+        }
+        or evidence.get("status") != "passed"
+        or evidence.get("pinned_revision") != pin["revision"]
+        or evidence.get("rust_test") != receiver["rust_test"]
+        or evidence.get("fixture") != artifact_record(ROOT / receiver["fixture"])
+        or evidence.get("c_executable") != artifact_record(artifacts / "oracle")
+        or evidence.get("command") != ["python3", receiver["target"]]
+    ):
+        raise HarnessError("native aarch64 M2 reclaim-on-free receipt is invalid")
+    if evidence.get("profiles") != expected:
+        raise HarnessError(
+            "native aarch64 M2 reclaim-on-free profiles differ from the pinned relations: "
+            + json.dumps(evidence.get("profiles"), sort_keys=True)
+        )
+    transcripts = evidence.get("transcripts")
+    if not isinstance(transcripts, Mapping) or set(transcripts) != set(expected):
+        raise HarnessError("native aarch64 M2 reclaim-on-free transcript inventory is invalid")
+    for profile, values in expected.items():
+        for side in ("c", "rust"):
+            observed: dict[str, int] = {}
+            for line in str(transcripts[profile].get(side, "")).splitlines():
+                candidate = line.rsplit(" ... ", 1)[-1]
+                if not candidate.startswith(receiver["trace_prefix"]):
+                    continue
+                match = re.fullmatch(r"([a-z_]+\.[a-z_]+)=([0-9]+)", candidate[len(receiver["trace_prefix"]):])
+                if match is None or match.group(1) in observed:
+                    raise HarnessError("native aarch64 M2 reclaim-on-free transcript is invalid")
+                observed[match.group(1)] = int(match.group(2))
+            if observed != values:
+                raise HarnessError("native aarch64 M2 reclaim-on-free trace differs from its receipt")
+    return {
+        "comparison_status": "matched",
+        "component": "arenas",
+        "command": list(evidence["command"]),
+        "evidence_scope": receiver["scope"],
+        "id": receiver["id"],
+        "passed_test_count": 1,
+        "target": receiver["target"],
     }
 
 
@@ -18212,6 +18420,10 @@ def _m2_aarch64_arena_check_records(
         _m2_aarch64_huge_progress_check_record(
             next(component for component in summary["components"] if component["id"] == "arenas"),
             arena_evidence["huge_progress"],
+        ),
+        _m2_aarch64_reclaim_on_free_check_record(
+            next(component for component in summary["components"] if component["id"] == "arenas"),
+            pin, arena_evidence["reclaim_on_free"],
         ),
     ]
     by_id = {record["id"]: record for record in records}

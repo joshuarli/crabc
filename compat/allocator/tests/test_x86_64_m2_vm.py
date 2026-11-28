@@ -942,7 +942,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                       "rust_command": [binary, target, "--exact", "--test-threads=1", "--nocapture"]}
                 for key, target in targets.items()
             }
-            return {**rows, "direct": {}, "added_direct": {}, "huge_progress": {}}
+            return {**rows, "direct": {}, "added_direct": {}, "huge_progress": {}, "reclaim_on_free": {}}
 
         def record(check_id):
             check = RUNNER._m2_x86_64_check_by_id(summary, check_id)[1]
@@ -953,9 +953,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         direct = [record(check_id) for check_id in reversed(list(RUNNER.M2_ARENA_DIRECT_RECEIVERS["aarch64"]))]
         added = [record(check_id) for check_id in RUNNER.M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS]
         huge = record(RUNNER.M2_AARCH64_HUGE_PROGRESS_RECEIVER["id"])
+        reclaim = record(RUNNER.M2_AARCH64_RECLAIM_ON_FREE_RECEIVER["id"])
         with mock.patch.object(RUNNER, "_m2_x86_64_process_arena_collect_check_records", return_value=purge), \
                 mock.patch.object(RUNNER, "_m2_vm_direct_receiver_check_records", return_value=added), \
                 mock.patch.object(RUNNER, "_m2_aarch64_huge_progress_check_record", return_value=huge), \
+                mock.patch.object(RUNNER, "_m2_aarch64_reclaim_on_free_check_record", return_value=reclaim), \
                 mock.patch.object(RUNNER, "_m2_x86_64_arena_direct_check_records", return_value=direct):
             records = RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(arm_binary))
             self.assertEqual([row["id"] for row in records],
@@ -968,6 +970,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         with mock.patch.object(RUNNER, "_m2_x86_64_process_arena_collect_check_records", return_value=purge), \
                 mock.patch.object(RUNNER, "_m2_vm_direct_receiver_check_records", return_value=added), \
                 mock.patch.object(RUNNER, "_m2_aarch64_huge_progress_check_record", return_value=huge), \
+                mock.patch.object(RUNNER, "_m2_aarch64_reclaim_on_free_check_record", return_value=reclaim), \
                 mock.patch.object(RUNNER, "_m2_x86_64_arena_direct_check_records", return_value=direct[1:]):
             with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
                 RUNNER._m2_aarch64_arena_check_records(summary, pin, {}, evidence(arm_binary))
@@ -1055,7 +1058,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
     def test_arm_added_arena_receipts_require_both_transcripts_and_side_only_values(self):
         component = next(item for item in self.arm_summary()["components"] if item["id"] == "arenas")
         receivers = RUNNER.M2_AARCH64_ADDED_ARENA_DIRECT_RECEIVERS
-        self.assertEqual([check["id"] for check in component["checks"][-len(receivers) - 1:-1]], list(receivers))
+        self.assertEqual([check["id"] for check in component["checks"][-len(receivers) - 2:-2]], list(receivers))
         x86 = RUNNER.validate_x86_64_m2_memory_substrate_contract(
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin())
         x86_ids = {check["id"] for item in x86["components"] for check in item["checks"]}
@@ -1125,6 +1128,47 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 mutate(changed)
                 with self.assertRaises(RUNNER.HarnessError):
                     RUNNER._m2_aarch64_huge_progress_check_record(component, changed)
+
+    def test_arm_reclaim_on_free_receipt_binds_every_profile_transcript(self):
+        component = next(item for item in self.arm_summary()["components"] if item["id"] == "arenas")
+        receiver = RUNNER.M2_AARCH64_RECLAIM_ON_FREE_RECEIVER
+        pin = {"revision": "pinned-revision"}
+        artifact = {"path": "source-bound", "bytes": 1, "sha256": "a" * 64}
+
+        def transcript(values):
+            return "".join(f"{receiver['trace_prefix']}{field}={value}\n" for field, value in values.items())
+
+        evidence = {
+            "status": "passed", "pinned_revision": pin["revision"], "fixture": artifact,
+            "c_executable": artifact, "rust_test": receiver["rust_test"],
+            "profiles": {profile: dict(values) for profile, values in receiver["profiles"].items()},
+            "command": ["python3", receiver["target"]],
+            "transcripts": {profile: {"c": transcript(values), "rust": "running 1 test\n" + transcript(values)}
+                            for profile, values in receiver["profiles"].items()},
+        }
+        self.assertEqual(len(receiver["profiles"]), 7)
+        self.assertEqual(receiver["profiles"]["reclaim_disabled"]["foreign_empty_queue.reclaimed"], 0)
+        self.assertEqual(receiver["profiles"]["reclaim_cross_thread"]["foreign_nonempty_queue.reclaimed"], 1)
+        with mock.patch.object(RUNNER, "artifact_record", return_value=artifact):
+            record = RUNNER._m2_aarch64_reclaim_on_free_check_record(component, pin, evidence)
+            self.assertEqual(record["id"], receiver["id"])
+            mutations = {
+                "profile-value": lambda e: e["profiles"]["default"].__setitem__("own_full.used", 1021),
+                "missing-profile": lambda e: e["profiles"].pop("full_retain_five"),
+                "c-transcript": lambda e: e["transcripts"]["default"].__setitem__(
+                    "c", e["transcripts"]["default"]["c"].replace("own_full.used=1022", "own_full.used=1021")),
+                "rust-duplicate": lambda e: e["transcripts"]["max_reclaim_zero"].__setitem__(
+                    "rust", e["transcripts"]["max_reclaim_zero"]["rust"] * 2),
+                "missing-transcript": lambda e: e["transcripts"].pop("default"),
+                "offline-command": lambda e: e.__setitem__("command", ["python3", receiver["target"], "--offline"]),
+                "status": lambda e: e.__setitem__("status", "failed"),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(name=name):
+                    changed = copy.deepcopy(evidence)
+                    mutate(changed)
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_aarch64_reclaim_on_free_check_record(component, pin, changed)
 
     def test_arm_thp_prctl_failure_receipts_require_shared_and_side_only_relations(self):
         summary = self.arm_summary()
