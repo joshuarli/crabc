@@ -4,9 +4,10 @@ The allocator harness reproduces and checks the fixed mimalloc v3.5.0 Rust
 port against the pinned C source: it builds the C oracle, runs deterministic
 C/Rust differential lanes, the Rust unit and integration suites, the milestone
 gates, and the allocator performance and codegen measurements. Native
-Linux/x86-64 is the only active target. The paused AArch64 route is in
-[`aarch64.md`](aarch64.md); its reports never qualify x86 and x86 reports never
-qualify AArch64.
+Linux/x86-64 runs every command; native Linux/AArch64 runs the commands listed
+under [Launcher](#launcher). The older dispatcher route for AArch64 is in
+[`aarch64.md`](aarch64.md). Reports from one architecture never qualify the
+other.
 
 Related: the allocator design is in
 [`docs/design/allocator.md`](../../docs/design/allocator.md), the Rust/C
